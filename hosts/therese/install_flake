@@ -1,0 +1,102 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p age bash disko sbctl jq btrfs-progs util-linux
+# shellcheck shell=bash
+
+set -euo pipefail
+
+# Parse arguments
+SSH_KEY=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+  -k | --key)
+    SSH_KEY="$2"
+    shift 2
+    ;;
+  *)
+    echo "Unknown argument: $1"
+    exit 1
+    ;;
+  esac
+done
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/../.."
+
+while true; do
+  read -r -p "Enter the host to install: " TARGET_HOST
+  echo
+
+  if [[ ! -e "${ROOT_DIR}/hosts/${TARGET_HOST}/disks.nix" ]]; then
+    echo "ERROR! Could not find the disks.nix file for this host"
+    echo
+  else
+    break
+  fi
+done
+
+LANZABOOTE_ENABLED=$(nix eval --json "${ROOT_DIR}#nixosConfigurations.${TARGET_HOST}.config.boot.lanzaboote.enable" 2>/dev/null || echo "false")
+
+if [[ "$LANZABOOTE_ENABLED" == "true" ]]; then
+  echo "Checking Secure Boot status..."
+  if ! sbctl status --json | jq -e '.setup_mode' >/dev/null; then
+    echo "ERROR: Setup Mode is not enabled. Please enable Setup Mode in your BIOS/UEFI."
+    exit 1
+  fi
+  echo "Setup Mode is enabled."
+fi
+
+DECRYPTED=false
+SECRET_FILE="${ROOT_DIR}/secrets/${TARGET_HOST}-luks-passphrase.age"
+
+if [[ -n "$SSH_KEY" ]] && [[ -f "$SECRET_FILE" ]]; then
+  echo "Attempting to decrypt LUKS passphrase from $(basename "$SECRET_FILE")..."
+  if sudo age -d -i "$SSH_KEY" "$SECRET_FILE" 2>/dev/null | sudo tee /tmp/secret.key >/dev/null; then
+    echo "Success! Passphrase decrypted."
+    DECRYPTED=true
+  else
+    echo "Decryption failed. Please enter passphrase manually."
+  fi
+fi
+
+if [[ "$DECRYPTED" == "false" ]]; then
+  while true; do
+    read -r -s -p "Enter a passphrase for encryption: " PASSPHRASE_1
+    echo
+    read -r -s -p "Re-enter passphrase: " PASSPHRASE_2
+    echo
+
+    if [[ "$PASSPHRASE_1" != "$PASSPHRASE_2" ]]; then
+      echo "Passphrases do not match. Please try again."
+      echo
+    else
+      echo -n "$PASSPHRASE_1" >/tmp/secret.key
+      break
+    fi
+  done
+fi
+
+sudo true
+sudo disko \
+  --mode destroy,format,mount \
+  "${ROOT_DIR}/hosts/${TARGET_HOST}/disks.nix"
+
+SECRET_FILE="${ROOT_DIR}/secrets/${TARGET_HOST}-host-key.age"
+PLAINTEXT_FILE="/mnt/persist/etc/ssh/ssh_host_ed25519_key"
+
+if [[ -n "$SSH_KEY" ]] && [[ -f "$SECRET_FILE" ]]; then
+  echo "Decrypting host key..."
+  sudo mkdir -p "$(dirname "$PLAINTEXT_FILE")"
+  sudo age -d -i "$SSH_KEY" "$SECRET_FILE" | sudo tee ${PLAINTEXT_FILE} >/dev/null
+  sudo chmod 600 ${PLAINTEXT_FILE}
+
+  echo "Setting up public host key..."
+  HOST_KEY_PUB=$(nix-instantiate --eval -E "(import ${ROOT_DIR}/data/keys.nix).${TARGET_HOST} or null" | tr -d '"')
+  if [[ "$HOST_KEY_PUB" != "null" ]]; then
+    echo "$HOST_KEY_PUB" | sudo tee "${PLAINTEXT_FILE}.pub" >/dev/null
+    sudo chmod 644 ${PLAINTEXT_FILE}.pub
+  else
+    echo "No public key found in data/keys.nix for ${TARGET_HOST}."
+  fi
+fi
+
+sudo nixos-install --flake "${ROOT_DIR}#${TARGET_HOST}"

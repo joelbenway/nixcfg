@@ -1,0 +1,151 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p age bash coreutils git podman
+# shellcheck shell=bash
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+SECRET_DIR="${ROOT_DIR}/secrets"
+
+# Determine real user's home directory if running with sudo
+if [ -n "${SUDO_USER:-}" ]; then
+	REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+	REAL_HOME=$HOME
+fi
+KEY_PATH="${REAL_HOME}/.ssh/id_ed25519"
+
+WIFI_SECRET="${SECRET_DIR}/wifi.env.age"
+OUTPUT_DIR="${ROOT_DIR}/iso"
+CONTAINER_NAME="carmel-of-lisieux"
+FLAKE_TARGET="therese"
+FLAKE_DIR="/tmp/flake" # Path inside container
+
+cleanup() {
+	EXIT_CODE=$?
+	echo ""
+	if [ $EXIT_CODE -ne 0 ]; then
+		echo "!!! Build failed with exit code $EXIT_CODE."
+	fi
+	echo ">>> Cleanup: Removing container '$CONTAINER_NAME'..."
+	podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+	END_TIME=$SECONDS
+	DURATION=$((END_TIME - START_TIME))
+	echo ">>> Total time elapsed: $((DURATION / 60))m $((DURATION % 60))s"
+}
+
+trap cleanup EXIT
+
+echo ">>> Conducting Pre-Flight checks for building '$FLAKE_TARGET'..."
+
+START_TIME=$SECONDS
+
+if ! command -v podman &>/dev/null; then
+	echo "ERROR: 'podman' command not found. Please install it."
+	exit 1
+fi
+
+if [ ! -f "$KEY_PATH" ]; then
+	echo "ERROR: Key not found at $KEY_PATH"
+	exit 1
+fi
+
+if [[ ! -f "${WIFI_SECRET}" ]]; then
+	echo "ERROR: Could not find ${WIFI_SECRET}"
+	exit 1
+fi
+
+decrypt_err() {
+	echo "ERROR: Unable to decrypt secrets using $KEY_PATH."
+	echo "       Ensure the key is correct and authorized in secrets/secrets.nix."
+	exit 1
+}
+
+if ! age -d -i "$KEY_PATH" "$WIFI_SECRET" >/dev/null 2>&1; then
+	decrypt_err
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	echo "ERROR: Not in a git repo"
+	exit 1
+fi
+
+# Ensure output directory exists
+mkdir -p "$OUTPUT_DIR"
+
+echo ">>> Initializing Podman container..."
+
+# Pull image quietly first to avoid noisy output during run
+podman pull --quiet nixos/nix >/dev/null
+
+podman run --name "$CONTAINER_NAME" \
+  --replace \
+	--detach \
+	--privileged \
+	--rm \
+	--entrypoint sleep \
+	nixos/nix infinity
+
+echo ">>> Archiving flake and injecting secrets..."
+
+# Create directory inside container
+podman exec "$CONTAINER_NAME" mkdir -p "$FLAKE_DIR"
+
+# Inject flake via tar pipe
+COMMIT_ISH=$(git stash create || echo "HEAD")
+git archive --format=tar "$COMMIT_ISH" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
+
+# Inject secrets via pipe
+cat "$KEY_PATH" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/$(basename "$KEY_PATH")" >/dev/null
+age -d -i "$KEY_PATH" "$WIFI_SECRET" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/wifi.env" >/dev/null
+
+echo ">>> Building ISO (this may take a while)..."
+echo "    Target: $FLAKE_TARGET"
+
+# Run the build.
+# We need to enable flakes in the container's nix configuration if not already.
+# nixos/nix usually has experimental features enabled or we pass flags.
+
+podman exec "$CONTAINER_NAME" nix \
+	--extra-experimental-features "nix-command flakes" \
+	build "$FLAKE_DIR#nixosConfigurations.$FLAKE_TARGET.config.system.build.isoImage" \
+	--out-link /tmp/result \
+	--impure
+
+echo ">>> Extracting results..."
+
+# The result is a symlink in /tmp/result inside the container.
+# We need to resolve it to find the actual ISO file.
+ISO_STORE_PATH=$(podman exec "$CONTAINER_NAME" readlink -f /tmp/result)
+
+# Find the ISO file inside that store path
+# We use 'ls' inside the container to find the .iso file
+ISO_FILENAME=$(podman exec "$CONTAINER_NAME" sh -c "ls $ISO_STORE_PATH/iso/*.iso | xargs basename")
+
+# Generate timestamped name
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+NEW_ISO_NAME="${FLAKE_TARGET}-${TIMESTAMP}.iso"
+
+# Clear output directory
+rm -f "$OUTPUT_DIR"/*
+
+# Copy the file out with new name
+podman cp "$CONTAINER_NAME:$ISO_STORE_PATH/iso/$ISO_FILENAME" "$OUTPUT_DIR/$NEW_ISO_NAME"
+
+# Generate checksum
+sha256sum "$OUTPUT_DIR/$NEW_ISO_NAME" >"$OUTPUT_DIR/$NEW_ISO_NAME.sha256"
+
+echo "----------------------------------------------------"
+echo "Build Successful: $OUTPUT_DIR/$NEW_ISO_NAME"
+echo "----------------------------------------------------"
+
+# Check for mounted Ventoy drive and copy ISO if found
+VENTOY_DIR=$(lsblk -o MOUNTPOINT,LABEL -n -r | grep "Ventoy" | cut -d' ' -f1 | head -n 1 || true)
+if [ -n "$VENTOY_DIR" ] && [ -d "$VENTOY_DIR" ]; then
+	echo ">>> Detected Ventoy drive at $VENTOY_DIR. Copying ISO..."
+	cp "$OUTPUT_DIR/$NEW_ISO_NAME" "$VENTOY_DIR/"
+	sync
+	echo "    Successfully copied to Ventoy."
+fi

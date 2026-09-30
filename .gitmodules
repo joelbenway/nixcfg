@@ -1,0 +1,4 @@
+[submodule "secrets"]
+	path = secrets
+	url = git@github.com:joelbenway/nixos-secrets.git
+	branch = master
