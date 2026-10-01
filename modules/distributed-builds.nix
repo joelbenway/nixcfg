@@ -28,7 +28,7 @@ in {
     enable = lib.mkEnableOption "distributed Nix builds over Tailscale";
 
     keyFile = lib.mkOption {
-      type = lib.types.path;
+      type = with lib.types; either path str;
       description = "Path to the SSH private key used to connect to remote builders";
       example = "/run/secrets/nix-builder-ssh";
     };

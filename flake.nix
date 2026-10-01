@@ -3,6 +3,7 @@
   description = "Nixos config flake";
 
   inputs = {
+    self.submodules = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # stable.url = "github:nixos/nixpkgs/nixos-24.05";
 
@@ -69,9 +70,11 @@
         };
         modules =
           [
+            ./hosts/configuration.nix
             ./hosts/${name}
             ./modules
             ./users
+            inputs.disko.nixosModules.disko
             inputs.home-manager.nixosModules.default
             {nixpkgs.overlays = overlays;}
             {

@@ -241,7 +241,8 @@ in {
     # Signal CLI Daemon for Hermes
     systemd.services.signal-cli = {
       description = "Signal CLI Daemon for Hermes Agent";
-      after = ["network.target"];
+      after = ["network.target" "agenix.service"];
+      wants = ["network.target" "agenix.service"];
       wantedBy = ["multi-user.target"];
       serviceConfig = {
         User = "hermes";

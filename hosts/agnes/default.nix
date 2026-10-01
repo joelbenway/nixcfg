@@ -10,9 +10,6 @@
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
-    inputs.disko.nixosModules.disko
-    inputs.agenix.nixosModules.default
-    (lib.custom.relativeToRoot "hosts/configuration.nix")
     (lib.custom.relativeToRoot "hardware/alice75.nix")
     (lib.custom.relativeToRoot "hardware/printer.nix")
     (lib.custom.relativeToRoot "hardware/laptop.nix")

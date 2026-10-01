@@ -15,7 +15,7 @@
     wifiIot = lib.mkEnableOption "Enable Iot Wifi";
     wifi = lib.mkEnableOption "Enable Wifi";
     envFile = lib.mkOption {
-      type = with lib.types; nullOr path;
+      type = with lib.types; nullOr (either path str);
       default = null;
       description = "Environment File with wifi profile info.";
     }; #envFile

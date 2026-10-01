@@ -22,7 +22,7 @@
         description = "CIDR ranges to route through this peer";
       };
       presharedKeyFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
+        type = with lib.types; nullOr (either path str);
         default = null;
         description = "Path to a file containing the preshared key";
       };
@@ -37,7 +37,7 @@
   tunnelType = lib.types.submodule {
     options = {
       privateKeyFile = lib.mkOption {
-        type = lib.types.path;
+        type = with lib.types; either path str;
         description = "Path to the WireGuard private key file";
       };
       address = lib.mkOption {

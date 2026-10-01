@@ -11,9 +11,6 @@ in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
     inputs.nixos-hardware.nixosModules.common-cpu-intel-cpu-only
-    inputs.disko.nixosModules.disko
-    inputs.agenix.nixosModules.default
-    (lib.custom.relativeToRoot "hosts/configuration.nix")
     (lib.custom.relativeToRoot "hardware/quadrom2000.nix")
     (lib.custom.relativeToRoot "hardware/ivybridge.nix")
   ]; # imports

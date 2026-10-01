@@ -7,7 +7,7 @@
   options.tpm = {
     enable = lib.mkEnableOption "Enable TPM2-based LUKS disk enrollment.";
     passwordFile = lib.mkOption {
-      type = with lib.types; nullOr path;
+      type = with lib.types; nullOr (either path str);
       default = null;
       example = "/run/secrets/luks-password";
       description = ''
@@ -49,13 +49,15 @@
     systemd.services.tpm-enroll = {
       description = "Enroll LUKS devices in tpm2";
       wantedBy = ["multi-user.target"];
-      after = ["tpm2.target"];
-      wants = ["tpm2.target"];
+      after = ["tpm2.target" "agenix.service"];
+      wants = ["tpm2.target" "agenix.service"];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
       };
       path = [
+        pkgs.coreutils
+        pkgs.systemd
         pkgs.util-linux
       ];
       enableStrictShellChecks = true;
