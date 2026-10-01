@@ -6,7 +6,7 @@ pkgs.mkShell {
         HOOK_DIR=".git/hooks"
         PRE_COMMIT="$HOOK_DIR/pre-commit"
 
-        if [ -d "$HOOK_DIR" ] && [ ! -f "$PRE_COMMIT" ]; then
+        if [ -d "$HOOK_DIR" ]; then
           cat > "$PRE_COMMIT" << 'HOOK'
     #!/usr/bin/env bash
 

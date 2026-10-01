@@ -185,10 +185,14 @@ in {
                 shellAliases = {
                   dotfiles = "${pkgs.git}/bin/git --git-dir=\"$HOME/.dotfiles/\" --work-tree=\"$HOME\"";
                 };
-                file = lib.optionalAttrs (userKey != null) {
-                  ".ssh/id_ed25519.pub".text = userKey;
-                  ".ssh/allowed_signers".text = "${git.email} ${userKey}";
-                };
+                file = lib.optionalAttrs (userKey != null) (
+                  {
+                    ".ssh/id_ed25519.pub".text = userKey;
+                  }
+                  // lib.optionalAttrs (git != null && git ? email) {
+                    ".ssh/allowed_signers".text = "${git.email} ${userKey}";
+                  }
+                );
                 # https://wiki.archlinux.org/title/Dotfiles
                 activation.initDotfiles = inputs.home-manager.lib.hm.dag.entryAfter ["writeBoundary"] ''
                   if [ ! -d "$HOME/.dotfiles" ]; then

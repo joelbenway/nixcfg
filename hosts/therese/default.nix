@@ -6,10 +6,14 @@
   self,
   hostname,
   platform,
+  inputs,
   ...
 }: let
-  wifiEnv = "${lib.custom.relativeToRoot "wifi.env"}";
-  sshKey = lib.custom.relativeToRoot "id_ed25519";
+  wifiEnvPath = lib.custom.relativeToRoot "wifi.env";
+  hasWifiEnv = builtins.pathExists wifiEnvPath;
+
+  sshKeyPath = lib.custom.relativeToRoot "id_ed25519";
+  hasSshKey = builtins.pathExists sshKeyPath;
 
   filteredSource =
     builtins.filterSource (
@@ -23,7 +27,11 @@
 
   installScript = pkgs.writeShellScriptBin "install" ''
     echo "Installing..."
-    exec /iso/nixcfg/hosts/therese/install_flake --key /etc/id_ed25519
+    if [ -f /etc/id_ed25519 ]; then
+      exec bash /iso/nixcfg/hosts/therese/install_flake --key /etc/id_ed25519 "$@"
+    else
+      exec bash /iso/nixcfg/hosts/therese/install_flake "$@"
+    fi
   '';
 in {
   imports = [
@@ -32,6 +40,7 @@ in {
   ];
 
   nix.settings.experimental-features = ["nix-command" "flakes"];
+  nix.nixPath = ["nixpkgs=${inputs.nixpkgs}"];
   nixpkgs.hostPlatform = platform;
 
   users.users.nixos = {
@@ -40,13 +49,18 @@ in {
 
   networkstack = {
     hostName = hostname;
-    wifiHome = true;
-    envFile = wifiEnv;
+    wifiHome = hasWifiEnv;
+    envFile =
+      if hasWifiEnv
+      then wifiEnvPath
+      else null;
   }; #networkstack
 
-  environment.etc."id_ed25519" = {
-    source = sshKey;
-    mode = "0444";
+  environment.etc = lib.mkIf hasSshKey {
+    "id_ed25519" = {
+      source = sshKeyPath;
+      mode = "0444";
+    };
   };
 
   isoImage.contents = [
@@ -62,6 +76,7 @@ in {
     disko
     git
     installScript
+    jq
     sbctl
     util-linux
   ];

@@ -94,11 +94,19 @@ echo ">>> Archiving flake and injecting secrets..."
 podman exec "$CONTAINER_NAME" mkdir -p "$FLAKE_DIR"
 
 # Inject flake via tar pipe
-COMMIT_ISH=$(git stash create || echo "HEAD")
-git archive --format=tar "$COMMIT_ISH" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
+COMMIT_ISH=$(git -C "$ROOT_DIR" stash create || true)
+COMMIT_ISH="${COMMIT_ISH:-HEAD}"
+git -C "$ROOT_DIR" archive --format=tar "$COMMIT_ISH" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
+
+# Inject secrets submodule via tar pipe
+if [ -d "$SECRET_DIR" ]; then
+	SECRET_COMMIT=$(git -C "$SECRET_DIR" stash create || true)
+	SECRET_COMMIT="${SECRET_COMMIT:-HEAD}"
+	git -C "$SECRET_DIR" archive --format=tar --prefix=secrets/ "$SECRET_COMMIT" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
+fi
 
 # Inject secrets via pipe
-cat "$KEY_PATH" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/$(basename "$KEY_PATH")" >/dev/null
+cat "$KEY_PATH" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/id_ed25519" >/dev/null
 age -d -i "$KEY_PATH" "$WIFI_SECRET" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/wifi.env" >/dev/null
 
 echo ">>> Building ISO (this may take a while)..."
@@ -122,7 +130,7 @@ ISO_STORE_PATH=$(podman exec "$CONTAINER_NAME" readlink -f /tmp/result)
 
 # Find the ISO file inside that store path
 # We use 'ls' inside the container to find the .iso file
-ISO_FILENAME=$(podman exec "$CONTAINER_NAME" sh -c "ls $ISO_STORE_PATH/iso/*.iso | xargs basename")
+ISO_FILENAME=$(podman exec "$CONTAINER_NAME" sh -c "ls $ISO_STORE_PATH/iso/*.iso | head -n 1 | xargs basename")
 
 # Generate timestamped name
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
