@@ -12,7 +12,7 @@
         description = "The Plasma look and feel theme";
       }; # theme
       wallpaper = lib.mkOption {
-        type = with lib.types; nullOr path;
+        type = with lib.types; nullOr (either path str);
         default = null;
         description = "The Plasma wallpaper";
       }; # wallpaper

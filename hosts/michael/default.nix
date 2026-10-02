@@ -36,9 +36,6 @@
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
-    inputs.disko.nixosModules.disko
-    inputs.agenix.nixosModules.default
-    (lib.custom.relativeToRoot "hosts/configuration.nix")
     (lib.custom.relativeToRoot "hardware/alderlake.nix")
   ];
 

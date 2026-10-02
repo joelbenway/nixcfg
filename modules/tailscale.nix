@@ -7,7 +7,7 @@
   options.tailscale = {
     enable = lib.mkEnableOption "Enable tailscale.";
     envFile = lib.mkOption {
-      type = with lib.types; nullOr path;
+      type = with lib.types; nullOr (either path str);
       default = null;
       example = "/home/user/.secrets/ts.env";
       description = ''
@@ -39,8 +39,8 @@
         cfg = config.services.tailscale;
       in {
         description = "Automatic authentication for Tailscale";
-        after = ["tailscaled.service" "network-online.target"];
-        wants = ["tailscaled.service" "network-online.target"];
+        after = ["tailscaled.service" "network-online.target" "agenix.service"];
+        wants = ["tailscaled.service" "network-online.target" "agenix.service"];
         wantedBy = ["multi-user.target"];
         serviceConfig = {
           Type = "notify";
@@ -71,7 +71,7 @@
                     echo "Server needs authentication, creating auth key..."
                     set -a
                     # shellcheck source=/dev/null
-                    source ${config.tailscale.envFile}
+                    source "${config.tailscale.envFile}"
                     set +a
 
                     access_token=$(curl -s -u "$TS_API_CLIENT_ID:$TS_API_CLIENT_SECRET" \

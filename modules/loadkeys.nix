@@ -9,7 +9,7 @@
       enable = lib.mkEnableOption "Enable session key loading for this user";
 
       envFile = lib.mkOption {
-        type = with lib.types; nullOr path;
+        type = with lib.types; nullOr (either path str);
         default = null;
         description = ''
           Path to an EnvironmentFile containing API keys and other variables.

@@ -1,5 +1,4 @@
-#! /usr/bin/env nix-shell
-#! nix-shell -i bash -p age bash disko sbctl jq btrfs-progs util-linux
+#!/usr/bin/env bash
 # shellcheck shell=bash
 
 set -euo pipefail
@@ -38,7 +37,7 @@ LANZABOOTE_ENABLED=$(nix eval --json "${ROOT_DIR}#nixosConfigurations.${TARGET_H
 
 if [[ "$LANZABOOTE_ENABLED" == "true" ]]; then
   echo "Checking Secure Boot status..."
-  if ! sbctl status --json | jq -e '.setup_mode' >/dev/null; then
+  if ! sudo sbctl status --json | jq -e '.setup_mode' >/dev/null; then
     echo "ERROR: Setup Mode is not enabled. Please enable Setup Mode in your BIOS/UEFI."
     exit 1
   fi
@@ -51,10 +50,12 @@ SECRET_FILE="${ROOT_DIR}/secrets/${TARGET_HOST}-luks-passphrase.age"
 if [[ -n "$SSH_KEY" ]] && [[ -f "$SECRET_FILE" ]]; then
   echo "Attempting to decrypt LUKS passphrase from $(basename "$SECRET_FILE")..."
   if sudo age -d -i "$SSH_KEY" "$SECRET_FILE" 2>/dev/null | sudo tee /tmp/secret.key >/dev/null; then
+    sudo chmod 600 /tmp/secret.key
     echo "Success! Passphrase decrypted."
     DECRYPTED=true
   else
     echo "Decryption failed. Please enter passphrase manually."
+    sudo rm -f /tmp/secret.key
   fi
 fi
 
@@ -69,7 +70,8 @@ if [[ "$DECRYPTED" == "false" ]]; then
       echo "Passphrases do not match. Please try again."
       echo
     else
-      echo -n "$PASSPHRASE_1" >/tmp/secret.key
+      echo -n "$PASSPHRASE_1" | sudo tee /tmp/secret.key >/dev/null
+      sudo chmod 600 /tmp/secret.key
       break
     fi
   done
@@ -99,4 +101,4 @@ if [[ -n "$SSH_KEY" ]] && [[ -f "$SECRET_FILE" ]]; then
   fi
 fi
 
-sudo nixos-install --flake "${ROOT_DIR}#${TARGET_HOST}"
+sudo nixos-install --no-channel-copy --flake "${ROOT_DIR}#${TARGET_HOST}"

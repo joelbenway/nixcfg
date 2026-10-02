@@ -6,10 +6,10 @@
   options.openssh = {
     enable = lib.mkEnableOption "enable openssh";
     hostKeyPath = lib.mkOption {
-      type = with lib.types; nullOr path;
-      default = /etc/ssh/ssh_host_ed25519_key;
+      type = with lib.types; nullOr (either path str);
+      default = "/etc/ssh/ssh_host_ed25519_key";
       description = "Path to ed25519 host key";
-    }; #envFile
+    }; # hostKeyPath
   }; # options
 
   config = lib.mkIf config.openssh.enable {
