@@ -208,8 +208,7 @@ in {
                   enable = true;
                   settings = {
                     user = {
-                      name = git.name;
-                      email = git.email;
+                      inherit (git) name email;
                     }; # user
                     gpg = {
                       ssh = {

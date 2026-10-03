@@ -1,0 +1,204 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - dev
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - master
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret Scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: TruffleHog OSS Secret Scan
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
+        with:
+          version: "3.97.9"
+          extra_args: --only-verified
+
+  lint-nix:
+    name: Nix Linting (Alejandra & Statix)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
+
+      - name: Check formatting with Alejandra
+        run: nix run nixpkgs#alejandra -- --check .
+
+      - name: Lint with Statix
+        run: nix run nixpkgs#statix -- check .
+
+  lint-shell:
+    name: Shell Script Linting (ShellCheck & Shfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
+
+      - name: Run ShellCheck
+        run: nix run nixpkgs#shellcheck -- hosts/therese/install_flake scripts/build_iso
+
+      - name: Check Shell Formatting with Shfmt
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci hosts/therese/install_flake scripts/build_iso
+
+  lint-workflows:
+    name: Workflow Linting (Actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
+
+      - name: Run Actionlint
+        run: nix run nixpkgs#actionlint
+
+  flake-check:
+    name: Flake Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize secrets submodule or placeholders
+        env:
+          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SSH_KEY" ]; then
+            echo "Initializing private secrets submodule via SSH key..."
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
+            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
+            git submodule update --init --recursive
+          else
+            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
+            git rm --cached secrets 2>/dev/null || true
+            rm -rf secrets && mkdir -p secrets
+            sed -i '/self.submodules = true;/d' flake.nix
+            for f in \
+              agnes-host-key.age agnes-luks-passphrase.age \
+              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass_paywalls_clean-latest.xpi.age \
+              francis-host-key.age francis-luks-passphrase.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
+              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              michael-host-key.age michael-luks-passphrase.age \
+              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              zita-luks-passphrase.age; do
+              touch "secrets/$f"
+            done
+            git config user.name "CI"
+            git config user.email "ci@local"
+            git add -f secrets flake.nix
+          fi
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
+
+      - name: Run nix flake check
+        run: nix flake check --show-trace
+
+  eval-hosts:
+    name: Evaluate Host (${{ matrix.host }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - agnes
+          - francis
+          - jerome
+          - michael
+          - zita
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize secrets submodule or placeholders
+        env:
+          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SSH_KEY" ]; then
+            echo "Initializing private secrets submodule via SSH key..."
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
+            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
+            git submodule update --init --recursive
+          else
+            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
+            git rm --cached secrets 2>/dev/null || true
+            rm -rf secrets && mkdir -p secrets
+            sed -i '/self.submodules = true;/d' flake.nix
+            for f in \
+              agnes-host-key.age agnes-luks-passphrase.age \
+              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass_paywalls_clean-latest.xpi.age \
+              francis-host-key.age francis-luks-passphrase.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
+              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              michael-host-key.age michael-luks-passphrase.age \
+              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              zita-luks-passphrase.age; do
+              touch "secrets/$f"
+            done
+            git config user.name "CI"
+            git config user.email "ci@local"
+            git add -f secrets flake.nix
+          fi
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
+
+      - name: Evaluate host system derivation
+        run: nix eval .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel.drvPath

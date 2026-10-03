@@ -57,7 +57,7 @@
               default_area = "navbar";
             };
           }
-          // (lib.mapAttrs (name: value: {
+          // (lib.mapAttrs (_: value: {
               install_url =
                 if builtins.isPath value.source
                 then "file://${value.source}"

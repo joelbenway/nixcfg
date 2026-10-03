@@ -7,7 +7,10 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # stable.url = "github:nixos/nixpkgs/nixos-24.05";
 
-    nixos-hardware.url = "github:NixOS/nixos-hardware/master";
+    nixos-hardware = {
+      url = "github:NixOS/nixos-hardware/master";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     home-manager = {
       url = "github:nix-community/home-manager";
@@ -21,10 +24,12 @@
     impermanence = {
       url = "github:nix-community/impermanence";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
     };
     agenix = {
       url = "github:ryantm/agenix";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
     };
     lanzaboote = {
       url = "github:nix-community/lanzaboote";
@@ -41,6 +46,7 @@
     hermes-agent = {
       url = "github:NousResearch/hermes-agent";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
     };
   };
 
@@ -51,7 +57,7 @@
   } @ inputs: let
     supportedSystems = ["x86_64-linux" "aarch64-linux"];
     forEachSupportedSystem = f: nixpkgs.lib.genAttrs supportedSystems (system: f {pkgs = import nixpkgs {inherit system;};});
-    lib = nixpkgs.lib.extend (self: super: {
+    lib = nixpkgs.lib.extend (_: super: {
       custom = import ./lib {lib = super;};
     });
 

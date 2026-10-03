@@ -14,7 +14,7 @@
     environment.systemPackages = with pkgs; [
       (retroarch.withCores (
         cores:
-          with libretro; [
+          with cores; [
             fbalpha2012 # arcade for low-end devices
             mame2003-plus # arcade general purpose
             mame2010 # arcade compatibility

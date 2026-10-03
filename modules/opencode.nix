@@ -20,10 +20,10 @@ in {
   config = {
     home-manager.users =
       lib.mapAttrs (
-        user: cfg: {
+        _: cfg: {
           programs = {
             opencode = {
-              enable = cfg.enable;
+              inherit (cfg) enable;
               enableMcpIntegration = true;
               settings = {
                 lsp = true;

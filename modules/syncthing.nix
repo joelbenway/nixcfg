@@ -25,9 +25,9 @@ in {
 
   config = {
     home-manager.users =
-      lib.mapAttrs (user: userConfig: {
+      lib.mapAttrs (_: userConfig: {
         services.syncthing = {
-          enable = userConfig.enable;
+          inherit (userConfig) enable;
           extraOptions = [
             "--gui-address=${userConfig.guiAddress}"
           ];

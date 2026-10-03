@@ -30,11 +30,11 @@ in {
   config = {
     home-manager.users =
       lib.mapAttrs (
-        user: cfg:
+        _: cfg:
           lib.mkIf cfg.enable {
             programs = {
               gemini-cli = {
-                enable = cfg.enable;
+                inherit (cfg) enable;
                 package = pkgs.gemini-cli;
                 enableMcpIntegration = true;
                 settings = {

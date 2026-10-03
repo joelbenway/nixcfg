@@ -36,7 +36,7 @@
         knownHosts = let
           keys = import (lib.custom.relativeToRoot "data/keys.nix");
         in
-          lib.mapAttrs (name: publicKey: {inherit publicKey;}) keys.hosts; # knownHosts
+          lib.mapAttrs (_: publicKey: {inherit publicKey;}) keys.hosts; # knownHosts
       }; # openssh
     }; # services
   }; # config

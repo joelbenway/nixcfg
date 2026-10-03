@@ -26,12 +26,10 @@ in {
 
   config = lib.mkIf config.vscodium.enable {
     home-manager.users =
-      lib.mapAttrs (user: userConfig: {
+      lib.mapAttrs (_: userConfig: {
         home = {
           packages = with pkgs;
-            [
-            ]
-            ++ lib.optionals userConfig.cpp [
+            lib.optionals userConfig.cpp [
               clang-tools
             ]
             ++ lib.optionals userConfig.nix [
