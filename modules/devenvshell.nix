@@ -5,12 +5,7 @@
   ...
 }: {
   options.devenvshell = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      example = true;
-      description = "Enable devenv shell";
-    }; # enable
+    enable = lib.mkEnableOption "devenv shell";
   }; # options.devenvshell
 
   config = lib.mkIf config.devenvshell.enable {

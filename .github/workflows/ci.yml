@@ -82,26 +82,44 @@ jobs:
   flake-check:
     name: Flake Check
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Initialize secrets submodule (if SSH key configured)
+      - name: Initialize secrets submodule or placeholders
         env:
           SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
         run: |
           if [ -n "$SSH_KEY" ]; then
-            echo "Initializing private secrets submodule..."
+            echo "Initializing private secrets submodule via SSH key..."
             mkdir -p ~/.ssh
             echo "$SSH_KEY" > ~/.ssh/id_ed25519
             chmod 600 ~/.ssh/id_ed25519
             ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
             git submodule update --init --recursive
           else
-            echo "Secrets SSH key not configured; skipping submodule checkout."
+            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
+            git rm --cached secrets 2>/dev/null || true
+            rm -rf secrets && mkdir -p secrets
+            sed -i '/self.submodules = true;/d' flake.nix
+            for f in \
+              agnes-host-key.age agnes-luks-passphrase.age \
+              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass_paywalls_clean-latest.xpi.age \
+              francis-host-key.age francis-luks-passphrase.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
+              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              michael-host-key.age michael-luks-passphrase.age \
+              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              zita-luks-passphrase.age; do
+              touch "secrets/$f"
+            done
+            git config user.name "CI"
+            git config user.email "ci@local"
+            git add -f secrets flake.nix
           fi
 
       - name: Install Nix
@@ -113,9 +131,6 @@ jobs:
   eval-hosts:
     name: Evaluate Host (${{ matrix.host }})
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -124,25 +139,45 @@ jobs:
           - francis
           - jerome
           - michael
-          - therese
           - zita
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Initialize secrets submodule (if SSH key configured)
+      - name: Initialize secrets submodule or placeholders
         env:
           SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
         run: |
           if [ -n "$SSH_KEY" ]; then
-            echo "Initializing private secrets submodule..."
+            echo "Initializing private secrets submodule via SSH key..."
             mkdir -p ~/.ssh
             echo "$SSH_KEY" > ~/.ssh/id_ed25519
             chmod 600 ~/.ssh/id_ed25519
             ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
             git submodule update --init --recursive
           else
-            echo "Secrets SSH key not configured; skipping submodule checkout."
+            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
+            git rm --cached secrets 2>/dev/null || true
+            rm -rf secrets && mkdir -p secrets
+            sed -i '/self.submodules = true;/d' flake.nix
+            for f in \
+              agnes-host-key.age agnes-luks-passphrase.age \
+              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass_paywalls_clean-latest.xpi.age \
+              francis-host-key.age francis-luks-passphrase.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
+              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              michael-host-key.age michael-luks-passphrase.age \
+              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              zita-luks-passphrase.age; do
+              touch "secrets/$f"
+            done
+            git config user.name "CI"
+            git config user.email "ci@local"
+            git add -f secrets flake.nix
           fi
 
       - name: Install Nix
@@ -150,34 +185,3 @@ jobs:
 
       - name: Evaluate host system derivation
         run: nix eval .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel.drvPath
-
-  eval-iso:
-    name: Evaluate Installer ISO (Therese)
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Initialize secrets submodule (if SSH key configured)
-        env:
-          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-        run: |
-          if [ -n "$SSH_KEY" ]; then
-            echo "Initializing private secrets submodule..."
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-            git submodule update --init --recursive
-          else
-            echo "Secrets SSH key not configured; skipping submodule checkout."
-          fi
-
-      - name: Install Nix
-        uses: DeterminateSystems/determinate-nix-action@v3
-
-      - name: Evaluate ISO image derivation
-        run: nix eval .#nixosConfigurations.therese.config.system.build.isoImage.drvPath

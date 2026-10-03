@@ -1,7 +1,6 @@
 {
   config,
   hostname,
-  inputs,
   lib,
   modulesPath,
   ...
@@ -57,7 +56,7 @@ in {
 
   openssh = {
     enable = true;
-    hostKeyPath = hostKeyPath;
+    inherit hostKeyPath;
   };
 
   distributed-builds = {

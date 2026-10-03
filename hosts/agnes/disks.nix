@@ -42,7 +42,7 @@ in {
                 type = "luks";
                 name = "cryptswap";
                 settings.allowDiscards = true;
-                passwordFile = passwordFile;
+                inherit passwordFile;
                 content = {
                   type = "swap";
                   extraArgs = ["-L SWAP"];
@@ -55,7 +55,7 @@ in {
                 type = "luks";
                 name = "cryptroot";
                 settings.allowDiscards = true;
-                passwordFile = passwordFile;
+                inherit passwordFile;
                 content = {
                   type = "btrfs";
                   extraArgs = ["-L ROOT" "-f"];

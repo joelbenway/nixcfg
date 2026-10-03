@@ -3,6 +3,7 @@ pkgs.mkShell {
   buildInputs = [
     pkgs.actionlint
     pkgs.alejandra
+    pkgs.gh
     pkgs.git-filter-repo
     pkgs.shellcheck
     pkgs.shfmt

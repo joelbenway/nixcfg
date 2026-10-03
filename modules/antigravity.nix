@@ -27,7 +27,7 @@ in {
 
   config = lib.mkIf config.antigravity.enable {
     home-manager.users =
-      lib.mapAttrs (user: userConfig: {
+      lib.mapAttrs (_: userConfig: {
         disabledModules = ["programs/antigravity.nix"];
         imports = [
           (import "${inputs.home-manager}/modules/programs/vscode/mkVscodeModule.nix" {
@@ -42,9 +42,7 @@ in {
 
         home = {
           packages = with pkgs;
-            [
-            ]
-            ++ lib.optionals userConfig.cpp [
+            lib.optionals userConfig.cpp [
               clang-tools
             ]
             ++ lib.optionals userConfig.nix [

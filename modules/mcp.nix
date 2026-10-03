@@ -25,12 +25,12 @@ in {
   }; # options
 
   config = {
-    home-manager.users = lib.mapAttrs (user: cfg:
+    home-manager.users = lib.mapAttrs (_: cfg:
       lib.mkIf cfg.enable {
         programs = {
           mcp = {
             enable = true;
-            servers = cfg.servers;
+            inherit (cfg) servers;
           }; # mcp
         }; # programs
       })
