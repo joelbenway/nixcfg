@@ -6,6 +6,8 @@ on:
       - master
       - main
       - dev
+      - 'feat/**'
+      - 'fix/**'
   pull_request:
     branches:
       - master
