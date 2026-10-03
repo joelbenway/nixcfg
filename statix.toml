@@ -1,0 +1,12 @@
+# Configuration for statix linter
+disabled = [
+  "repeated_keys",
+  "manual_inherit",
+  "manual_inherit_from",
+  "empty_pattern",
+  "empty_list_concat",
+]
+ignore = [
+  ".direnv",
+  "secrets",
+]

@@ -32,8 +32,8 @@ jobs:
         with:
           extra_args: --only-verified
 
-  format-check:
-    name: Code Formatting (Alejandra)
+  lint-nix:
+    name: Nix Linting (Alejandra & Statix)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -42,11 +42,43 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@v3
 
-      - name: Check Nix code formatting
+      - name: Check formatting with Alejandra
         run: nix run nixpkgs#alejandra -- --check .
 
+      - name: Lint with Statix
+        run: nix run nixpkgs#statix -- check .
+
+  lint-shell:
+    name: Shell Script Linting (ShellCheck & Shfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Run ShellCheck
+        run: nix run nixpkgs#shellcheck -- hosts/therese/install_flake scripts/build_iso
+
+      - name: Check Shell Formatting with Shfmt
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci hosts/therese/install_flake scripts/build_iso
+
+  lint-workflows:
+    name: Workflow Linting (Actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Run Actionlint
+        run: nix run nixpkgs#actionlint
+
   flake-check:
-    name: Nix Flake Check
+    name: Flake Check
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -75,3 +107,75 @@ jobs:
 
       - name: Run nix flake check
         run: nix flake check --show-trace
+
+  eval-hosts:
+    name: Evaluate Host (${{ matrix.host }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - agnes
+          - francis
+          - jerome
+          - michael
+          - therese
+          - zita
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize secrets submodule (if SSH key configured)
+        env:
+          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SSH_KEY" ]; then
+            echo "Initializing private secrets submodule..."
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+            git submodule update --init --recursive
+          else
+            echo "Secrets SSH key not configured; skipping submodule checkout."
+          fi
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Evaluate host system derivation
+        run: nix eval .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel.drvPath
+
+  eval-iso:
+    name: Evaluate Installer ISO (Therese)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize secrets submodule (if SSH key configured)
+        env:
+          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SSH_KEY" ]; then
+            echo "Initializing private secrets submodule..."
+            mkdir -p ~/.ssh
+            echo "$SSH_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+            git submodule update --init --recursive
+          else
+            echo "Secrets SSH key not configured; skipping submodule checkout."
+          fi
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Evaluate ISO image derivation
+        run: nix eval .#nixosConfigurations.therese.config.system.build.isoImage.drvPath

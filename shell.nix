@@ -1,6 +1,14 @@
 {pkgs ? import <nixpkgs> {}}:
 pkgs.mkShell {
-  buildInputs = [pkgs.alejandra pkgs.trufflehog pkgs.git-filter-repo];
+  buildInputs = [
+    pkgs.actionlint
+    pkgs.alejandra
+    pkgs.git-filter-repo
+    pkgs.shellcheck
+    pkgs.shfmt
+    pkgs.statix
+    pkgs.trufflehog
+  ];
 
   shellHook = ''
         HOOK_DIR=".git/hooks"

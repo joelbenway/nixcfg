@@ -10,9 +10,9 @@ SECRET_DIR="${ROOT_DIR}/secrets"
 
 # Determine real user's home directory if running with sudo
 if [ -n "${SUDO_USER:-}" ]; then
-	REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 else
-	REAL_HOME=$HOME
+  REAL_HOME=$HOME
 fi
 KEY_PATH="${REAL_HOME}/.ssh/id_ed25519"
 
@@ -23,17 +23,17 @@ FLAKE_TARGET="therese"
 FLAKE_DIR="/tmp/flake" # Path inside container
 
 cleanup() {
-	EXIT_CODE=$?
-	echo ""
-	if [ $EXIT_CODE -ne 0 ]; then
-		echo "!!! Build failed with exit code $EXIT_CODE."
-	fi
-	echo ">>> Cleanup: Removing container '$CONTAINER_NAME'..."
-	podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  EXIT_CODE=$?
+  echo ""
+  if [ $EXIT_CODE -ne 0 ]; then
+    echo "!!! Build failed with exit code $EXIT_CODE."
+  fi
+  echo ">>> Cleanup: Removing container '$CONTAINER_NAME'..."
+  podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-	END_TIME=$SECONDS
-	DURATION=$((END_TIME - START_TIME))
-	echo ">>> Total time elapsed: $((DURATION / 60))m $((DURATION % 60))s"
+  END_TIME=$SECONDS
+  DURATION=$((END_TIME - START_TIME))
+  echo ">>> Total time elapsed: $((DURATION / 60))m $((DURATION % 60))s"
 }
 
 trap cleanup EXIT
@@ -43,33 +43,33 @@ echo ">>> Conducting Pre-Flight checks for building '$FLAKE_TARGET'..."
 START_TIME=$SECONDS
 
 if ! command -v podman &>/dev/null; then
-	echo "ERROR: 'podman' command not found. Please install it."
-	exit 1
+  echo "ERROR: 'podman' command not found. Please install it."
+  exit 1
 fi
 
 if [ ! -f "$KEY_PATH" ]; then
-	echo "ERROR: Key not found at $KEY_PATH"
-	exit 1
+  echo "ERROR: Key not found at $KEY_PATH"
+  exit 1
 fi
 
 if [[ ! -f "${WIFI_SECRET}" ]]; then
-	echo "ERROR: Could not find ${WIFI_SECRET}"
-	exit 1
+  echo "ERROR: Could not find ${WIFI_SECRET}"
+  exit 1
 fi
 
 decrypt_err() {
-	echo "ERROR: Unable to decrypt secrets using $KEY_PATH."
-	echo "       Ensure the key is correct and authorized in secrets/secrets.nix."
-	exit 1
+  echo "ERROR: Unable to decrypt secrets using $KEY_PATH."
+  echo "       Ensure the key is correct and authorized in secrets/secrets.nix."
+  exit 1
 }
 
 if ! age -d -i "$KEY_PATH" "$WIFI_SECRET" >/dev/null 2>&1; then
-	decrypt_err
+  decrypt_err
 fi
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	echo "ERROR: Not in a git repo"
-	exit 1
+  echo "ERROR: Not in a git repo"
+  exit 1
 fi
 
 # Ensure output directory exists
@@ -82,11 +82,11 @@ podman pull --quiet nixos/nix >/dev/null
 
 podman run --name "$CONTAINER_NAME" \
   --replace \
-	--detach \
-	--privileged \
-	--rm \
-	--entrypoint sleep \
-	nixos/nix infinity
+  --detach \
+  --privileged \
+  --rm \
+  --entrypoint sleep \
+  nixos/nix infinity
 
 echo ">>> Archiving flake and injecting secrets..."
 
@@ -100,9 +100,9 @@ git -C "$ROOT_DIR" archive --format=tar "$COMMIT_ISH" | podman exec -i "$CONTAIN
 
 # Inject secrets submodule via tar pipe
 if [ -d "$SECRET_DIR" ]; then
-	SECRET_COMMIT=$(git -C "$SECRET_DIR" stash create || true)
-	SECRET_COMMIT="${SECRET_COMMIT:-HEAD}"
-	git -C "$SECRET_DIR" archive --format=tar --prefix=secrets/ "$SECRET_COMMIT" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
+  SECRET_COMMIT=$(git -C "$SECRET_DIR" stash create || true)
+  SECRET_COMMIT="${SECRET_COMMIT:-HEAD}"
+  git -C "$SECRET_DIR" archive --format=tar --prefix=secrets/ "$SECRET_COMMIT" | podman exec -i "$CONTAINER_NAME" tar -x -C "$FLAKE_DIR"
 fi
 
 # Inject secrets via pipe
@@ -117,10 +117,10 @@ echo "    Target: $FLAKE_TARGET"
 # nixos/nix usually has experimental features enabled or we pass flags.
 
 podman exec "$CONTAINER_NAME" nix \
-	--extra-experimental-features "nix-command flakes" \
-	build "$FLAKE_DIR#nixosConfigurations.$FLAKE_TARGET.config.system.build.isoImage" \
-	--out-link /tmp/result \
-	--impure
+  --extra-experimental-features "nix-command flakes" \
+  build "$FLAKE_DIR#nixosConfigurations.$FLAKE_TARGET.config.system.build.isoImage" \
+  --out-link /tmp/result \
+  --impure
 
 echo ">>> Extracting results..."
 
@@ -152,8 +152,8 @@ echo "----------------------------------------------------"
 # Check for mounted Ventoy drive and copy ISO if found
 VENTOY_DIR=$(lsblk -o MOUNTPOINT,LABEL -n -r | grep "Ventoy" | cut -d' ' -f1 | head -n 1 || true)
 if [ -n "$VENTOY_DIR" ] && [ -d "$VENTOY_DIR" ]; then
-	echo ">>> Detected Ventoy drive at $VENTOY_DIR. Copying ISO..."
-	cp "$OUTPUT_DIR/$NEW_ISO_NAME" "$VENTOY_DIR/"
-	sync
-	echo "    Successfully copied to Ventoy."
+  echo ">>> Detected Ventoy drive at $VENTOY_DIR. Copying ISO..."
+  cp "$OUTPUT_DIR/$NEW_ISO_NAME" "$VENTOY_DIR/"
+  sync
+  echo "    Successfully copied to Ventoy."
 fi
