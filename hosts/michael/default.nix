@@ -6,32 +6,9 @@
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
-
-  vlanIot = {
-    id = 69;
-    name = "iot";
-    subnet = "192.168.69";
-    prefix = 24;
-    interface = "eno2.69";
-  };
-
-  vlanSkynet = {
-    id = 62;
-    name = "skynet";
-    subnet = "192.168.62";
-    prefix = 24;
-    interface = "eno2.62";
-  };
-
-  vlanSkylab = {
-    id = 77;
-    name = "skylab";
-    subnet = "192.168.77";
-    prefix = 24;
-    interface = "eno2.77";
-  };
-
-  vlans = [vlanIot vlanSkynet vlanSkylab];
+  network = import ./network.nix;
+  vlanList = builtins.attrValues network.vlans;
+  allInternalInterfaces = [network.lanInterface network.oob.interface] ++ (map (v: v.interface) vlanList);
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
@@ -100,60 +77,89 @@ in {
 
   firewall = {
     enable = true;
-    wanInterface = "eno1";
-    vlans = {
-      iot = vlanIot;
-      skynet = vlanSkynet;
-      skylab = vlanSkylab;
-    };
+    wanInterface = network.wanInterface;
+    vlans = network.vlans;
+    extraInternalIPs = [
+      "${network.mgmt.subnet}.0/${toString network.mgmt.prefix}"
+    ];
+  };
+
+  netprov = {
+    enable = true;
+    networkConfig = network;
   };
 
   networking = {
     useDHCP = false;
+    nameservers = [
+      "127.0.0.1" # Local Pi-hole + Unbound root recursive resolver
+      "9.9.9.9" # Quad9 primary (Swiss privacy foundation, zero-logging)
+      "149.112.112.112" # Quad9 secondary
+    ];
 
-    vlans = let
-      mkVlan = vlan: {
+    vlans = builtins.listToAttrs (map (vlan: {
         name = vlan.interface;
         value = {
-          id = vlan.id;
-          interface = "eno2";
+          inherit (vlan) id;
+          interface = network.lanInterface;
         };
-      };
-    in
-      builtins.listToAttrs (map mkVlan vlans);
+      })
+      vlanList);
 
     interfaces =
       {
-        eno1.useDHCP = true;
+        "${network.wanInterface}".useDHCP = true;
+        "${network.lanInterface}".ipv4.addresses = [
+          {
+            address = network.mgmt.routerIp;
+            prefixLength = network.mgmt.prefix;
+          }
+        ];
+        "${network.oob.interface}".ipv4.addresses = [
+          {
+            address = network.oob.routerIp;
+            prefixLength = network.oob.prefix;
+          }
+        ];
       }
-      // (let
-        mkVlanAddr = vlan: {
+      // (builtins.listToAttrs (map (vlan: {
           name = vlan.interface;
           value = {
             ipv4.addresses = [
               {
-                address = "${vlan.subnet}.1";
+                address = vlan.routerIp;
                 prefixLength = vlan.prefix;
               }
             ];
           };
-        };
-      in
-        builtins.listToAttrs (map mkVlanAddr vlans));
+        })
+        vlanList));
 
     firewall = {
       filterForward = true;
+      # Do not expose ports globally across all interfaces (protects WAN)
+      allowedTCPPorts = lib.mkForce [];
+      allowedUDPPorts = lib.mkForce [];
+
       extraInputRules = ''
-        iifname {${lib.concatStringsSep ", " (map (v: v.interface) vlans)}} tcp dport {53, 80, 443} accept
-        iifname {${lib.concatStringsSep ", " (map (v: v.interface) vlans)}} udp dport {53, 67} accept
+        # Allow DNS & Web UI on all internal interfaces
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} tcp dport {53, 80, 443} accept
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} udp dport {53, 67} accept
+
+        # Allow SSH on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
+        iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport 22 accept
       '';
       extraForwardRules = ''
-        # skylab → skynet
-        iifname "${vlanSkylab.interface}" oifname "${vlanSkynet.interface}" accept
-        # skylab → iot
-        iifname "${vlanSkylab.interface}" oifname "${vlanIot.interface}" accept
-        # skynet → iot
-        iifname "${vlanSkynet.interface}" oifname "${vlanIot.interface}" accept
+        # Allow all internal VLANs and management network to forward outbound to WAN (Internet)
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} oifname "${network.wanInterface}" accept
+
+        # skylab (trusted family) -> all other internal zones
+        iifname "${network.vlans.skylab.interface}" oifname "${network.vlans.skynet.interface}" accept
+        iifname "${network.vlans.skylab.interface}" oifname "${network.vlans.iot.interface}" accept
+        iifname "${network.vlans.skylab.interface}" oifname "${network.lanInterface}" accept
+
+        # skynet (guests) -> iot (casting to TVs/speakers)
+        iifname "${network.vlans.skynet.interface}" oifname "${network.vlans.iot.interface}" accept
       '';
     };
   };
@@ -196,11 +202,12 @@ in {
 
     pihole-ftl = {
       enable = true;
-      openFirewallDNS = true;
-      openFirewallDHCP = true;
+      openFirewallDNS = false;
+      openFirewallDHCP = false;
       settings = {
         dns = {
           upstream = ["127.0.0.1#5353"];
+          listeningMode = "ALL";
         };
         dhcp = {
           active = true;
@@ -208,10 +215,10 @@ in {
             map (vlan: {
               from = "${vlan.subnet}.100";
               to = "${vlan.subnet}.250";
-              router = "${vlan.subnet}.1";
+              router = vlan.routerIp;
               domain = "${vlan.name}.home";
             })
-            vlans;
+            vlanList;
         };
       };
       lists = [
@@ -253,6 +260,10 @@ in {
       ports = [80];
     };
 
+    hnsd = {
+      enable = true;
+    };
+
     unbound = {
       enable = true;
       settings = {
@@ -270,6 +281,12 @@ in {
           prefetch = true;
           num-threads = 4;
         };
+        stub-zone = [
+          {
+            name = ".";
+            stub-addr = "127.0.0.1@5354";
+          }
+        ];
       };
     };
   };

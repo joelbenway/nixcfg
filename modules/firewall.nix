@@ -5,6 +5,7 @@
 }: let
   cfg = config.firewall;
   vlanType = lib.types.submodule {
+    freeformType = lib.types.anything;
     options = {
       id = lib.mkOption {
         type = lib.types.int;
@@ -18,6 +19,11 @@
         type = lib.types.str;
         description = "VLAN subnet prefix (e.g. 192.168.69)";
       };
+      routerIp = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "VLAN default gateway / router IP";
+      };
       prefix = lib.mkOption {
         type = lib.types.int;
         default = 24;
@@ -26,6 +32,16 @@
       interface = lib.mkOption {
         type = lib.types.str;
         description = "VLAN interface name (e.g. eno2.69)";
+      };
+      description = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "VLAN description";
+      };
+      trusted = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether this VLAN is trusted";
       };
     };
   };
@@ -41,6 +57,11 @@ in {
       type = lib.types.attrsOf vlanType;
       default = {};
       description = "VLAN definitions keyed by name";
+    };
+    extraInternalIPs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Additional internal subnets (CIDR) to masquerade via NAT";
     };
   };
 
@@ -60,8 +81,9 @@ in {
         enable = lib.mkDefault true;
         externalInterface = cfg.wanInterface;
         internalIPs =
-          map (vlan: "${vlan.subnet}.0/${toString vlan.prefix}")
-          (builtins.attrValues cfg.vlans);
+          (map (vlan: "${vlan.subnet}.0/${toString vlan.prefix}")
+            (builtins.attrValues cfg.vlans))
+          ++ cfg.extraInternalIPs;
       };
       firewall = {
         enable = lib.mkDefault true;
