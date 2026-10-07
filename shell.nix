@@ -7,6 +7,7 @@ pkgs.mkShell {
     pkgs.alejandra
     pkgs.gh
     pkgs.git-filter-repo
+    pkgs.nixos-anywhere
     pkgs.shellcheck
     pkgs.shfmt
     pkgs.statix

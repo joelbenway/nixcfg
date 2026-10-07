@@ -1,0 +1,252 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p age bash coreutils jq nixos-anywhere openssh
+# shellcheck shell=bash
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+SECRET_DIR="${ROOT_DIR}/secrets"
+
+# Determine user's SSH key for age decryption
+if [ -n "${SUDO_USER:-}" ]; then
+  REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+  REAL_HOME=$HOME
+fi
+KEY_PATH="${REAL_HOME}/.ssh/id_ed25519"
+
+TARGET_HOST=""
+TARGET_ADDRESS=""
+EXTRA_ANYWHERE_ARGS=()
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options] [target-host]
+
+Deploy a NixOS configuration to a remote machine running the Therese bootstrap installer.
+
+Arguments:
+  target-host          NixOS configuration name to deploy (e.g., agnes, francis, jerome, etc.)
+
+Options:
+  -t, --target ADDR    Target IP address or Tailscale hostname (default: auto-detect from Tailscale)
+  -k, --key PATH       Path to SSH private key for secret decryption (default: ~/.ssh/id_ed25519)
+  --no-reboot          Do not reboot the target machine after installation
+  -h, --help           Show this help message
+EOF
+  exit 0
+}
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t | --target)
+      TARGET_ADDRESS="$2"
+      shift 2
+      ;;
+    -k | --key)
+      KEY_PATH="$2"
+      shift 2
+      ;;
+    --no-reboot)
+      EXTRA_ANYWHERE_ARGS+=("--no-reboot")
+      shift
+      ;;
+    -h | --help)
+      usage
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      if [[ -z "$TARGET_HOST" ]]; then
+        TARGET_HOST="$1"
+        shift
+      else
+        echo "Unexpected argument: $1" >&2
+        usage
+      fi
+      ;;
+  esac
+done
+
+# If target host is not provided, prompt user
+if [[ -z "$TARGET_HOST" ]]; then
+  echo "Available host configurations:"
+  for d in "${ROOT_DIR}/hosts"/*; do
+    if [[ -d "$d" && -f "$d/disks.nix" ]]; then
+      basename "$d"
+    fi
+  done
+  echo ""
+  while true; do
+    read -r -p "Enter the host to install: " TARGET_HOST
+    if [[ -f "${ROOT_DIR}/hosts/${TARGET_HOST}/disks.nix" ]]; then
+      break
+    else
+      echo "ERROR: Could not find hosts/${TARGET_HOST}/disks.nix. Please try again."
+    fi
+  done
+fi
+
+if [[ ! -f "${ROOT_DIR}/hosts/${TARGET_HOST}/disks.nix" ]]; then
+  echo "ERROR: Target host disks.nix not found at hosts/${TARGET_HOST}/disks.nix" >&2
+  exit 1
+fi
+
+# Auto-detect target node via Tailscale if not specified
+if [[ -z "$TARGET_ADDRESS" ]]; then
+  echo ">>> Discovering bootstrap installer node..."
+  BOOTSTRAP_NODES=()
+
+  if command -v tailscale &>/dev/null; then
+    while IFS= read -r line; do
+      if [[ -n "$line" ]]; then
+        BOOTSTRAP_NODES+=("$line")
+      fi
+    done < <(tailscale status --json 2>/dev/null | jq -r '
+      .Peer[]?
+      | select(((.Tags[]? == "tag:bootstrap") or (.HostName | test("^therese(-[0-9]+)?$"))) and .Online == true)
+      | "\(.HostName) \(.TailscaleIPs[0])"
+    ' || true)
+  fi
+
+  if [[ ${#BOOTSTRAP_NODES[@]} -eq 1 ]]; then
+    read -r NODE_NAME NODE_IP <<<"${BOOTSTRAP_NODES[0]}"
+    echo "    Found online bootstrap node: $NODE_NAME ($NODE_IP)"
+    TARGET_ADDRESS="$NODE_IP"
+  elif [[ ${#BOOTSTRAP_NODES[@]} -gt 1 ]]; then
+    echo "Multiple online bootstrap nodes found:"
+    for i in "${!BOOTSTRAP_NODES[@]}"; do
+      echo "  $((i + 1))) ${BOOTSTRAP_NODES[$i]}"
+    done
+    while true; do
+      read -r -p "Select node (1-${#BOOTSTRAP_NODES[@]}): " CHOICE
+      if [[ "$CHOICE" =~ ^[0-9]+$ ]] && ((CHOICE >= 1 && CHOICE <= ${#BOOTSTRAP_NODES[@]})); then
+        read -r _ NODE_IP <<<"${BOOTSTRAP_NODES[$((CHOICE - 1))]}"
+        TARGET_ADDRESS="$NODE_IP"
+        break
+      else
+        echo "Invalid choice. Please select a valid number."
+      fi
+    done
+  else
+    echo "No online 'tag:bootstrap' or 'therese' nodes detected automatically via Tailscale."
+    read -r -p "Enter target IP or hostname (e.g. therese.gentoo-humboldt.ts.net): " TARGET_ADDRESS
+    if [[ -z "$TARGET_ADDRESS" ]]; then
+      echo "ERROR: Target address cannot be empty." >&2
+      exit 1
+    fi
+  fi
+fi
+
+echo ">>> Target host:    $TARGET_HOST"
+echo ">>> Target address: $TARGET_ADDRESS"
+
+# Verify SSH connectivity to target
+echo ">>> Checking SSH connection to root@${TARGET_ADDRESS}..."
+if ! ssh -i "$KEY_PATH" -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "root@${TARGET_ADDRESS}" "true" 2>/dev/null; then
+  echo "ERROR: Unable to connect via SSH to root@${TARGET_ADDRESS} using $KEY_PATH." >&2
+  echo "       Ensure the bootstrap target is online and Joel's SSH key is authorized." >&2
+  exit 1
+fi
+echo "    SSH connection established."
+
+# Check Lanzaboote / Secure Boot setup mode if enabled on target
+LANZABOOTE_ENABLED=$(nix eval --json "${ROOT_DIR}#nixosConfigurations.${TARGET_HOST}.config.boot.lanzaboote.enable" 2>/dev/null || echo "false")
+if [[ "$LANZABOOTE_ENABLED" == "true" ]]; then
+  echo ">>> Checking Secure Boot status on target ($TARGET_ADDRESS)..."
+  SETUP_MODE=$(ssh -i "$KEY_PATH" -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "root@${TARGET_ADDRESS}" "sbctl status --json" 2>/dev/null | jq -r '.setup_mode // false' || echo "false")
+  if [[ "$SETUP_MODE" != "true" ]]; then
+    echo "ERROR: Target system is NOT in UEFI Setup Mode!" >&2
+    echo "       Host '${TARGET_HOST}' has Lanzaboote enabled, which requires UEFI Setup Mode." >&2
+    echo "       Please enable Setup Mode in UEFI/BIOS settings before installing." >&2
+    exit 1
+  fi
+  echo "    Secure Boot Setup Mode verified."
+fi
+
+# Prepare temporary directory for decrypted secrets
+TEMP_DIR=$(mktemp -d)
+cleanup() {
+  EXIT_CODE=$?
+  if [[ -d "$TEMP_DIR" ]]; then
+    rm -rf "$TEMP_DIR"
+  fi
+  exit "$EXIT_CODE"
+}
+trap cleanup EXIT
+chmod 700 "$TEMP_DIR"
+
+EXTRA_FILES_DIR="${TEMP_DIR}/extra-files"
+PERSIST_SSH_DIR="${EXTRA_FILES_DIR}/persist/etc/ssh"
+mkdir -p "$PERSIST_SSH_DIR"
+chmod 755 "${EXTRA_FILES_DIR}/persist"
+chmod 755 "${EXTRA_FILES_DIR}/persist/etc"
+chmod 700 "$PERSIST_SSH_DIR"
+
+# Stage LUKS passphrase
+LUKS_SECRET="${SECRET_DIR}/${TARGET_HOST}-luks-passphrase.age"
+LUKS_KEY_STAGED="${TEMP_DIR}/secret.key"
+
+if [[ -f "$KEY_PATH" && -f "$LUKS_SECRET" ]] && age -d -i "$KEY_PATH" "$LUKS_SECRET" >"$LUKS_KEY_STAGED" 2>/dev/null; then
+  chmod 600 "$LUKS_KEY_STAGED"
+  echo ">>> Successfully decrypted LUKS passphrase for '${TARGET_HOST}'."
+else
+  echo ">>> Automatic LUKS decryption unavailable. Enter passphrase manually:"
+  while true; do
+    read -r -s -p "Enter disk encryption passphrase: " P1
+    echo
+    read -r -s -p "Re-enter passphrase: " P2
+    echo
+    if [[ "$P1" == "$P2" ]]; then
+      echo -n "$P1" >"$LUKS_KEY_STAGED"
+      chmod 600 "$LUKS_KEY_STAGED"
+      break
+    else
+      echo "Passphrases did not match. Please try again."
+    fi
+  done
+fi
+
+# Stage host SSH private key
+HOST_KEY_SECRET="${SECRET_DIR}/${TARGET_HOST}-host-key.age"
+if [[ -f "$KEY_PATH" && -f "$HOST_KEY_SECRET" ]]; then
+  echo ">>> Decrypting host SSH private key..."
+  if age -d -i "$KEY_PATH" "$HOST_KEY_SECRET" >"${PERSIST_SSH_DIR}/ssh_host_ed25519_key" 2>/dev/null; then
+    chmod 600 "${PERSIST_SSH_DIR}/ssh_host_ed25519_key"
+    echo "    Host SSH private key staged."
+  else
+    echo "ERROR: Failed to decrypt host key from $(basename "$HOST_KEY_SECRET") using $KEY_PATH." >&2
+    exit 1
+  fi
+else
+  echo "WARNING: Host key secret not found at $HOST_KEY_SECRET."
+fi
+
+# Stage host SSH public key
+HOST_KEY_PUB=$(nix eval --impure --raw --expr "(import ${ROOT_DIR}/data/keys.nix).${TARGET_HOST} or \"\"" 2>/dev/null || true)
+if [[ -n "$HOST_KEY_PUB" ]]; then
+  echo "$HOST_KEY_PUB" >"${PERSIST_SSH_DIR}/ssh_host_ed25519_key.pub"
+  chmod 644 "${PERSIST_SSH_DIR}/ssh_host_ed25519_key.pub"
+  echo "    Host SSH public key staged from data/keys.nix."
+fi
+
+echo ">>> Launching nixos-anywhere..."
+nixos-anywhere \
+  --flake "${ROOT_DIR}#${TARGET_HOST}" \
+  --disk-encryption-keys /tmp/secret.key "$LUKS_KEY_STAGED" \
+  --extra-files "$EXTRA_FILES_DIR" \
+  -i "$KEY_PATH" \
+  --ssh-option "UserKnownHostsFile=/dev/null" \
+  --ssh-option "StrictHostKeyChecking=no" \
+  ${EXTRA_ANYWHERE_ARGS[@]+"${EXTRA_ANYWHERE_ARGS[@]}"} \
+  "root@${TARGET_ADDRESS}"
+
+echo "----------------------------------------------------"
+echo "Installation of '${TARGET_HOST}' completed successfully!"
+echo "----------------------------------------------------"

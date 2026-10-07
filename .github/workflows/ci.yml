@@ -70,10 +70,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Run ShellCheck
-        run: nix run nixpkgs#shellcheck -- hosts/therese/install_flake scripts/build_iso
+        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host
 
       - name: Check Shell Formatting with Shfmt
-        run: nix run nixpkgs#shfmt -- -d -i 2 -ci hosts/therese/install_flake scripts/build_iso
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host
 
   lint-workflows:
     name: Workflow Linting (Actionlint)
@@ -127,7 +127,7 @@ jobs:
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age zita-host-key.age \
+              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
               zita-luks-passphrase.age; do
               touch "secrets/$f"
             done
@@ -188,7 +188,7 @@ jobs:
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age zita-host-key.age \
+              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
               zita-luks-passphrase.age; do
               touch "secrets/$f"
             done

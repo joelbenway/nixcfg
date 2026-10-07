@@ -5,80 +5,59 @@
   lib,
   pkgs,
   modulesPath,
-  self,
   hostname,
   platform,
   inputs,
   ...
 }: let
-  wifiEnvPath = lib.custom.relativeToRoot "wifi.env";
-  hasWifiEnv = builtins.pathExists wifiEnvPath;
+  wifiGuestEnvPath = lib.custom.relativeToRoot "wifi-guest.env";
+  hasWifiGuestEnv = builtins.pathExists wifiGuestEnvPath;
 
-  sshKeyPath = lib.custom.relativeToRoot "id_ed25519";
-  hasSshKey = builtins.pathExists sshKeyPath;
+  tsBootstrapEnvPath = lib.custom.relativeToRoot "tailscale-oauth-bootstrap.env";
+  hasTsBootstrapEnv = builtins.pathExists tsBootstrapEnvPath;
 
-  filteredSource =
-    builtins.filterSource (
-      srcpath: type:
-        baseNameOf srcpath
-        != ".git"
-        && baseNameOf srcpath != ".gitignore"
-        && type != "symlink"
-    )
-    self;
-
-  installScript = pkgs.writeShellScriptBin "install" ''
-    echo "Installing..."
-    if [ -f /etc/id_ed25519 ]; then
-      exec bash /iso/nixcfg/hosts/therese/install_flake --key /etc/id_ed25519 "$@"
-    else
-      exec bash /iso/nixcfg/hosts/therese/install_flake "$@"
-    fi
-  '';
+  keys = import (lib.custom.relativeToRoot "data/keys.nix");
 in {
   imports = [
     (modulesPath + "/installer/cd-dvd/installation-cd-minimal.nix")
     (lib.custom.relativeToRoot "modules/networkstack.nix")
+    (lib.custom.relativeToRoot "modules/tailscale.nix")
   ];
 
   nix.settings.experimental-features = ["nix-command" "flakes"];
   nix.nixPath = ["nixpkgs=${inputs.nixpkgs}"];
   nixpkgs.hostPlatform = platform;
 
-  users.users.nixos = {
-    openssh.authorizedKeys.keys = let keys = import (lib.custom.relativeToRoot "data/keys.nix"); in [keys.joel];
-  }; # users.users.nixos
+  users.users.root.openssh.authorizedKeys.keys = [keys.joel];
+  users.users.nixos.openssh.authorizedKeys.keys = [keys.joel];
+
+  services.getty.helpLine = ''
+    Therese Bootstrap Installer
+    Connect via SSH or Tailscale from an operator machine to deploy.
+  '';
 
   networkstack = {
     hostName = hostname;
-    wifiHome = hasWifiEnv;
-    envFile =
-      if hasWifiEnv
-      then wifiEnvPath
-      else null;
-  }; #networkstack
+    wifiHome = lib.mkDefault hasWifiGuestEnv;
+    wifiIot = lib.mkDefault hasWifiGuestEnv;
+    envFiles = lib.optional hasWifiGuestEnv wifiGuestEnvPath;
+  }; # networkstack
 
-  environment.etc = lib.mkIf hasSshKey {
-    "id_ed25519" = {
-      source = sshKeyPath;
-      mode = "0444";
-    };
+  tailscale = {
+    enable = lib.mkDefault hasTsBootstrapEnv;
+    envFile = lib.mkIf hasTsBootstrapEnv tsBootstrapEnvPath;
+    tags = ["tag:bootstrap"];
+    ephemeral = true;
   };
-
-  isoImage.contents = [
-    {
-      source = filteredSource;
-      target = "/nixcfg";
-    }
-  ];
 
   environment.systemPackages = with pkgs; [
     age
     btrfs-progs
+    curl
     disko
     git
-    installScript
     jq
+    rsync
     sbctl
     util-linux
   ];

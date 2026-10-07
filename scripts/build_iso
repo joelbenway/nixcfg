@@ -18,7 +18,8 @@ else
 fi
 KEY_PATH="${REAL_HOME}/.ssh/id_ed25519"
 
-WIFI_SECRET="${SECRET_DIR}/wifi.env.age"
+WIFI_SECRET="${SECRET_DIR}/wifi-guest.env.age"
+TAILSCALE_SECRET="${SECRET_DIR}/tailscale-oauth-bootstrap.env.age"
 OUTPUT_DIR="${ROOT_DIR}/iso"
 CONTAINER_NAME="carmel-of-lisieux"
 FLAKE_TARGET="therese"
@@ -59,6 +60,11 @@ if [[ ! -f "${WIFI_SECRET}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${TAILSCALE_SECRET}" ]]; then
+  echo "ERROR: Could not find ${TAILSCALE_SECRET}"
+  exit 1
+fi
+
 decrypt_err() {
   echo "ERROR: Unable to decrypt secrets using $KEY_PATH."
   echo "       Ensure the key is correct and authorized in secrets/agenix-rules.nix."
@@ -66,6 +72,10 @@ decrypt_err() {
 }
 
 if ! age -d -i "$KEY_PATH" "$WIFI_SECRET" >/dev/null 2>&1; then
+  decrypt_err
+fi
+
+if ! age -d -i "$KEY_PATH" "$TAILSCALE_SECRET" >/dev/null 2>&1; then
   decrypt_err
 fi
 
@@ -108,8 +118,8 @@ if [ -d "$SECRET_DIR" ]; then
 fi
 
 # Inject secrets via pipe
-cat "$KEY_PATH" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/id_ed25519" >/dev/null
-age -d -i "$KEY_PATH" "$WIFI_SECRET" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/wifi.env" >/dev/null
+age -d -i "$KEY_PATH" "$WIFI_SECRET" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/wifi-guest.env" >/dev/null
+age -d -i "$KEY_PATH" "$TAILSCALE_SECRET" | podman exec -i "$CONTAINER_NAME" tee "$FLAKE_DIR/tailscale-oauth-bootstrap.env" >/dev/null
 
 echo ">>> Building ISO (this may take a while)..."
 echo "    Target: $FLAKE_TARGET"
