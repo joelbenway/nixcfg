@@ -16,11 +16,11 @@
     wifiLab = lib.mkEnableOption "Enable Lab Wifi";
     wifiIot = lib.mkEnableOption "Enable Iot Wifi";
     wifi = lib.mkEnableOption "Enable Wifi";
-    envFile = lib.mkOption {
-      type = with lib.types; nullOr (either path str);
-      default = null;
-      description = "Environment File with wifi profile info.";
-    }; #envFile
+    envFiles = lib.mkOption {
+      type = with lib.types; listOf (either path str);
+      default = [];
+      description = "List of Environment Files with wifi profile info.";
+    }; #envFiles
   }; # options.networkstack
 
   config = lib.mkMerge [
@@ -34,8 +34,8 @@
           || config.networkstack.wifiLab
           || config.networkstack.wifiIot
         ))
-        # if there is no envFile, force wifi disabled
-        (lib.mkIf (config.networkstack.envFile == null) (lib.mkForce false))
+        # if there are no envFiles, force wifi disabled
+        (lib.mkIf (config.networkstack.envFiles == []) (lib.mkForce false))
       ];
     }
     (lib.mkIf config.networkstack.enable {
@@ -48,7 +48,7 @@
           }; # wifi
 
           ensureProfiles = lib.mkIf config.networkstack.wifi {
-            environmentFiles = [config.networkstack.envFile];
+            environmentFiles = config.networkstack.envFiles;
             profiles = {
               home-wifi = lib.mkIf config.networkstack.wifiHome {
                 connection = {

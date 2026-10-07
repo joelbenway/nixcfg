@@ -32,6 +32,12 @@ in {
         owner = "root";
         group = "users";
       }; # wifi-environment-variables
+      wifi-guest-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      }; # wifi-guest-environment-variables
       tailscale-oauth-env = {
         file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
         name = "tailscale.env";
@@ -72,7 +78,10 @@ in {
     hostName = hostname;
     wifiHome = true;
     wifiLab = true;
-    envFile = config.age.secrets.wifi-environment-variables.path;
+    envFiles = [
+      config.age.secrets.wifi-environment-variables.path
+      config.age.secrets.wifi-guest-environment-variables.path
+    ];
   }; # networkstack
 
   tailscale = {
