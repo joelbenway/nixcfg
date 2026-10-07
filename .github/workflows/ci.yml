@@ -126,8 +126,8 @@ jobs:
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age \
-              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age zita-host-key.age \
               zita-luks-passphrase.age; do
               touch "secrets/$f"
             done
@@ -187,8 +187,8 @@ jobs:
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age \
-              nix-builder-ssh.age secrets.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age wifi.env.age zita-host-key.age \
+              nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
+              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age zita-host-key.age \
               zita-luks-passphrase.age; do
               touch "secrets/$f"
             done

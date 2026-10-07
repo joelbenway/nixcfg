@@ -61,7 +61,7 @@ fi
 
 decrypt_err() {
   echo "ERROR: Unable to decrypt secrets using $KEY_PATH."
-  echo "       Ensure the key is correct and authorized in secrets/secrets.nix."
+  echo "       Ensure the key is correct and authorized in secrets/agenix-rules.nix."
   exit 1
 }
 
