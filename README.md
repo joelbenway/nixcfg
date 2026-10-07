@@ -13,7 +13,7 @@ Francis is an HP ProDesk 600 G4 desktop with an i5-8500T, 32GB of ram, and a 1TB
 Jerome is a Dell E7470 laptop, pretty much the 14" version of agnes with similar upgrades to ram, nvme, lcd panel, and has been [me cleaned](https://github.com/corna/me_cleaner). One uncommon option jerome has is the i7-6650U processor featuring Intel's Iris iGPU rather than the vanilla Intel HD graphics. Jerome has been my daily driver these past few years and still feels as modern as the machines I use at work thanks to nixos. St. Jerome is a doctor of the Church and is most famous for translating the early bible into Latin.
 
 ### therese
-Therese is a customized nixos iso for installing this config. The [build_iso](./scripts/build_iso) script creates the therese iso injected with the necessary secrets to easily bootstrap another host. This build is done in a container so as to prevent the secrets in the iso's /nix/store from being accessible to any user on the host /nix/store. St. Therese is a very famous saint, doctor of the church, and patron saint of missionaries. Her "little way" was a sharp contrast between the heroic perfectrionism and spiritual effortmaxxing.
+Therese is a customized, zero-trust NixOS bootstrap installer ISO. The [build_iso](./scripts/build_iso) script builds the ISO inside a container, injecting only guest Wi-Fi and scoped Tailscale bootstrap OAuth credentials (`tag:bootstrap`). Upon booting, Therese joins Tailscale as an isolated, ephemeral node and waits for an operator workstation to deploy the target system remotely over SSH using [install_host](./scripts/install_host). St. Therese is a very famous saint, doctor of the church, and patron saint of missionaries. Her "little way" was a sharp contrast between heroic perfectionism and spiritual effortmaxxing.
 
 ### michael
 Michael is a HP Slim desktop with an i3-12100 and a dual 2.5GBE nic. It serves as a home firewall.  St. Michael the Archangel is the prince of the heavenly host and patron saint of soldiers, police, and the sick. Who better to guard the gate?
@@ -30,7 +30,7 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * secureboot using [lanzaboote](https://github.com/nix-community/lanzaboote)
 * declarative disk layout using [disko](https://github.com/nix-community/disko)
 * declarative firewall with VLAN routing and NAT
-* Custom install iso
+* Zero-trust remote installer ISO with Tailscale and nixos-anywhere
 
 ## Areas of Note
 * My [firefox](./modules/firefox.nix) is quite nice with a hardened profile and all my extensions included.
@@ -40,9 +40,22 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * [Loadkeys](./modules/loadkeys.nix) A systemd user service that imports API keys into the session environment for tools like [opencode](./modules/opencode.nix) and [gemini](./modules/gemini.nix) as well as a shared [mcp](./modules/mcp.nix) server setup.
 
 ## Get Started
+1. **Build the Installer ISO**:
+   ```bash
+   ./scripts/build_iso
+   ```
+   This builds the `therese` ISO with minimal bootstrap secrets and writes it to `iso/` (or copies it directly to a detected Ventoy drive).
+2. **Boot the Target Host**:
+   Boot the target machine with the USB drive. It will connect to guest Wi-Fi / Ethernet and join your Tailnet as an ephemeral bootstrap node (`therese`).
+3. **Deploy from an Operator Host**:
+   From your development workstation, run:
+   ```bash
+   ./scripts/install_host <hostname>
+   ```
+   This detects the online bootstrap node, verifies UEFI Setup Mode if Lanzaboote is enabled, stages LUKS passphrases and host keys in RAM, and installs the target configuration over SSH via `nixos-anywhere`.
 
 ## Chicken-Egg
-To install one of the profiles that utilizes secrets, you'll first need a secret. The [therese](#therese) install iso solves this bootstrap problem. The [build_iso](./scripts/build_iso) script builds the iso inside a podman container to prevent the secrets injected from entering the host nix store. The iso also includes a copy of the flake, an install script, and all the tools needed to recover or fully provision a machine from scratch.
+To install one of the profiles that utilizes secrets, you'll first need a secret. The [therese](#therese) install ISO solves this bootstrap problem without storing master keys or full secrets repositories on the flash drive. The ISO only contains guest Wi-Fi credentials and a scoped, ephemeral Tailscale OAuth bootstrap key tagged `tag:bootstrap`. This provides network connectivity and isolated remote SSH access so that the target host's actual LUKS encryption keys and SSH host credentials can be safely deployed from the operator's machine during installation via [install_host](./scripts/install_host).
 
 ## Lanzaboote
 The [secureboot module](./modules/secureboot.nix) automates most of this process. When `secureboot.enable = true`, lanzaboote is configured with auto key generation and auto enrollment (including reboot). You just need to enable secureboot in your UEFI first — the module handles the rest on first boot.
