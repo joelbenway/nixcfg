@@ -25,13 +25,34 @@
       default = "gentoo-humboldt.ts.net";
       description = "Tailscale tailnet domain name";
     };
+
+    tags = lib.mkOption {
+      type = with lib.types; listOf str;
+      default = ["tag:nixos"];
+      description = "Tailscale tags to request and advertise";
+    };
+
+    ephemeral = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether the Tailscale device should be ephemeral";
+    };
+
+    ssh = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable Tailscale SSH";
+    };
   }; # options.tailscale
 
   config = lib.mkIf config.tailscale.enable {
     services.tailscale = {
       enable = true;
       openFirewall = true;
-      extraUpFlags = ["--reset" "--accept-routes" "--accept-dns=false" "--ssh" "--advertise-tags=tag:nixos"];
+      extraUpFlags =
+        ["--reset" "--accept-routes" "--accept-dns=false"]
+        ++ lib.optional config.tailscale.ssh "--ssh"
+        ++ lib.optional (config.tailscale.tags != []) "--advertise-tags=${lib.concatStringsSep "," config.tailscale.tags}";
       extraSetFlags = [];
       extraDaemonFlags = [];
     }; # services.tailscale
@@ -41,11 +62,13 @@
         cfg = config.services.tailscale;
       in {
         description = "Automatic authentication for Tailscale";
-        after = ["tailscaled.service" "network-online.target" "agenix.service"];
-        wants = ["tailscaled.service" "network-online.target" "agenix.service"];
+        after = ["tailscaled.service" "network-online.target"] ++ lib.optional (config ? age) "agenix.service";
+        wants = ["tailscaled.service" "network-online.target"] ++ lib.optional (config ? age) "agenix.service";
         wantedBy = ["multi-user.target"];
         serviceConfig = {
           Type = "notify";
+          Restart = "on-failure";
+          RestartSec = "5s";
         };
         path = [
           cfg.package
@@ -92,9 +115,13 @@
                           "devices": {
                             "create": {
                               "reusable": false,
-                              "ephemeral": false,
+                              "ephemeral": ${
+              if config.tailscale.ephemeral
+              then "true"
+              else "false"
+            },
                               "preauthorized": true,
-                              "tags": ["tag:nixos"]
+                              "tags": ${builtins.toJSON config.tailscale.tags}
                             }
                           }
                         },
