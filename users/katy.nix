@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {lib, ...}: let
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
 in

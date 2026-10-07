@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 rec {
   # Dual 2.5GbE PCIe NIC predictable names
   wanInterface = "enp1s0"; # 2.5GbE Port 1 -> Modem / ONT

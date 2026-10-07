@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 # nix build .#nixosConfigurations.therese.config.system.build.isoImage
 {
   lib,

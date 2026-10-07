@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 let
   defaultFeatures = ["nixos-test" "benchmark" "big-parallel" "kvm"];
 

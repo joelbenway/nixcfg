@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 _: {
   services.udev.extraRules = ''
     # Rule to set autosuspend after 5 min for Feker Alice 75 keyboard

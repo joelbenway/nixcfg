@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {
   # ls -l /dev/disk/by-id/
   disks ? ["/dev/disk/by-id/nvme-nvme.1c5c-4b4a43424e343030373131363042363056-5348475033312d31303030474d-00000001"],

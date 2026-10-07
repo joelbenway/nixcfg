@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 """
 netprov - Network Provisioning Utility for Michael Home Router
 

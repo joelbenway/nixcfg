@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {pkgs}: {
   # List of Nixpkgs packages the agent requires on its PATH
   extraPackages = with pkgs; [

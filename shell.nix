@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {pkgs ? import <nixpkgs> {}}:
 pkgs.mkShell {
   buildInputs = [

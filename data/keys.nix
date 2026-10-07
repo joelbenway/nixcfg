@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 let
   users = {
     builder = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2Rmp00+wVx421JLLbwipi6YxPL+BQkook6V11L+yQf";

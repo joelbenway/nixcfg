@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {
   disks ? ["/dev/sdb"],
   passwordFile ? "/run/agenix/storage-luks-passphrase",

@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {
   #sudo nixos-rebuild switch --flake /path/to/flake#hostname
   description = "Nixos config flake";

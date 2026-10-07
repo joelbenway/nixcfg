@@ -1,3 +1,5 @@
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
 {inputs, ...}: {
   imports = [inputs.nixos-hardware.nixosModules.common-gpu-nvidia-nonprime];
 
