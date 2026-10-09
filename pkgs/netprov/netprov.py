@@ -10,6 +10,7 @@ Single source of truth manager for:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -160,54 +161,154 @@ def cmd_switch_generate(args, cfg: Dict[str, Any]):
 
 
 def cmd_switch_apply(args, cfg: Dict[str, Any]):
-    if requests is None:
-        print("[!] Python 'requests' module is required. Please run inside Michael's nix environment.")
-        sys.exit(1)
-
-    switch_ip = args.ip or cfg.get("switch", {}).get("ip", "192.168.1.2")
+    switch_cfg = cfg.get("switch", {})
+    target_ip = switch_cfg.get("ip", "192.168.1.2")
+    current_ip = args.ip or target_ip
     username = args.username or "admin"
     password = args.password or "admin"
+    vlans = cfg.get("vlans", {})
+    ports = switch_cfg.get("ports", {})
 
-    print(f"[*] Attempting automated provisioning of KeepLINK switch at http://{switch_ip}...")
-    if not ping(switch_ip):
-        print(f"[!] Switch at {switch_ip} is not responding to ping.")
-        print("    If the switch is at its factory default IP (e.g. 192.168.2.1), pass --ip 192.168.2.1")
-        return
-
-    session = requests.Session()
-    # Attempt login
-    login_endpoints = ["/login.cgi", "/api/login", "/cgi/login"]
-    logged_in = False
-
-    for ep in login_endpoints:
-        url = f"http://{switch_ip}{ep}"
-        try:
-            r = session.post(
-                url,
-                data={"username": username, "password": password, "user": username, "pwd": password},
-                timeout=3.0,
-            )
-            if r.status_code == 200 and ("logout" in r.text.lower() or "success" in r.text.lower() or "main" in r.text.lower()):
-                print(f"[+] Successfully authenticated via {ep}!")
-                logged_in = True
+    print(f"[*] Attempting automated provisioning of KeepLINK switch at http://{current_ip}...")
+    if not ping(current_ip):
+        # If target IP fails, try default / fallback IPs
+        for fallback_ip in ["192.168.1.168", "192.168.2.1", "192.168.0.1"]:
+            if ping(fallback_ip):
+                print(f"[*] Found switch at fallback IP: {fallback_ip}")
+                current_ip = fallback_ip
                 break
-        except Exception:
-            continue
+        else:
+            print(f"[!] Switch is not responding to ping at {current_ip}.")
+            return
 
-    if not logged_in:
-        print("[-] Automated HTTP login could not automatically authenticate to switch firmware.")
-        print("    Displaying generated configuration steps instead:\n")
-        cmd_switch_generate(args, cfg)
+    # KeepLINK authentication uses MD5(username + password) in cookie and form body
+    resp_hash = hashlib.md5(f"{username}{password}".encode()).hexdigest()
+    headers = {
+        "Cookie": f"admin={resp_hash}",
+        "Connection": "close",
+    }
+
+    # 1. Authenticate via login.cgi
+    try:
+        subprocess.run(
+            [
+                "curl", "-s", "-m", "5",
+                "-b", f"admin={resp_hash}",
+                "-d", f"username={username}&password={password}&Response={resp_hash}",
+                "-X", "POST", f"http://{current_ip}/login.cgi",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        print("[+] Successfully authenticated to KeepLINK switch firmware.")
+    except Exception as e:
+        print(f"[!] Login error: {e}")
         return
 
-    print("[+] Switch configuration applied successfully!")
-    print("[*] Triggering NVRAM flash save...")
-    for save_ep in ["/save.cgi", "/sys_save.cgi", "/config_save.cgi"]:
-        try:
-            session.post(f"http://{switch_ip}{save_ep}", data={"cmd": "save"}, timeout=3.0)
-        except Exception:
-            pass
-    print("[+] Flash save command dispatched.")
+    # 2. Configure 802.1Q VLANs
+    print("[*] Configuring 802.1Q VLANs...")
+    for v_key, v in vlans.items():
+        vid = v.get("id")
+        vname = v.get("name", v_key)
+        vlan_data = [f"vid={vid}", f"name={vname}"]
+        for p_idx in range(9):
+            p_num = str(p_idx + 1)
+            p_cfg = ports.get(p_num, {})
+            tagged_vlans = p_cfg.get("taggedVlans", [])
+            native_vlan = p_cfg.get("nativeVlan", 1)
+
+            if vid in tagged_vlans:
+                val = 1  # Tagged
+            elif vid == native_vlan and p_cfg.get("mode") == "access":
+                val = 0  # Untagged
+            elif vid == native_vlan and p_cfg.get("mode") == "trunk":
+                val = 0  # Native untagged on trunk
+            else:
+                val = 2  # Not Member
+            vlan_data.append(f"vlanPort_{p_idx}={val}")
+
+        post_body = "&".join(vlan_data)
+        subprocess.run(
+            [
+                "curl", "-s", "-m", "5",
+                "-b", f"admin={resp_hash}",
+                "-d", post_body,
+                "-X", "POST", f"http://{current_ip}/vlan.cgi?page=static",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"  • VLAN {vid} ({vname}) configured.")
+
+    # Adjust VLAN 1 (default) to only trunk ports 1 and 2
+    vlan1_data = ["vid=1", "name=default"]
+    for p_idx in range(9):
+        p_num = str(p_idx + 1)
+        p_cfg = ports.get(p_num, {})
+        if p_cfg.get("nativeVlan", 1) == 1:
+            vlan1_data.append(f"vlanPort_{p_idx}=0")
+        else:
+            vlan1_data.append(f"vlanPort_{p_idx}=2")
+    subprocess.run(
+        [
+            "curl", "-s", "-m", "5",
+            "-b", f"admin={resp_hash}",
+            "-d", "&".join(vlan1_data),
+            "-X", "POST", f"http://{current_ip}/vlan.cgi?page=static",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 3. Configure Port PVIDs
+    print("[*] Setting Port PVIDs...")
+    for p_idx in range(9):
+        p_num = str(p_idx + 1)
+        p_cfg = ports.get(p_num, {})
+        pvid = p_cfg.get("nativeVlan", 1)
+        subprocess.run(
+            [
+                "curl", "-s", "-m", "5",
+                "-b", f"admin={resp_hash}",
+                "-d", f"ports={p_idx}&pvid={pvid}&vlan_accept_frame_type=0",
+                "-X", "POST", f"http://{current_ip}/vlan.cgi?page=port_based",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    # 4. Update IP Address if needed
+    if current_ip != target_ip:
+        print(f"[*] Updating switch management IP from {current_ip} to {target_ip}...")
+        netmask = switch_cfg.get("subnet", "255.255.255.0")
+        gateway = switch_cfg.get("gateway", "192.168.1.1")
+        subprocess.run(
+            [
+                "curl", "-s", "-m", "3",
+                "-b", f"admin={resp_hash}",
+                "-d", f"dhcp_state=0&ip={target_ip}&netmask={netmask}&gateway={gateway}&cmd=ip",
+                "-X", "POST", f"http://{current_ip}/ip.cgi",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(2)
+        current_ip = target_ip
+
+    # 5. Save Configuration to Flash
+    print("[*] Committing configuration to switch NVRAM flash...")
+    subprocess.run(
+        [
+            "curl", "-s", "-m", "5",
+            "-b", f"admin={resp_hash}",
+            "-d", "cmd=save",
+            "-X", "POST", f"http://{current_ip}/save.cgi",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"[+] KeepLINK switch provisioning complete and saved to flash at http://{target_ip}!")
 
 
 def cmd_ap_generate(args, cfg: Dict[str, Any]):
