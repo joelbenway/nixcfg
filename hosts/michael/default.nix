@@ -26,6 +26,14 @@ in {
     ];
   };
 
+  nixpkgs.overlays = [
+    (_final: prev: {
+      pihole-ftl = prev.pihole-ftl.overrideAttrs (old: {
+        env.NIX_CFLAGS_COMPILE = (old.env.NIX_CFLAGS_COMPILE or "") + " -Wno-error=unused-but-set-variable";
+      });
+    })
+  ];
+
   age = {
     identityPaths = ["/persist${hostKeyPath}"];
     secrets = {

@@ -48,6 +48,7 @@ in {
     envFile = lib.mkIf hasTsBootstrapEnv tsBootstrapEnvPath;
     tags = ["tag:bootstrap"];
     ephemeral = true;
+    ssh = false;
   };
 
   environment.systemPackages = with pkgs; [
