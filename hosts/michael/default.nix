@@ -107,6 +107,12 @@ in {
       "149.112.112.112" # Quad9 secondary
     ];
 
+    networkmanager.unmanaged = [
+      network.lanInterface
+      network.oob.interface
+      "interface-name:${network.lanInterface}.*"
+    ];
+
     vlans = builtins.listToAttrs (map (vlan: {
         name = vlan.interface;
         value = {
