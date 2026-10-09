@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: MIT
 rec {
   # Dual 2.5GbE PCIe NIC predictable names
-  wanInterface = "enp1s0"; # 2.5GbE Port 1 -> Modem / ONT
-  lanInterface = "enp2s0"; # 2.5GbE Port 2 -> KeepLINK Switch Port 1 (802.1Q Trunk)
+  wanInterface = "enp3s0"; # 2.5GbE Port 1 (Top) -> Modem / ONT
+  lanInterface = "enp4s0"; # 2.5GbE Port 2 (Bottom) -> KeepLINK Switch Port 1 (802.1Q Trunk)
 
   # Motherboard onboard 1GbE NIC (Emergency Out-of-Band Rescue)
   oob = {
-    interface = "eno1";
+    interface = "enp5s0";
     subnet = "192.168.99";
     routerIp = "192.168.99.1";
     prefix = 24;

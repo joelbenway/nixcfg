@@ -187,7 +187,7 @@ PERSIST_SSH_DIR="${EXTRA_FILES_DIR}/persist/etc/ssh"
 mkdir -p "$PERSIST_SSH_DIR"
 chmod 755 "${EXTRA_FILES_DIR}/persist"
 chmod 755 "${EXTRA_FILES_DIR}/persist/etc"
-chmod 700 "$PERSIST_SSH_DIR"
+chmod 755 "$PERSIST_SSH_DIR"
 
 # Stage LUKS passphrase
 LUKS_SECRET="${SECRET_DIR}/${TARGET_HOST}-luks-passphrase.age"

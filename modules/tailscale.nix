@@ -89,7 +89,7 @@
               if [[ "$state" != "$lastState" ]]; then
                 # https://github.com/tailscale/tailscale/blob/v1.72.1/ipn/backend.go#L24-L32
                 case "$state" in
-                  Stopped)
+                  NoState|Stopped)
                     tailscale up ${lib.concatStringsSep " " cfg.extraUpFlags}
                     ;;
                   NeedsLogin)
@@ -99,7 +99,8 @@
                     source "${config.tailscale.envFile}"
                     set +a
 
-                    access_token=$(curl -s -u "$TS_API_CLIENT_ID:$TS_API_CLIENT_SECRET" \
+                    access_token=$(curl -s --retry 10 --retry-delay 3 --retry-all-errors \
+                      -u "$TS_API_CLIENT_ID:$TS_API_CLIENT_SECRET" \
                       -d "grant_type=client_credentials" \
                       "https://api.tailscale.com/api/v2/oauth/token" | jq -r '.access_token')
 
@@ -108,7 +109,8 @@
                       exit 1
                     fi
 
-                    auth_key=$(curl -s -H "Authorization: Bearer $access_token" \
+                    auth_key=$(curl -s --retry 10 --retry-delay 3 --retry-all-errors \
+                      -H "Authorization: Bearer $access_token" \
                       -X POST "https://api.tailscale.com/api/v2/tailnet/-/keys" \
                       -d '{
                         "capabilities": {
