@@ -291,10 +291,13 @@ in {
           prefetch = true;
           num-threads = 4;
         };
-        stub-zone = [
+        forward-zone = [
           {
             name = ".";
-            stub-addr = "127.0.0.1@5354";
+            forward-addr = [
+              "9.9.9.9"
+              "149.112.112.112"
+            ];
           }
         ];
       };
