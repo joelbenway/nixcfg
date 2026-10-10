@@ -55,6 +55,11 @@ if [ ! -f "$KEY_PATH" ]; then
   exit 1
 fi
 
+if [[ ! -f "${SECRET_DIR}/agenix-rules.nix" ]]; then
+  echo ">>> Initializing secrets submodule..."
+  git -C "$ROOT_DIR" submodule update --init --recursive
+fi
+
 if [[ ! -f "${WIFI_SECRET}" ]]; then
   echo "ERROR: Could not find ${WIFI_SECRET}"
   exit 1

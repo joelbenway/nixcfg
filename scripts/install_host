@@ -98,6 +98,12 @@ if [[ ! -f "${ROOT_DIR}/hosts/${TARGET_HOST}/disks.nix" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${SECRET_DIR}/agenix-rules.nix" ]]; then
+  echo ">>> Initializing secrets submodule..."
+  git -C "$ROOT_DIR" submodule update --init --recursive
+fi
+
+
 # Auto-detect target node via Tailscale if not specified
 if [[ -z "$TARGET_ADDRESS" ]]; then
   echo ">>> Discovering bootstrap installer node..."

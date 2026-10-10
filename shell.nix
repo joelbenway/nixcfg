@@ -47,5 +47,9 @@ pkgs.mkShell {
           chmod +x "$PRE_COMMIT"
           echo "Git pre-commit hook installed"
         fi
+
+        if [ -d ".git" ]; then
+          git config submodule.recurse true
+        fi
   '';
 }
