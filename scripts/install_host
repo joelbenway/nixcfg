@@ -103,7 +103,6 @@ if [[ ! -f "${SECRET_DIR}/agenix-rules.nix" ]]; then
   git -C "$ROOT_DIR" submodule update --init --recursive
 fi
 
-
 # Auto-detect target node via Tailscale if not specified
 if [[ -z "$TARGET_ADDRESS" ]]; then
   echo ">>> Discovering bootstrap installer node..."
