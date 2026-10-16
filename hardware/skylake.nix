@@ -9,7 +9,12 @@
 
   boot.kernelParams = [
     "i915.enable_guc=2"
-    "i915.enable_fbc=1"
+    "i915.enable_fbc=0"
     "i915.enable_psr=0"
+    "i915.enable_dc=0"
   ];
+
+  environment.sessionVariables = {
+    LIBVA_DRIVER_NAME = "i965";
+  };
 }

@@ -120,7 +120,7 @@ in {
       "kvm-intel"
     ];
     kernelParams = [
-      "intel_iommu=on"
+      "intel_iommu=on,igfx_off"
       "mem_sleep_default=deep"
       "tpm_tis.interrupts=0"
     ];

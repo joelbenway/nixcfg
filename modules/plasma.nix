@@ -45,19 +45,24 @@ in {
       fwupd.enable = lib.any (user: user.discover) (lib.attrValues config.plasma.users);
     }; # services
 
-    environment.systemPackages = with pkgs;
-      [
-        kdePackages.kcalc
-        kdePackages.kleopatra
-        kdePackages.kmail
-        kdePackages.kmail-account-wizard
-        kdePackages.kontact
-        kdePackages.ktexteditor
-        kdePackages.merkuro
-      ]
-      ++ lib.optionals config.hardware.sane.enable [
-        kdePackages.skanpage
-      ];
+    environment = {
+      sessionVariables = {
+        KWIN_DRM_NO_DIRECT_SCANOUT = "1";
+      };
+      systemPackages = with pkgs;
+        [
+          kdePackages.kcalc
+          kdePackages.kleopatra
+          kdePackages.kmail
+          kdePackages.kmail-account-wizard
+          kdePackages.kontact
+          kdePackages.ktexteditor
+          kdePackages.merkuro
+        ]
+        ++ lib.optionals config.hardware.sane.enable [
+          kdePackages.skanpage
+        ];
+    };
 
     programs = {
       firefox = {

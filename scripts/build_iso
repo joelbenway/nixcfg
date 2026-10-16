@@ -95,7 +95,7 @@ mkdir -p "$OUTPUT_DIR"
 echo ">>> Initializing Podman container..."
 
 # Pull image quietly first to avoid noisy output during run
-podman pull --quiet nixos/nix >/dev/null
+podman pull --quiet docker.io/nixos/nix >/dev/null
 
 podman run --name "$CONTAINER_NAME" \
   --replace \
@@ -103,7 +103,7 @@ podman run --name "$CONTAINER_NAME" \
   --privileged \
   --rm \
   --entrypoint sleep \
-  nixos/nix infinity
+  docker.io/nixos/nix infinity
 
 echo ">>> Archiving flake and injecting secrets..."
 

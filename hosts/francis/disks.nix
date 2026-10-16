@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 {
   # ls -l /dev/disk/by-id/
-  disks ? ["/dev/nvme0n1"],
+  disks ? ["/dev/disk/by-id/nvme-eui.0000000624041972caf25b04100013c6"],
   swapSize ? "33G",
   ...
 }: let
