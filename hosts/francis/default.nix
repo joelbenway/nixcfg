@@ -89,9 +89,11 @@ in {
     envFile = config.age.secrets.tailscale-oauth-env.path;
   }; # tailscale
 
+  syncthing.enable = true;
+
   llm = {
     enable = true;
-    hw = {};
+    hw.extraFlags = ["--threads" "5"];
   }; # llm
 
   hardware.bluetooth.enable = true;
