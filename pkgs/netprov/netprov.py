@@ -10,6 +10,7 @@ Single source of truth manager for:
 """
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -63,15 +64,18 @@ def ping(ip: str) -> bool:
     return res.returncode == 0
 
 
-def load_wifi_env(env_path: Optional[str]) -> Dict[str, str]:
+def load_wifi_env(env_path: Optional[str] = None) -> Dict[str, str]:
     env_vars = {}
-    candidates = [
-        env_path,
+    paths = [
         "/run/agenix/wifi.env",
+        "/run/agenix/wifi-guest.env",
         "/persist/run/agenix/wifi.env",
+        "/persist/run/agenix/wifi-guest.env",
         "./secrets/wifi.env",
+        "./secrets/wifi-guest.env",
+        env_path,
     ]
-    for p in candidates:
+    for p in paths:
         if p and os.path.exists(p):
             with open(p, "r") as f:
                 for line in f:
@@ -79,7 +83,6 @@ def load_wifi_env(env_path: Optional[str]) -> Dict[str, str]:
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         env_vars[k.strip()] = v.strip().strip("\"'")
-            break
     return env_vars
 
 
@@ -311,25 +314,64 @@ def cmd_switch_apply(args, cfg: Dict[str, Any]):
     print(f"[+] KeepLINK switch provisioning complete and saved to flash at http://{target_ip}!")
 
 
-def cmd_ap_generate(args, cfg: Dict[str, Any]):
+def cmd_switch_cycle_poe(args, cfg: Dict[str, Any]):
+    switch_cfg = cfg.get("switch", {})
+    switch_ip = args.ip or switch_cfg.get("ip", "192.168.1.2")
+    username = args.username or "admin"
+    password = args.password or "admin"
+
+    try:
+        port_num = int(args.port)
+        if not (1 <= port_num <= 8):
+            print(f"[!] Invalid switch port '{args.port}'. PoE ports are 1 through 8.")
+            sys.exit(1)
+    except (ValueError, TypeError):
+        print(f"[!] Port '{args.port}' must be an integer between 1 and 8.")
+        sys.exit(1)
+
+    port_idx = port_num - 1
+    resp_hash = hashlib.md5(f"{username}{password}".encode()).hexdigest()
+    print(f"[*] Power cycling PoE on switch port {port_num} at http://{switch_ip}...")
+
+    def set_poe_state(state: int) -> bool:
+        res = subprocess.run(
+            [
+                "curl", "-s", "-f", "-m", "5",
+                "-b", f"admin={resp_hash}",
+                "-d", f"portid={port_idx}&state={state}",
+                "-X", "POST", f"http://{switch_ip}/pse_port.cgi",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return res.returncode == 0
+
+    if not set_poe_state(0):
+        print(f"[!] Failed to disable PoE on port {port_num} (switch unreachable or HTTP request failed).")
+        sys.exit(1)
+
+    print(f"  • Port {port_num} PoE disabled. Waiting 5 seconds...")
+    restored = False
+    try:
+        time.sleep(5)
+    finally:
+        restored = set_poe_state(1)
+
+    if not restored:
+        print(f"[!] WARNING: Failed to re-enable PoE on port {port_num}!")
+        sys.exit(1)
+
+    print(f"[+] Port {port_num} PoE re-enabled. Connected device is restarting.")
+
+
+def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optional[str] = None):
     ap_cfg = cfg.get("ap", {})
     ssids = ap_cfg.get("ssids", {})
-    wifi_env = load_wifi_env(args.env_file)
-    mode = getattr(args, "mode", "test")
+    wifi_env = load_wifi_env(env_file)
+    commands = ["configure terminal"]
 
-    print(f"# Zyxel WBE530 Standalone ZySH Configuration Script")
-    print(f"# Mode: {mode.upper()} ({'Pre-cutover bench testing' if mode == 'test' else 'Production cutover'})")
-    print(f"# Management IP: {ap_cfg.get('ip', '192.168.1.3')}")
-    print("# ------------------------------------------------------------")
-    print("configure terminal")
-    print()
-
-    # Define SSID profiles
+    # 1. Security profiles
     for s_name, s in ssids.items():
-        vlan_id = s.get("vlanId")
-        actual_ssid = f"{s_name}-test" if mode == "test" else s_name
-
-        # Resolve passphrase
         if s_name == "skylab":
             psk = wifi_env.get("LAB_WIFI_PSK") or wifi_env.get("HOME_WIFI_PSK") or "SkylabFamilyKey2026!"
         elif s_name == "skynet":
@@ -337,23 +379,79 @@ def cmd_ap_generate(args, cfg: Dict[str, Any]):
         else: # iot
             psk = wifi_env.get("IOT_WIFI_PSK") or "IoTDeviceSecretKey2026!"
 
-        print(f"! --- Profile for {actual_ssid} (VLAN {vlan_id}) ---")
-        print(f"wlan-ssid-profile {s_name}")
-        print(f"  ssid \"{actual_ssid}\"")
+        commands.append(f"! --- Security Profile for {s_name} ---")
+        commands.append(f"wlan-security-profile {s_name}")
         if s.get("security") == "wpa3-sae-wpa2-psk":
-            print(f"  security-mode wpa3-sae-wpa2-psk")
+            commands.append("  mode wpa2-mix")
+            commands.append(f"  wpa-psk {psk}")
+            commands.append("  dot11w activate")
+            commands.append("  dot11w-op 2")
         else:
-            print(f"  security-mode wpa2-psk")
-        print(f"  psk-key \"{psk}\"")
-        if s.get("clientIsolation", False):
-            print(f"  intra-bss-traffic block")
-        print(f"  vlan-id {vlan_id}")
-        print("exit")
-        print()
+            commands.append("  mode wpa2")
+            commands.append(f"  wpa-psk {psk}")
+        commands.append("exit")
 
-    print("! Save settings to startup-config")
-    print("write memory")
-    print("exit")
+    # 2. SSID profiles
+    for s_name, s in ssids.items():
+        vlan_id = s.get("vlanId")
+        actual_ssid = f"{s_name}-test" if mode == "test" else s_name
+
+        commands.append(f"! --- SSID Profile for {actual_ssid} (VLAN {vlan_id}) ---")
+        commands.append(f"wlan-ssid-profile {s_name}")
+        commands.append(f"  ssid \"{actual_ssid}\"")
+        commands.append(f"  security {s_name}")
+        commands.append(f"  vlan-id {vlan_id}")
+        commands.append("  data-forward localbridge")
+        if s.get("clientIsolation", False):
+            commands.append("  block-intra")
+        commands.append("  qos wmm")
+        commands.append("exit")
+
+    # 3. Radio slot bindings
+    # Slot 1: 2.4 GHz (skylab, skynet, iot)
+    # Slot 2: 5 GHz (skylab, skynet)
+    # Slot 3: 6 GHz (skylab, skynet)
+    commands.append("! --- Radio Slot Mappings ---")
+    commands.append("wlan slot1")
+    idx = 1
+    for s_name in ["skylab", "skynet", "iot"]:
+        if s_name in ssids:
+            commands.append(f"  ssid profile {idx} {s_name}")
+            idx += 1
+    commands.append("exit")
+
+    commands.append("wlan slot2")
+    idx = 1
+    for s_name in ["skylab", "skynet"]:
+        if s_name in ssids:
+            commands.append(f"  ssid profile {idx} {s_name}")
+            idx += 1
+    commands.append("exit")
+
+    commands.append("wlan slot3")
+    idx = 1
+    for s_name in ["skylab", "skynet"]:
+        if s_name in ssids:
+            commands.append(f"  ssid profile {idx} {s_name}")
+            idx += 1
+    commands.append("exit")
+
+    commands.append("exit")
+    commands.append("write")
+    return commands
+
+
+def cmd_ap_generate(args, cfg: Dict[str, Any]):
+    ap_cfg = cfg.get("ap", {})
+    mode = getattr(args, "mode", "test")
+    commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+
+    print(f"# Zyxel AP (NWA130BE / WBE530) Standalone ZySH Configuration Script")
+    print(f"# Mode: {mode.upper()} ({'Pre-cutover bench testing' if mode == 'test' else 'Production cutover'})")
+    print(f"# Management IP: {ap_cfg.get('ip', '192.168.1.3')}")
+    print("# ------------------------------------------------------------")
+    for cmd in commands:
+        print(cmd)
     print("# ------------------------------------------------------------")
 
 
@@ -364,11 +462,27 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
         cmd_ap_generate(args, cfg)
         return
 
-    ap_ip = args.ip or cfg.get("ap", {}).get("ip", "192.168.1.3")
+    target_ip = cfg.get("ap", {}).get("ip", "192.168.1.3")
+    ap_ip = args.ip or target_ip
     username = args.username or "admin"
-    password = args.password or "1234"
+    wifi_env = load_wifi_env(args.env_file)
+    password = args.password or os.environ.get("NETPROV_AP_PASSWORD") or wifi_env.get("AP_PASSWORD")
+    if not password and sys.stdin.isatty():
+        password = getpass.getpass(f"Enter admin password for AP at {ap_ip}: ")
 
-    print(f"[*] Connecting to Zyxel WBE530 AP at {ap_ip}:22 via SSH...")
+    if not password:
+        print(f"[!] No AP admin password specified for {ap_ip}.")
+        print("    Pass --password, set NETPROV_AP_PASSWORD, or define AP_PASSWORD in wifi.env.")
+        sys.exit(1)
+
+    mode = getattr(args, "mode", "test")
+
+    if not check_tcp_port(ap_ip, 22) and not args.ip:
+        if check_tcp_port("192.168.1.2", 22):
+            print("[*] Found AP at factory default IP: 192.168.1.2")
+            ap_ip = "192.168.1.2"
+
+    print(f"[*] Connecting to Zyxel AP at {ap_ip}:22 via SSH...")
     if not check_tcp_port(ap_ip, 22):
         print(f"[!] SSH (port 22) on {ap_ip} is not reachable.")
         print("    Note: On new Zyxel APs, SSH must be enabled via the Web Configurator (System -> SSH).")
@@ -376,20 +490,53 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
         cmd_ap_generate(args, cfg)
         return
 
-    # In a live SSH session, we connect and send the commands
+    commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client.connect(ap_ip, username=username, password=password, timeout=5.0)
+        client.connect(ap_ip, username=username, password=password, timeout=10.0)
         print("[+] SSH connection established.")
-        # Execute batch
-        print("[+] Provisioning wireless profiles...")
-        # Placeholder for interactive channel / shell
+        chan = client.invoke_shell()
+        time.sleep(1.0)
+        while chan.recv_ready():
+            chan.recv(4096)
+
+        print(f"[*] Dispatching {len(commands)} ZySH configuration commands...")
+        failed_commands = []
+        full_log = []
+
+        def exec_cmd(cmd: str) -> str:
+            chan.send(cmd.strip() + "\n")
+            time.sleep(0.4)
+            resp = ""
+            while chan.recv_ready():
+                resp += chan.recv(4096).decode("utf-8", errors="ignore")
+            return resp
+
+        for cmd in commands:
+            resp = exec_cmd(cmd)
+            full_log.append((cmd, resp))
+            if "ERROR:" in resp or "% Parse error" in resp:
+                failed_commands.append((cmd, resp.strip()))
+
         client.close()
-        print("[+] AP provisioning completed.")
+
+        if failed_commands:
+            print(f"[!] Warning: {len(failed_commands)} command(s) were rejected by the AP:")
+            for c, r in failed_commands:
+                print(f"    - Command: {c}\n      Response: {r}")
+            sys.exit(1)
+
+        write_output = next((r for c, r in full_log if c.strip() == "write"), "")
+        if "ERROR" in write_output or "fail" in write_output.lower():
+            print(f"[!] Failed to commit configuration to AP startup-config: {write_output}")
+            sys.exit(1)
+
+        print("[+] AP provisioning completed and committed to startup-config!")
     except Exception as e:
-        print(f"[-] SSH Authentication failed: {e}")
+        print(f"[-] SSH Provisioning failed: {e}")
         print("    Run 'netprov ap generate' to inspect the exact configuration commands.")
+        sys.exit(1)
 
 
 def main():
@@ -416,9 +563,14 @@ def main():
     sw_apply.add_argument("--username", default="admin")
     sw_apply.add_argument("--password", default="admin")
     sw_gen = switch_subs.add_parser("generate", help="Print switch port and 802.1Q plan")
+    sw_poe = switch_subs.add_parser("cycle-poe", help="Power-cycle PoE on switch port")
+    sw_poe.add_argument("--port", default="2", help="Port number to power-cycle (default: 2)")
+    sw_poe.add_argument("--ip", help="Switch IP address (default: from config)")
+    sw_poe.add_argument("--username", default="admin")
+    sw_poe.add_argument("--password", default="admin")
 
     # ap
-    p_ap = subparsers.add_parser("ap", help="Zyxel WBE530 AP management")
+    p_ap = subparsers.add_parser("ap", help="Zyxel AP (NWA130BE / WBE530) management")
     ap_subs = p_ap.add_subparsers(dest="subcommand", required=True)
     ap_apply = ap_subs.add_parser("apply", help="Apply SSID profiles to Zyxel AP via SSH")
     ap_apply.add_argument("--mode", choices=["test", "prod"], default="test", help="SSID mode: 'test' for staging or 'prod' for cutover")
@@ -442,6 +594,8 @@ def main():
             cmd_switch_apply(args, cfg)
         elif args.subcommand == "generate":
             cmd_switch_generate(args, cfg)
+        elif args.subcommand == "cycle-poe":
+            cmd_switch_cycle_poe(args, cfg)
     elif args.command == "ap":
         if args.subcommand == "apply":
             cmd_ap_apply(args, cfg)
@@ -451,3 +605,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

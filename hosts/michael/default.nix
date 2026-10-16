@@ -58,6 +58,20 @@ in {
         owner = "root";
         group = "root";
       };
+      wifi-env = {
+        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+        name = "wifi.env";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+      wifi-guest-env = {
+        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+        name = "wifi-guest.env";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
     };
   };
 
@@ -227,14 +241,25 @@ in {
         };
         dhcp = {
           active = true;
+          hosts = [
+            "80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
+          ];
           ranges =
-            map (vlan: {
-              from = "${vlan.subnet}.100";
-              to = "${vlan.subnet}.250";
-              router = vlan.routerIp;
-              domain = "${vlan.name}.home";
-            })
-            vlanList;
+            [
+              {
+                from = "${network.mgmt.subnet}.10";
+                to = "${network.mgmt.subnet}.50";
+                router = network.mgmt.routerIp;
+                domain = "${network.mgmt.name}.home";
+              }
+            ]
+            ++ (map (vlan: {
+                from = "${vlan.subnet}.100";
+                to = "${vlan.subnet}.250";
+                router = vlan.routerIp;
+                domain = "${vlan.name}.home";
+              })
+              vlanList);
         };
       };
       lists = [
