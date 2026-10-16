@@ -93,9 +93,10 @@ in {
                   ]; # extensions
                 userSettings = {
                   "files.watcherExclude" = {
+                    "**/.direnv" = true;
+                    "**/.direnv/**" = true;
                     "**/.git/objects/**" = true;
                     "**/.git/subtree-cache/**" = true;
-                    "**/.direnv/**" = true;
                     "**/result" = true;
                     "**/result/**" = true;
                   };

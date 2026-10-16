@@ -8,6 +8,6 @@
 
 ## Installer & Bootstrapping (`therese`)
 
-- [ ] **Stage `wifi-guest.env` into `/etc` for automatic Wi-Fi on `therese`**:
+- [x] **Stage `wifi-guest.env` into `/etc` for automatic Wi-Fi on `therese`**:
   - **Context**: `NetworkManager-ensure-profiles` failed to find `/nix/store/...-source/wifi-guest.env` on boot because the flake source tree was excluded from the ISO runtime closure.
   - **Action**: Stage `wifi-guest.env` into `/etc/wifi-guest.env` via `environment.etc."wifi-guest.env".source` and update `networkstack.envFiles = ["/etc/wifi-guest.env"]` in `hosts/therese/default.nix` before the next ISO build so Wi-Fi connects automatically.

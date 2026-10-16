@@ -36,11 +36,18 @@ in {
     Connect via SSH or Tailscale from an operator machine to deploy.
   '';
 
+  environment.etc = lib.mkIf hasWifiGuestEnv {
+    "wifi-guest.env" = {
+      source = wifiGuestEnvPath;
+      mode = "0600";
+    };
+  };
+
   networkstack = {
     hostName = hostname;
     wifiHome = lib.mkDefault hasWifiGuestEnv;
     wifiIot = lib.mkDefault hasWifiGuestEnv;
-    envFiles = lib.optional hasWifiGuestEnv wifiGuestEnvPath;
+    envFiles = lib.optional hasWifiGuestEnv "/etc/wifi-guest.env";
   }; # networkstack
 
   tailscale = {

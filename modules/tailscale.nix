@@ -51,7 +51,13 @@
       openFirewall = true;
       extraUpFlags =
         ["--reset" "--accept-routes" "--accept-dns=false"]
-        ++ lib.optional config.tailscale.ssh "--ssh"
+        ++ [
+          (
+            if config.tailscale.ssh
+            then "--ssh"
+            else "--ssh=false"
+          )
+        ]
         ++ lib.optional (config.tailscale.tags != []) "--advertise-tags=${lib.concatStringsSep "," config.tailscale.tags}";
       extraSetFlags = [];
       extraDaemonFlags = [];

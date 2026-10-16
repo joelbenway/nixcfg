@@ -155,7 +155,7 @@ echo ">>> Target address: $TARGET_ADDRESS"
 
 # Verify SSH connectivity to target
 echo ">>> Checking SSH connection to root@${TARGET_ADDRESS}..."
-if ! ssh -i "$KEY_PATH" -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "root@${TARGET_ADDRESS}" "true" 2>/dev/null; then
+if ! ssh -i "$KEY_PATH" -o ConnectTimeout=15 -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "root@${TARGET_ADDRESS}" "true"; then
   echo "ERROR: Unable to connect via SSH to root@${TARGET_ADDRESS} using $KEY_PATH." >&2
   echo "       Ensure the bootstrap target is online and Joel's SSH key is authorized." >&2
   exit 1
