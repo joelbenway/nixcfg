@@ -70,10 +70,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Run ShellCheck
-        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host
+        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys
 
       - name: Check Shell Formatting with Shfmt
-        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys
 
   lint-workflows:
     name: Workflow Linting (Actionlint)
@@ -117,18 +117,18 @@ jobs:
             rm -rf secrets && mkdir -p secrets
             sed -i '/self.submodules = true;/d' flake.nix
             for f in \
-              agnes-host-key.age agnes-luks-passphrase.age \
+              agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
               bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
               bypass_paywalls_clean-latest.xpi.age \
-              francis-host-key.age francis-luks-passphrase.age \
-              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
               joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
-              michael-host-key.age michael-luks-passphrase.age \
+              michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age; do
+              zita-luks-passphrase.age zita-syncthing-key.age; do
               touch "secrets/$f"
             done
             git config user.name "CI"
@@ -178,18 +178,18 @@ jobs:
             rm -rf secrets && mkdir -p secrets
             sed -i '/self.submodules = true;/d' flake.nix
             for f in \
-              agnes-host-key.age agnes-luks-passphrase.age \
+              agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
               bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
               bypass_paywalls_clean-latest.xpi.age \
-              francis-host-key.age francis-luks-passphrase.age \
-              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age \
+              francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
+              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
               joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
               katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
-              michael-host-key.age michael-luks-passphrase.age \
+              michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age; do
+              zita-luks-passphrase.age zita-syncthing-key.age; do
               touch "secrets/$f"
             done
             git config user.name "CI"

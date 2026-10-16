@@ -1,0 +1,47 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p bash coreutils syncthing
+# shellcheck shell=bash
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+SECRET_DIR="${ROOT_DIR}/secrets"
+DATA_DIR="${ROOT_DIR}/data/syncthing"
+CERTS_DIR="${DATA_DIR}/certs"
+
+mkdir -p "${CERTS_DIR}"
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $(basename "$0") <hostname> [hostname...]"
+  echo "Generates Syncthing TLS cert and agenix-encrypted private key for each specified host."
+  exit 1
+fi
+
+for host in "$@"; do
+  echo "==> Generating Syncthing credentials for '${host}'..."
+  tmpdir=$(mktemp -d)
+  syncthing generate --home="${tmpdir}" >/dev/null 2>&1
+
+  # Copy public certificate
+  cert_file="${CERTS_DIR}/${host}.cert.pem"
+  cp "${tmpdir}/cert.pem" "${cert_file}"
+  echo "    Saved public certificate to ${cert_file}"
+
+  # Extract device ID
+  dev_id=$(syncthing device-id --home="${tmpdir}")
+  echo "    Device ID: ${dev_id}"
+
+  # Encrypt private key with agenix
+  secret_file="${SECRET_DIR}/${host}-syncthing-key.age"
+  (
+    cd "${SECRET_DIR}"
+    cat "${tmpdir}/key.pem" | agenix -e "${host}-syncthing-key.age"
+  )
+  echo "    Encrypted private key to ${secret_file}"
+
+  rm -rf "${tmpdir}"
+  echo "==> Done for '${host}'. Add device ID to data/syncthing.nix if not already present."
+done

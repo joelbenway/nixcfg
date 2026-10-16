@@ -90,6 +90,8 @@ in {
     envFile = config.age.secrets.tailscale-oauth-env.path;
   }; # tailscale
 
+  syncthing.enable = true;
+
   llm = {
     enable = true;
     hw.extraFlags = ["--threads" "2" "--split-mode" "layer" "--gpu-layers" "0"];
