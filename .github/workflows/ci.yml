@@ -128,7 +128,7 @@ jobs:
               michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age zita-syncthing-key.age; do
+              zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
               touch "secrets/$f"
             done
             git config user.name "CI"
@@ -189,7 +189,7 @@ jobs:
               michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age zita-syncthing-key.age; do
+              zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
               touch "secrets/$f"
             done
             git config user.name "CI"

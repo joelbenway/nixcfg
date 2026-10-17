@@ -72,6 +72,13 @@ in {
         owner = "root";
         group = "root";
       };
+      pia-env = {
+        file = lib.custom.relativeToRoot "secrets/pia.env.age";
+        name = "pia.env";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
     };
   };
 
@@ -111,6 +118,22 @@ in {
   netprov = {
     enable = true;
     networkConfig = network;
+  };
+
+  services.vpn-gateway = {
+    enable = true;
+    wanInterface = network.wanInterface;
+    routedInterfaces = [network.vlans.iot.interface];
+    torrentPorts = [51413];
+    killSwitch = true;
+    providers.pia = {
+      enable = true;
+      credentialsFile = config.age.secrets.pia-env.path;
+      region = "us_chicago";
+    };
+    providers.proton = {
+      enable = false;
+    };
   };
 
   networking = {
