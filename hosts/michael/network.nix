@@ -72,7 +72,7 @@ rec {
         poe = false;
       };
       "2" = {
-        desc = "PoE+ Uplink to Zyxel WBE530 AP";
+        desc = "PoE+ Uplink to Zyxel NWA130BE AP";
         mode = "trunk";
         nativeVlan = 1;
         taggedVlans = [62 69 77];
@@ -131,7 +131,7 @@ rec {
   };
 
   ap = {
-    model = "Zyxel WBE530";
+    model = "Zyxel NWA130BE";
     ip = "192.168.1.3";
     subnet = "255.255.255.0";
     gateway = "192.168.1.1";
