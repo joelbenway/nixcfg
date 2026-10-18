@@ -67,12 +67,12 @@ def ping(ip: str) -> bool:
 def load_wifi_env(env_path: Optional[str] = None) -> Dict[str, str]:
     env_vars = {}
     paths = [
-        "/run/agenix/wifi.env",
         "/run/agenix/wifi-guest.env",
-        "/persist/run/agenix/wifi.env",
+        "/run/agenix/wifi.env",
         "/persist/run/agenix/wifi-guest.env",
-        "./secrets/wifi.env",
+        "/persist/run/agenix/wifi.env",
         "./secrets/wifi-guest.env",
+        "./secrets/wifi.env",
         env_path,
     ]
     for p in paths:
@@ -373,11 +373,20 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
     # 1. Security profiles
     for s_name, s in ssids.items():
         if s_name == "skylab":
-            psk = wifi_env.get("LAB_WIFI_PSK") or wifi_env.get("HOME_WIFI_PSK") or "SkylabFamilyKey2026!"
+            key_name = "LAB_WIFI_PSK"
         elif s_name == "skynet":
-            psk = wifi_env.get("HOME_WIFI_PSK") or "SkynetGuestKey2026!"
-        else: # iot
-            psk = wifi_env.get("IOT_WIFI_PSK") or "IoTDeviceSecretKey2026!"
+            key_name = "HOME_WIFI_PSK"
+        elif s_name == "iot":
+            key_name = "IOT_WIFI_PSK"
+        else:
+            key_name = f"{s_name.upper()}_WIFI_PSK"
+
+        psk = wifi_env.get(key_name)
+        if not psk:
+            raise ValueError(
+                f"Missing required WiFi passphrase for SSID '{s_name}': "
+                f"'{key_name}' must be defined and non-empty in wifi.env / wifi-guest.env."
+            )
 
         commands.append(f"! --- Security Profile for {s_name} ---")
         commands.append(f"wlan-security-profile {s_name}")
@@ -444,7 +453,11 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
 def cmd_ap_generate(args, cfg: Dict[str, Any]):
     ap_cfg = cfg.get("ap", {})
     mode = getattr(args, "mode", "test")
-    commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    try:
+        commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    except ValueError as e:
+        print(f"[!] Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"# Zyxel AP (NWA130BE / WBE530) Standalone ZySH Configuration Script")
     print(f"# Mode: {mode.upper()} ({'Pre-cutover bench testing' if mode == 'test' else 'Production cutover'})")
@@ -477,14 +490,10 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
 
     mode = getattr(args, "mode", "test")
 
-    if not check_tcp_port(ap_ip, 22) and not args.ip:
-        if check_tcp_port("192.168.1.2", 22):
-            print("[*] Found AP at factory default IP: 192.168.1.2")
-            ap_ip = "192.168.1.2"
-
     print(f"[*] Connecting to Zyxel AP at {ap_ip}:22 via SSH...")
     if not check_tcp_port(ap_ip, 22):
         print(f"[!] SSH (port 22) on {ap_ip} is not reachable.")
+        print("    If provisioning an unconfigured AP, specify '--ip <factory-ip>' explicitly.")
         print("    Note: On new Zyxel APs, SSH must be enabled via the Web Configurator (System -> SSH).")
         print("    You can copy and paste the commands using 'netprov ap generate':\n")
         cmd_ap_generate(args, cfg)
@@ -505,16 +514,26 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
         failed_commands = []
         full_log = []
 
-        def exec_cmd(cmd: str) -> str:
+        def exec_cmd(cmd: str, timeout: float = 10.0) -> str:
             chan.send(cmd.strip() + "\n")
-            time.sleep(0.4)
             resp = ""
-            while chan.recv_ready():
-                resp += chan.recv(4096).decode("utf-8", errors="ignore")
+            start = time.time()
+            prompt_pattern = re.compile(r"[#>](\s*)$")
+            while time.time() - start < timeout:
+                if chan.recv_ready():
+                    chunk = chan.recv(4096).decode("utf-8", errors="ignore")
+                    if not chunk:
+                        break
+                    resp += chunk
+                    if prompt_pattern.search(resp.strip()):
+                        break
+                else:
+                    time.sleep(0.05)
             return resp
 
         for cmd in commands:
-            resp = exec_cmd(cmd)
+            cmd_timeout = 30.0 if cmd.strip() == "write" else 10.0
+            resp = exec_cmd(cmd, timeout=cmd_timeout)
             full_log.append((cmd, resp))
             if "ERROR:" in resp or "% Parse error" in resp:
                 failed_commands.append((cmd, resp.strip()))
