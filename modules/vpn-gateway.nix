@@ -46,13 +46,15 @@
         ip route del default dev "$INTERFACE" table "$TABLE_ID" 2>/dev/null || true
         ip link del dev "$INTERFACE" 2>/dev/null || true
       }
-      trap cleanup EXIT INT TERM
+      trap cleanup EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
 
       echo "[*] Authenticating with PIA API for user $PIA_USER..."
-      TOKEN_RESPONSE=$(curl -s --max-time 15 --location --request POST \
+      TOKEN_RESPONSE=$(printf "%s" "$PIA_PASS" | curl -s --max-time 15 --location --request POST \
         'https://www.privateinternetaccess.com/api/client/v2/token' \
         --form "username=$PIA_USER" \
-        --form "password=$PIA_PASS")
+        --form "password=<-")
 
       PIA_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -er '.token // empty')
       if [[ -z "$PIA_TOKEN" ]]; then
@@ -74,11 +76,11 @@
       PUB_KEY=$(echo "$PRIV_KEY" | wg pubkey)
 
       echo "[*] Registering WireGuard public key with $WG_HOSTNAME..."
-      WG_RESPONSE=$(curl -s -G --max-time 15 \
+      WG_RESPONSE=$(printf "%s" "$PIA_TOKEN" | curl -s -G --max-time 15 \
         --connect-to "$WG_HOSTNAME::$WG_SERVER_IP:" \
         --cacert "$CA_CERT" \
-        --data-urlencode "pt=$PIA_TOKEN" \
         --data-urlencode "pubkey=$PUB_KEY" \
+        --data-urlencode "pt@-" \
         "https://$WG_HOSTNAME:1337/addKey")
 
       STATUS=$(echo "$WG_RESPONSE" | jq -r '.status // empty')
@@ -205,6 +207,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = config.networking.nftables.enable;
+        message = "services.vpn-gateway requires networking.nftables.enable = true to enforce firewall marking, NAT masquerade, and kill-switch rules.";
+      }
+    ];
+
     # Loose reverse path filtering is mandatory for policy routing
     boot.kernel.sysctl = {
       "net.ipv4.conf.all.rp_filter" = 2;
