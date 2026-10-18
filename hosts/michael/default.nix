@@ -145,6 +145,7 @@ in {
     ];
 
     networkmanager.unmanaged = [
+      network.wanInterface
       network.lanInterface
       network.oob.interface
       "interface-name:${network.lanInterface}.*"
@@ -274,7 +275,7 @@ in {
           dnsmasq_lines =
             [
               # Management LAN interface
-              "dhcp-range=interface:${network.lanInterface},${network.mgmt.subnet}.10,${network.mgmt.subnet}.50,255.255.255.0,24h"
+              "dhcp-range=tag:${network.lanInterface},${network.mgmt.subnet}.10,${network.mgmt.subnet}.50,255.255.255.0,24h"
               "dhcp-option=tag:${network.lanInterface},option:router,${network.mgmt.routerIp}"
               "dhcp-option=tag:${network.lanInterface},option:dns-server,${network.mgmt.routerIp}"
               "dhcp-option=tag:${network.lanInterface},option:domain-name,${network.mgmt.name}.home"
@@ -284,7 +285,7 @@ in {
               "dhcp-host=80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
             ]
             ++ (lib.concatMap (vlan: [
-                "dhcp-range=interface:${vlan.interface},${vlan.subnet}.100,${vlan.subnet}.250,255.255.255.0,24h"
+                "dhcp-range=tag:${vlan.interface},${vlan.subnet}.100,${vlan.subnet}.250,255.255.255.0,24h"
                 "dhcp-option=tag:${vlan.interface},option:router,${vlan.routerIp}"
                 "dhcp-option=tag:${vlan.interface},option:dns-server,${vlan.routerIp}"
                 "dhcp-option=tag:${vlan.interface},option:domain-name,${vlan.name}.home"

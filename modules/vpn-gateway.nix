@@ -25,8 +25,11 @@
 
       CRED_FILE="''${1:-}"
       if [[ -n "$CRED_FILE" && -f "$CRED_FILE" ]]; then
-        # shellcheck disable=SC1090
-        source "$CRED_FILE"
+        # Parse credentials safely without evaluating shell expansions ($ in passwords)
+        PARSED_USER=$(grep -E '^[[:space:]]*PIA_USER=' "$CRED_FILE" | head -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*["\x27]//' -e 's/["\x27][[:space:]]*$//' || true)
+        PARSED_PASS=$(grep -E '^[[:space:]]*PIA_PASS=' "$CRED_FILE" | head -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*["\x27]//' -e 's/["\x27][[:space:]]*$//' || true)
+        if [[ -n "$PARSED_USER" ]]; then PIA_USER="$PARSED_USER"; fi
+        if [[ -n "$PARSED_PASS" ]]; then PIA_PASS="$PARSED_PASS"; fi
       fi
 
       PIA_USER="''${PIA_USER:-}"
