@@ -259,29 +259,37 @@ in {
       openFirewallDHCP = false;
       settings = {
         dns = {
-          upstream = ["127.0.0.1#5353"];
+          upstreams = ["127.0.0.1#5353"];
           listeningMode = "ALL";
         };
         dhcp = {
           active = true;
-          hosts = [
-            "80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
-          ];
-          ranges =
+          start = "${network.mgmt.subnet}.10";
+          end = "${network.mgmt.subnet}.50";
+          router = network.mgmt.routerIp;
+          netmask = "255.255.255.0";
+          leaseTime = "24h";
+        };
+        misc = {
+          dnsmasq_lines =
             [
-              {
-                from = "${network.mgmt.subnet}.10";
-                to = "${network.mgmt.subnet}.50";
-                router = network.mgmt.routerIp;
-                domain = "${network.mgmt.name}.home";
-              }
+              # Management LAN interface
+              "dhcp-range=interface:${network.lanInterface},${network.mgmt.subnet}.10,${network.mgmt.subnet}.50,255.255.255.0,24h"
+              "dhcp-option=tag:${network.lanInterface},option:router,${network.mgmt.routerIp}"
+              "dhcp-option=tag:${network.lanInterface},option:dns-server,${network.mgmt.routerIp}"
+              "dhcp-option=tag:${network.lanInterface},option:domain-name,${network.mgmt.name}.home"
+              "domain=${network.mgmt.name}.home,${network.mgmt.subnet}.0/24"
+
+              # Static reservation for Zyxel AP
+              "dhcp-host=80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
             ]
-            ++ (map (vlan: {
-                from = "${vlan.subnet}.100";
-                to = "${vlan.subnet}.250";
-                router = vlan.routerIp;
-                domain = "${vlan.name}.home";
-              })
+            ++ (lib.concatMap (vlan: [
+                "dhcp-range=interface:${vlan.interface},${vlan.subnet}.100,${vlan.subnet}.250,255.255.255.0,24h"
+                "dhcp-option=tag:${vlan.interface},option:router,${vlan.routerIp}"
+                "dhcp-option=tag:${vlan.interface},option:dns-server,${vlan.routerIp}"
+                "dhcp-option=tag:${vlan.interface},option:domain-name,${vlan.name}.home"
+                "domain=${vlan.name}.home,${vlan.subnet}.0/24"
+              ])
               vlanList);
         };
       };
