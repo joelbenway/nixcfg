@@ -190,6 +190,7 @@ in {
         vlanList));
 
     firewall = {
+      checkReversePath = false;
       filterForward = true;
       # Do not expose ports globally across all interfaces (protects WAN)
       allowedTCPPorts = lib.mkForce [];

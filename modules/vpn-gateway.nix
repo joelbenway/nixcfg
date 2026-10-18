@@ -66,7 +66,7 @@
       fi
 
       echo "[*] Querying server info for region $PIA_REGION..."
-      SERVER_JSON=$(curl -s --max-time 15 'https://serverlist.piaservers.net/vpninfo/servers/v4' | \
+      SERVER_JSON=$(curl -s --max-time 15 'https://serverlist.piaservers.net/vpninfo/servers/v4' | head -n 1 | \
         jq -e --arg reg "$PIA_REGION" '.regions[] | select(.id == $reg)')
 
       WG_SERVER_IP=$(echo "$SERVER_JSON" | jq -er '.servers.wg[0].ip')
