@@ -135,6 +135,7 @@ rec {
     ip = "192.168.1.3";
     subnet = "255.255.255.0";
     gateway = "192.168.1.1";
+    lan2Vlan = 62; # Secondary LAN port (apartment wall plate) -> skynet (VLAN 62)
     ssids = {
       skylab = {
         vlanId = 77;

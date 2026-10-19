@@ -374,6 +374,23 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
         "manager ap no login-ip",
     ]
 
+    lan2_vlan = ap_cfg.get("lan2Vlan")
+    if lan2_vlan:
+        commands.extend([
+            f"! --- Secondary LAN Port (LAN2) -> VLAN {lan2_vlan} ---",
+            f"vlan vlan{lan2_vlan}",
+            f"  vlanid {lan2_vlan}",
+            "  no shutdown",
+            "  join lan1 untag",
+            "exit",
+            "vlan vlan1",
+            "  no join lan1",
+            "exit",
+            "port status lan1",
+            f"  pvid {lan2_vlan}",
+            "exit",
+        ])
+
     # 1. Security profiles
     for s_name, s in ssids.items():
         if s_name == "skylab":
