@@ -139,14 +139,14 @@ rec {
     ssids = {
       skylab = {
         vlanId = 77;
-        security = "wpa2-psk";
+        security = "wpa3-sae-wpa2-psk";
         band = "all";
         clientIsolation = false;
         desc = "Family trusted WiFi";
       };
       skynet = {
         vlanId = 62;
-        security = "wpa2-psk";
+        security = "wpa3-sae-wpa2-psk";
         band = "all";
         clientIsolation = true;
         desc = "Guest and friend WiFi";

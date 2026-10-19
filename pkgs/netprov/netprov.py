@@ -412,10 +412,13 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
         commands.append(f"! --- Security Profile for {s_name} ---")
         commands.append(f"wlan-security-profile {s_name}")
         if s.get("security") == "wpa3-sae-wpa2-psk":
-            commands.append("  mode wpa2-mix")
+            commands.append("  mode wpa3")
+            commands.append("  transition-mode")
             commands.append(f"  wpa-psk {psk}")
-            commands.append("  dot11w activate")
-            commands.append("  dot11w-op 2")
+        elif s.get("security") == "wpa3-sae":
+            commands.append("  mode wpa3")
+            commands.append("  no transition-mode")
+            commands.append(f"  wpa-psk {psk}")
         else:
             commands.append("  mode wpa2")
             commands.append(f"  wpa-psk {psk}")
@@ -557,6 +560,10 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
             resp = exec_cmd(cmd, timeout=cmd_timeout)
             full_log.append((cmd, resp))
             if "ERROR:" in resp or "% Parse error" in resp:
+                # Some ZySH commands are idempotent and harmlessly report if already applied
+                # (e.g. unjoining a port from a VLAN that it has already left)
+                if "not exist" in resp.lower():
+                    continue
                 failed_commands.append((cmd, resp.strip()))
 
         client.close()
