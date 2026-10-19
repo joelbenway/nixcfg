@@ -27,14 +27,12 @@
     };
     pcrs = lib.mkOption {
       type = lib.types.str;
-      default = "0+7";
-      example = "0+7";
+      default = "0+2+7+12";
+      example = "0+2+7+12";
       description = ''
         PCR values to bind the TPM enrollment to.
-        Default includes firmware (0) and secure boot policy (7).
-        Binding to PCR 12 or 2 is avoided by default on NixOS because PCR 12
-        measures the kernel command line (which changes with every NixOS system
-        generation store path), and PCR 2 measures Option ROMs / PCIe cards.
+        Default includes firmware (0), Option ROMs / PCIe configuration (2),
+        Secure Boot policy (7), and kernel command line / configuration (12).
       '';
     };
   };
