@@ -102,6 +102,14 @@ in
             type = "stdio";
             command = "mcp-nixos";
           }; # nixos
+          github = {
+            type = "stdio";
+            command = "github-mcp-server";
+            args = ["stdio"];
+            env = {
+              GITHUB_PERSONAL_ACCESS_TOKEN = "{env:GITHUB_PERSONAL_ACCESS_TOKEN}";
+            };
+          }; # github
           context7 = {
             url = "https://mcp.context7.com/mcp";
             headers = {
