@@ -27,11 +27,14 @@
     };
     pcrs = lib.mkOption {
       type = lib.types.str;
-      default = "0+2+7+12";
-      example = "0+2+7+12";
+      default = "0+7";
+      example = "0+7";
       description = ''
         PCR values to bind the TPM enrollment to.
-        Default includes firmware (0), configuration (2), secure boot (7), and kernel config (12).
+        Default includes firmware (0) and secure boot policy (7).
+        Binding to PCR 12 or 2 is avoided by default on NixOS because PCR 12
+        measures the kernel command line (which changes with every NixOS system
+        generation store path), and PCR 2 measures Option ROMs / PCIe cards.
       '';
     };
   };
@@ -70,18 +73,16 @@
           trap 'rm -f "$CLEAN_PASSPHRASE"' EXIT
           tr -d '\n' < "${config.tpm.passwordFile}" > "$CLEAN_PASSPHRASE"
           ${lib.concatMapStringsSep "\n" (device: ''
-              echo "Checking ${device}..."
-              if ! systemd-cryptenroll ${device} | grep -q "tpm2"; then
-                echo "Enrolling ${device} with TPM2..."
+              echo "Checking ${device} (target PCRs: ${config.tpm.pcrs})..."
+              if [ -e "${device}" ]; then
                 systemd-cryptenroll \
                   --unlock-key-file="$CLEAN_PASSPHRASE" \
                   --tpm2-device=auto \
                   --tpm2-pcrs=${config.tpm.pcrs} \
                   --wipe-slot=tpm2 \
                   ${device}
-                echo "${device} enrolled successfully"
               else
-                echo "${device} already enrolled with TPM2"
+                echo "Warning: Device ${device} not found, skipping."
               fi
             '')
             config.tpm.devices}
