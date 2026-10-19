@@ -65,7 +65,10 @@ For reference, the manual steps are: generate keys using the ```sbctl``` package
 ## TPM Unlock
 The [tpm module](./modules/tpm.nix) automates TPM enrollment. When `tpm.enable = true`, a oneshot systemd service checks each configured LUKS device and enrolls it with TPM2 if not already enrolled, using the passphrase from your agenix secrets. No manual steps required.
 
-For reference, the manual command is: ```sudo systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=0+2+7+12 --wipe-slot=tpm2 /dev/nvme0n1p2``` for each encrypted partition. You'll be prompted for the password.
+A companion CLI utility `tpm-reenroll` (also aliased as `tpm-enroll`) is available system-wide:
+- `sudo tpm-reenroll` — Automatically re-enrolls configured LUKS devices against current system PCRs (using agenix secret or prompting interactively).
+- `sudo tpm-reenroll --status` — Displays current keyslots, TPM token bindings, and live system PCR measurements.
+- `sudo tpm-reenroll --force` — Forces wiping existing TPM tokens and generating fresh sealed keys.
 
 ## License
 This project is licensed under the [MIT License](LICENSE).
