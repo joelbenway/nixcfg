@@ -105,7 +105,10 @@ in
           github = {
             type = "stdio";
             command = "github-mcp-server";
-            args = ["stdio"];
+            args = [
+              "stdio"
+              "--toolsets=all"
+            ];
             env = {
               GITHUB_PERSONAL_ACCESS_TOKEN = "{env:GITHUB_PERSONAL_ACCESS_TOKEN}";
             };
