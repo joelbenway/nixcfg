@@ -101,6 +101,9 @@ in
           nixos = {
             type = "stdio";
             command = "mcp-nixos";
+            env = {
+              FASTMCP_SHOW_SERVER_BANNER = "false";
+            };
           }; # nixos
           github = {
             type = "stdio";

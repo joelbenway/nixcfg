@@ -53,17 +53,26 @@ in {
               allServers =
                 (lib.optionalAttrs (hm.config.programs ? mcp && hm.config.programs.mcp.enable) hm.config.programs.mcp.servers)
                 // userConfig.servers;
-              rawJson = builtins.toJSON {
-                mcpServers = lib.mapAttrs (_: srv:
-                  lib.filterAttrs (_: v: v != null) {
-                    command = srv.command or null;
+
+              cleanServer = srv:
+                if (srv.command or null) != null
+                then
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) {
+                    inherit (srv) command;
                     args = srv.args or null;
                     env = srv.env or null;
                     cwd = srv.cwd or null;
-                    serverUrl = srv.serverUrl or srv.url or null;
+                  }
+                else if (srv.serverUrl or srv.url or null) != null
+                then
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) {
+                    serverUrl = srv.serverUrl or srv.url;
                     headers = srv.headers or null;
-                  })
-                allServers;
+                  }
+                else {};
+
+              rawJson = builtins.toJSON {
+                mcpServers = lib.mapAttrs (_: cleanServer) allServers;
               };
             in
               builtins.replaceStrings ["{env:"] ["\${"] rawJson;
