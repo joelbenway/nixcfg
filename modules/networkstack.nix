@@ -67,7 +67,7 @@
                 }; # wifi
                 wifi-security = {
                   auth-alg = "open";
-                  key-mgmt = "wpa-psk";
+                  key-mgmt = "sae";
                   psk = "$HOME_WIFI_PSK";
                 }; # wifi-security
               }; # home-wifi
