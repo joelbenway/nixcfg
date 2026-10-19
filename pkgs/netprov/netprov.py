@@ -431,7 +431,7 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
 
         commands.append(f"! --- SSID Profile for {actual_ssid} (VLAN {vlan_id}) ---")
         commands.append(f"wlan-ssid-profile {s_name}")
-        commands.append(f"  ssid \"{actual_ssid}\"")
+        commands.append(f"  ssid {actual_ssid}")
         commands.append(f"  security {s_name}")
         commands.append(f"  vlan-id {vlan_id}")
         commands.append("  data-forward localbridge")
