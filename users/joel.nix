@@ -25,10 +25,13 @@ in
         [
           ddgr
           fastfetch
-          git-filter-repo
+          github-cli
+          github-mcp-server
           mcp-nixos
           pciutils
+          tcpdump
           usbutils
+          wireshark-cli
         ]
         ++ (
           if config.joel.desktop

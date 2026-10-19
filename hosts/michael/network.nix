@@ -138,7 +138,7 @@ rec {
     ssids = {
       skylab = {
         vlanId = 77;
-        security = "wpa3-sae-wpa2-psk";
+        security = "wpa2-psk";
         band = "all";
         clientIsolation = false;
         desc = "Family trusted WiFi";

@@ -368,7 +368,11 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
     ap_cfg = cfg.get("ap", {})
     ssids = ap_cfg.get("ssids", {})
     wifi_env = load_wifi_env(env_file)
-    commands = ["configure terminal"]
+    commands = [
+        "configure terminal",
+        f"manager ap vlan ip dns {ap_cfg.get('gateway', '192.168.1.1')}",
+        "manager ap no login-ip",
+    ]
 
     # 1. Security profiles
     for s_name, s in ssids.items():
