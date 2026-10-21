@@ -54,21 +54,35 @@ in {
                 (lib.optionalAttrs (hm.config.programs ? mcp && hm.config.programs.mcp.enable) hm.config.programs.mcp.servers)
                 // userConfig.servers;
 
-              cleanServer = srv:
+              cleanServer = srv: let
+                isDisabled =
+                  if (srv.disabled or false) == true
+                  then true
+                  else if (srv.enabled or null) == false
+                  then true
+                  else null;
+                common = {
+                  disabled = isDisabled;
+                  disabledTools = srv.disabledTools or null;
+                  alwaysAllow = srv.alwaysAllow or null;
+                };
+              in
                 if (srv.command or null) != null
                 then
-                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) {
-                    inherit (srv) command;
-                    args = srv.args or null;
-                    env = srv.env or null;
-                    cwd = srv.cwd or null;
-                  }
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                      inherit (srv) command;
+                      args = srv.args or null;
+                      env = srv.env or null;
+                      cwd = srv.cwd or null;
+                    }
+                    // common)
                 else if (srv.serverUrl or srv.url or null) != null
                 then
-                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) {
-                    serverUrl = srv.serverUrl or srv.url;
-                    headers = srv.headers or null;
-                  }
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                      serverUrl = srv.serverUrl or srv.url;
+                      headers = srv.headers or null;
+                    }
+                    // common)
                 else {};
             in
               builtins.toJSON {

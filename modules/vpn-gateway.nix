@@ -15,6 +15,7 @@
     runtimeInputs = with pkgs; [
       coreutils
       curl
+      gnused
       iproute2
       iputils
       jq
@@ -23,11 +24,30 @@
     text = ''
       set -euo pipefail
 
+      parse_cred() {
+        local key="''$1"
+        local file="''$2"
+        local line raw val
+        line=$(grep -E "^[[:space:]]*''${key}=" "''$file" | head -n1 || true)
+        [[ -z "''$line" ]] && return 0
+        raw="''${line#*=}"
+        raw=$(printf '%s' "''$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*''$//')
+        if [[ "''$raw" =~ ^\"(.*)\"''$ ]]; then
+          val="''${BASH_REMATCH[1]}"
+          val=$(printf '%s' "''$val" | sed -e 's/\\''$/''$/g' -e 's/\\"/"/g' -e 's/\\\\/\\/g')
+        elif [[ "''$raw" =~ ^\x27(.*)\x27''$ ]]; then
+          val="''${BASH_REMATCH[1]}"
+        else
+          val="''$raw"
+        fi
+        printf '%s' "''$val"
+      }
+
       CRED_FILE="''${1:-}"
       if [[ -n "$CRED_FILE" && -f "$CRED_FILE" ]]; then
-        # Parse credentials safely without evaluating shell expansions ($ in passwords)
-        PARSED_USER=$(grep -E '^[[:space:]]*PIA_USER=' "$CRED_FILE" | head -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*["\x27]//' -e 's/["\x27][[:space:]]*$//' || true)
-        PARSED_PASS=$(grep -E '^[[:space:]]*PIA_PASS=' "$CRED_FILE" | head -n1 | cut -d= -f2- | sed -e 's/^[[:space:]]*["\x27]//' -e 's/["\x27][[:space:]]*$//' || true)
+        # Parse credentials preserving shell-assignment semantics without eval
+        PARSED_USER=$(parse_cred "PIA_USER" "$CRED_FILE")
+        PARSED_PASS=$(parse_cred "PIA_PASS" "$CRED_FILE")
         if [[ -n "$PARSED_USER" ]]; then PIA_USER="$PARSED_USER"; fi
         if [[ -n "$PARSED_PASS" ]]; then PIA_PASS="$PARSED_PASS"; fi
       fi

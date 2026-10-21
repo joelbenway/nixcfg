@@ -154,6 +154,13 @@
                     fi
                   done
                 fi
+              elif meta=$(cryptsetup luksDump --dump-json-metadata "$dev" 2>/dev/null); then
+                want=$(jq -cn --arg p "$target_pcrs" '$p | split("+") | map(tonumber) | sort')
+                if echo "$meta" | jq -e --argjson want "$want" \
+                  '[.tokens[]? | select(.type == "systemd-tpm2") | (.["tpm2-pcrs"] | sort)] | any(. == $want)' >/dev/null 2>&1; then
+                  echo "$dev already enrolled with PCRs $target_pcrs, skipping (use --force to re-enroll)."
+                  continue
+                fi
               fi
 
               systemd-cryptenroll \

@@ -65,6 +65,13 @@ def ping(ip: str) -> bool:
 
 
 def load_wifi_env(env_path: Optional[str] = None) -> Dict[str, str]:
+    """Load Wi-Fi credentials from environment files.
+
+    Files are loaded in precedence order:
+    1. Base guest credentials (wifi-guest.env)
+    2. Primary Wi-Fi credentials (wifi.env, overriding guest if conflicting)
+    3. Custom env file supplied via CLI (highest precedence)
+    """
     env_vars = {}
     paths = [
         "/run/agenix/wifi-guest.env",
@@ -397,6 +404,8 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
             key_name = "LAB_WIFI_PSK"
         elif s_name == "skynet":
             key_name = "HOME_WIFI_PSK"
+        elif s_name == "guest":
+            key_name = "GUEST_WIFI_PSK"
         elif s_name == "iot":
             key_name = "IOT_WIFI_PSK"
         else:
