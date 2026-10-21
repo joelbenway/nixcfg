@@ -70,12 +70,10 @@ in {
                     headers = srv.headers or null;
                   }
                 else {};
-
-              rawJson = builtins.toJSON {
+            in
+              builtins.toJSON {
                 mcpServers = lib.mapAttrs (_: cleanServer) allServers;
               };
-            in
-              builtins.replaceStrings ["{env:"] ["\${"] rawJson;
           };
 
           packages = with pkgs;

@@ -118,20 +118,13 @@ in
               "stdio"
               "--toolsets=all"
             ];
-            env = {
-              GITHUB_PERSONAL_ACCESS_TOKEN = "{env:GITHUB_PERSONAL_ACCESS_TOKEN}";
-            };
           }; # github
           context7 = {
             type = "stdio";
-            command = "npx";
-            args = [
-              "-y"
-              "@upstash/context7-mcp"
-            ];
-            env = {
-              CONTEXT7_API_KEY = "{env:CONTEXTSEVEN_API_KEY}";
-            };
+            command = "${pkgs.writeShellScript "context7-mcp" ''
+              export CONTEXT7_API_KEY="''${CONTEXT7_API_KEY:-$CONTEXTSEVEN_API_KEY}"
+              exec ${pkgs.nodejs}/bin/npx -y @upstash/context7-mcp "$@"
+            ''}";
           }; # context7
           tavily = {
             type = "stdio";
@@ -140,9 +133,6 @@ in
               "-y"
               "tavily-mcp"
             ];
-            env = {
-              TAVILY_API_KEY = "{env:TAVILY_API_KEY}";
-            };
           };
         }; # servers
       }; # mcp
