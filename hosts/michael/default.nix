@@ -299,31 +299,229 @@ in {
         {
           url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts";
           type = "block";
-          description = "Steven Black's unified hosts file";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt";
-          type = "block";
-          description = "Disconnect simple ad list";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt";
-          type = "block";
-          description = "Disconnect simple tracking list";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_malware.txt";
-          type = "block";
-          description = "Disconnect simple malware list";
+          description = "Steven Black unified hosts file";
           enabled = true;
         }
         {
           url = "https://raw.githubusercontent.com/AnonymouseGlobal/blocklist/master/blocklist.txt";
           type = "block";
           description = "Anonymouse ad blocklist";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/PolishFiltersTeam/KADhosts/master/KADhosts.txt";
+          type = "block";
+          description = "Firebog Green (Suspicious Lists) - PolishFiltersTeam KADhosts";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.Spam/hosts";
+          type = "block";
+          description = "Firebog Green (Suspicious Lists) - Fademind's Spammers";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/static/w3kbl.txt";
+          type = "block";
+          description = "Firebog Green (Suspicious Lists) - WaLLy3K's Blacklist";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/matomo-org/referrer-spam-blacklist/master/spammers.txt";
+          type = "block";
+          description = "Firebog Blue (Suspicious Lists) - Matomo Referrer Spam";
+          enabled = true;
+        }
+        {
+          url = "https://someonewhocares.org/hosts/zero/hosts";
+          type = "block";
+          description = "Firebog Blue (Suspicious Lists) - Someone Who Cares";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/RooneyMcNibNug/pihole-stuff/master/SNAFU.txt";
+          type = "block";
+          description = "Firebog Blue (Suspicious Lists) - RooneyMcNibNug's SNAFU list";
+          enabled = true;
+        }
+        {
+          url = "https://adaway.org/hosts.txt";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - AdAway";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/AdguardDNS.txt";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - Adguard DNS";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Admiral.txt";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - LanikSJ's Admiral Anti-Adblock";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - Anudeep ND's Blacklist";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Easylist.txt";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - Easylist";
+          enabled = true;
+        }
+        {
+          url = "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - Peter Lowe's Adservers";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/UncheckyAds/hosts";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - Fademind's Unchecky Ads";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/bigdargon/hostsVN/master/hosts";
+          type = "block";
+          description = "Firebog Green (Advertising Lists) - hostsVN";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Easyprivacy.txt";
+          type = "block";
+          description = "Firebog Green (Tracking & Telemetry Lists) - Easyprivacy";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Prigent-Ads.txt";
+          type = "block";
+          description = "Firebog Green (Tracking & Telemetry Lists) - Fabrice Prigent's Ads";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.2o7Net/hosts";
+          type = "block";
+          description = "Firebog Green (Tracking & Telemetry Lists) - Fademind's 2o7 Network Trackers";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt";
+          type = "block";
+          description = "Firebog Green (Tracking & Telemetry Lists) - Crazy Max's Microsoft Telemetry";
+          enabled = true;
+        }
+        {
+          url = "https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt";
+          type = "block";
+          description = "Firebog Green (Tracking & Telemetry Lists) - Geoffrey Frogeye's First-Party Trackers";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/Alternate%20versions%20Anti-Malware%20List/AntiMalwareHosts.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - DandelionSprout's Anti Malware Filter";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Prigent-Crypto.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Fabrice Prigent's Cryptojacking";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.Risk/hosts";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Fademind's Risky Hosts";
+          enabled = true;
+        }
+        {
+          url = "https://phishing.army/download/phishing_army_blocklist_extended.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Phishing Army's Extended Blocklist";
+          enabled = true;
+        }
+        {
+          url = "https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-malware.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Quidsup Malicious";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/Spam404/lists/master/main-blacklist.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Spam404";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators/master/generated/hosts";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - Echap's Stalkerware Indicators";
+          enabled = true;
+        }
+        {
+          url = "https://urlhaus.abuse.ch/downloads/hostfile/";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - URLhaus Malicious URL blocklist";
+          enabled = true;
+        }
+        {
+          url = "https://lists.cyberhost.uk/malware.txt";
+          type = "block";
+          description = "Firebog Green (Malicious Lists) - CyberHost.uk Malware Domains";
+          enabled = true;
+        }
+        {
+          url = "https://malware-filter.gitlab.io/malware-filter/phishing-filter-hosts.txt";
+          type = "block";
+          description = "Firebog Blue (Malicious Lists) - Curbengh's Phishing filter";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Prigent-Malware.txt";
+          type = "block";
+          description = "Firebog Blue (Malicious Lists) - Fabrice Prigent's Malware";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/jarelllama/Scam-Blocklist/main/lists/wildcard_domains/scams.txt";
+          type = "block";
+          description = "Firebog Blue (Malicious Lists) - Jarelllama's Scam Blocklist";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/RPiList-Malware.txt";
+          type = "block";
+          description = "Firebog Blue (Malicious Lists) - RPiList Malware";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/RPiList-Phishing.txt";
+          type = "block";
+          description = "Firebog Blue (Malicious Lists) - RPiList Phishing";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_top1m.list";
+          type = "block";
+          description = "Firebog Blue (Other Lists) - Chad Mayfield (Top 1M)";
+          enabled = true;
+        }
+        {
+          url = "https://v.firebog.net/hosts/Prigent-Adult.txt";
+          type = "block";
+          description = "Firebog Blue (Other Lists) - Fabrice Prigent's Adult (LARGE: 90MB, 3M+ entries)";
+          enabled = true;
+        }
+        {
+          url = "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt";
+          type = "block";
+          description = "Firebog Blue (Other Lists) - Anudeep ND's Facebook Blacklist";
           enabled = true;
         }
       ];
