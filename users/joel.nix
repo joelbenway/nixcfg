@@ -28,6 +28,7 @@ in
           github-cli
           github-mcp-server
           mcp-nixos
+          nodejs
           pciutils
           tcpdump
           usbutils
@@ -50,6 +51,7 @@ in
     extraConfig = {
       username,
       config,
+      pkgs,
       ...
     }: {
       age = {
@@ -103,6 +105,10 @@ in
             command = "mcp-nixos";
             env = {
               FASTMCP_SHOW_SERVER_BANNER = "false";
+              PYTHONPATH = "${pkgs.writeTextDir "sitecustomize.py" ''
+                import signal, sys
+                signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
+              ''}";
             };
           }; # nixos
           github = {
@@ -117,13 +123,26 @@ in
             };
           }; # github
           context7 = {
-            url = "https://mcp.context7.com/mcp";
-            headers = {
+            type = "stdio";
+            command = "npx";
+            args = [
+              "-y"
+              "@upstash/context7-mcp"
+            ];
+            env = {
               CONTEXT7_API_KEY = "{env:CONTEXTSEVEN_API_KEY}";
-            }; # headers
+            };
           }; # context7
           tavily = {
-            url = "https://mcp.tavily.com/mcp/?tavilyApiKey={env:TAVILY_API_KEY}";
+            type = "stdio";
+            command = "npx";
+            args = [
+              "-y"
+              "tavily-mcp"
+            ];
+            env = {
+              TAVILY_API_KEY = "{env:TAVILY_API_KEY}";
+            };
           };
         }; # servers
       }; # mcp
