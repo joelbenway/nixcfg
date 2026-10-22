@@ -14,6 +14,7 @@ TARGET_ADDRESS=""
 REMOTE_USER="${USER}"
 TEST_ONLY=false
 BUILD_HOST=""
+ASK_PASSWORD=true
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,6 +52,7 @@ Options:
   -u, --user USER      Remote SSH user with sudo access (default: current user '${USER}')
   -b, --build-host H   Host on which to build derivations (default: target host)
   --test-only          Run 'nixos-rebuild test' and canaries without persisting to bootloader
+  --no-ask-password    Do not prompt for remote sudo password (use with passwordless sudo)
   -h, --help           Show this help message
 EOF
   exit 0
@@ -73,6 +75,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --test-only)
       TEST_ONLY=true
+      shift
+      ;;
+    --no-ask-password)
+      ASK_PASSWORD=false
       shift
       ;;
     -h | --help)
@@ -110,7 +116,7 @@ run_ssh() {
 }
 
 run_ssh_sudo() {
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
+  ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
 }
 
 rollback() {
@@ -137,7 +143,12 @@ info "Connected to remote host: ${REMOTE_HOSTNAME}"
 # 2. Stage deployment with 'test'
 info "Deploying configuration to ${TARGET_HOST} via 'nixos-rebuild test'..."
 
-REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" --use-remote-sudo)
+ELEVATE_FLAG="--ask-sudo-password"
+if [ "$ASK_PASSWORD" = false ]; then
+  ELEVATE_FLAG="--elevate=sudo"
+fi
+
+REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG")
 
 if [[ -n "$BUILD_HOST" ]]; then
   REBUILD_CMD+=(--build-host "$BUILD_HOST")
@@ -201,7 +212,7 @@ if [ "$TEST_ONLY" = true ]; then
 fi
 
 info "Persisting configuration to bootloader via 'nixos-rebuild switch'..."
-SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" --use-remote-sudo)
+SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG")
 if [[ -n "$BUILD_HOST" ]]; then
   SWITCH_CMD+=(--build-host "$BUILD_HOST")
 fi
