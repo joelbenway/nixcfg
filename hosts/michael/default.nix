@@ -202,8 +202,8 @@ in {
 
       extraInputRules = ''
         # Allow DNS (53) & DHCP (67) on all internal interfaces and Tailscale
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} udp dport {53, 67} accept
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} tcp dport 53 accept
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} udp dport {53, 67} accept
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} tcp dport 53 accept
 
         # Allow Web UI (80, 443) and SSH (22) only on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
         iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport {22, 80, 443} accept
@@ -218,7 +218,7 @@ in {
         iifname "tailscale0" tcp flags syn tcp option maxseg size set 1240
 
         # Allow all internal VLANs, management network, and Tailscale exit node to forward outbound to WAN (Internet)
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} oifname "${network.wanInterface}" accept
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} oifname "${network.wanInterface}" accept
 
         # skylab (trusted family) -> all other internal zones
         iifname "${network.vlans.skylab.interface}" oifname "${network.vlans.skynet.interface}" accept
