@@ -1,0 +1,214 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p bash coreutils openssh bind.dnsutils nix
+# shellcheck shell=bash
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+
+TARGET_HOST=""
+TARGET_ADDRESS=""
+REMOTE_USER="${USER}"
+TEST_ONLY=false
+BUILD_HOST=""
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+info() {
+  echo -e "${BLUE}==>${NC} $*"
+}
+
+success() {
+  echo -e "${GREEN}==>${NC} $*"
+}
+
+warn() {
+  echo -e "${YELLOW}==>${NC} $*"
+}
+
+error() {
+  echo -e "${RED}ERROR:${NC} $*" >&2
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options] <hostname>
+
+Safely deploy a NixOS configuration to a production host with canary healthchecks and automatic rollback.
+
+Arguments:
+  hostname             NixOS configuration name (e.g., michael, francis, zita, agnes, jerome)
+
+Options:
+  -t, --target ADDR    Target IP address or hostname (default: resolves <hostname>)
+  -u, --user USER      Remote SSH user with sudo access (default: current user '${USER}')
+  -b, --build-host H   Host on which to build derivations (default: target host)
+  --test-only          Run 'nixos-rebuild test' and canaries without persisting to bootloader
+  -h, --help           Show this help message
+EOF
+  exit 0
+}
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t | --target)
+      TARGET_ADDRESS="$2"
+      shift 2
+      ;;
+    -u | --user)
+      REMOTE_USER="$2"
+      shift 2
+      ;;
+    -b | --build-host)
+      BUILD_HOST="$2"
+      shift 2
+      ;;
+    --test-only)
+      TEST_ONLY=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      if [[ -z "$TARGET_HOST" ]]; then
+        TARGET_HOST="$1"
+        shift
+      else
+        echo "Unexpected argument: $1" >&2
+        usage
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$TARGET_HOST" ]]; then
+  error "Missing required target hostname."
+  usage
+fi
+
+if [[ -z "$TARGET_ADDRESS" ]]; then
+  TARGET_ADDRESS="$TARGET_HOST"
+fi
+
+SSH_TARGET="${REMOTE_USER}@${TARGET_ADDRESS}"
+
+run_ssh() {
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "$@"
+}
+
+run_ssh_sudo() {
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
+}
+
+rollback() {
+  error "Deployment verification failed! Initiating automatic rollback on ${TARGET_HOST}..."
+  if run_ssh_sudo "/run/booted-system/bin/switch-to-configuration test"; then
+    warn "Successfully rolled back ${TARGET_HOST} to previous booted system generation."
+  else
+    error "CRITICAL: Automated rollback command failed on ${TARGET_HOST}!"
+  fi
+  exit 1
+}
+
+# 1. Pre-flight checks
+info "Performing pre-flight checks for ${TARGET_HOST} (${TARGET_ADDRESS})..."
+
+if ! run_ssh "hostname" &>/dev/null; then
+  error "Unable to reach ${SSH_TARGET} via SSH. Check network connectivity and credentials."
+  exit 1
+fi
+
+REMOTE_HOSTNAME=$(run_ssh "hostname")
+info "Connected to remote host: ${REMOTE_HOSTNAME}"
+
+# 2. Stage deployment with 'test'
+info "Deploying configuration to ${TARGET_HOST} via 'nixos-rebuild test'..."
+
+REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" --use-remote-sudo)
+
+if [[ -n "$BUILD_HOST" ]]; then
+  REBUILD_CMD+=(--build-host "$BUILD_HOST")
+fi
+
+if ! "${REBUILD_CMD[@]}"; then
+  error "nixos-rebuild test failed on ${TARGET_HOST}."
+  exit 1
+fi
+
+success "Configuration activated in memory on ${TARGET_HOST}. Running canary checks..."
+
+# 3. Canary Verification Suite
+trap rollback ERR
+
+info "[Canary 1/3] Verifying SSH and systemd health..."
+sleep 2
+
+# Check systemd failed units
+FAILED_UNITS=$(run_ssh "systemctl --failed --plain --no-legend 2>/dev/null | wc -l" || echo "1")
+if [[ "$FAILED_UNITS" -gt 0 ]]; then
+  warn "Detected $FAILED_UNITS failed systemd units on ${TARGET_HOST}:"
+  run_ssh "systemctl --failed --no-pager" || true
+  # Do not immediately rollback for non-critical units unless specific to target
+fi
+
+# Host-specific canaries
+if [[ "$TARGET_HOST" == "michael" ]]; then
+  info "[Canary 2/3] Verifying router DNS resolution & forwarders..."
+  for _ in {1..5}; do
+    if run_ssh "dig @127.0.0.1 nixos.org +short +time=2 +tries=1" &>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+
+  if ! run_ssh "dig @127.0.0.1 nixos.org +short +time=3 +tries=2" &>/dev/null; then
+    error "DNS resolution failed on router (127.0.0.1)!"
+    rollback
+  fi
+
+  info "[Canary 3/3] Verifying core router services (pihole-ftl, unbound, nftables)..."
+  for s in pihole-ftl unbound nftables; do
+    if ! run_ssh "systemctl is-active --quiet $s"; then
+      error "Critical service '$s' is not active on ${TARGET_HOST}!"
+      rollback
+    fi
+  done
+else
+  info "[Canary 2/3] Verifying target system responsiveness..."
+  run_ssh "systemctl is-system-running || true"
+fi
+
+trap - ERR
+success "All canary checks passed successfully on ${TARGET_HOST}!"
+
+# 4. Finalize
+if [ "$TEST_ONLY" = true ]; then
+  warn "Skipping bootloader update (--test-only specified). Running configuration is active in RAM."
+  exit 0
+fi
+
+info "Persisting configuration to bootloader via 'nixos-rebuild switch'..."
+SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" --use-remote-sudo)
+if [[ -n "$BUILD_HOST" ]]; then
+  SWITCH_CMD+=(--build-host "$BUILD_HOST")
+fi
+
+if ! "${SWITCH_CMD[@]}"; then
+  error "Failed to persist configuration to bootloader on ${TARGET_HOST}."
+  exit 1
+fi
+
+success "Successfully deployed and finalized update on ${TARGET_HOST}!"

@@ -408,4 +408,26 @@ in {
       echo "Pi-hole groups configured successfully."
     '';
   };
+
+  systemd.services.pihole-gravity-update = {
+    description = "Update Pi-hole Gravity blocklists from remote sources";
+    after = ["network-online.target" "pihole-ftl.service"];
+    wants = ["network-online.target"];
+    serviceConfig = {
+      Type = "oneshot";
+      User = config.services.pihole-ftl.user;
+      Group = config.services.pihole-ftl.group;
+      ExecStart = "${config.services.pihole-ftl.piholePackage}/bin/pihole updateGravity";
+    };
+  };
+
+  systemd.timers.pihole-gravity-update = {
+    description = "Weekly update of Pi-hole blocklist domains";
+    wantedBy = ["timers.target"];
+    timerConfig = {
+      OnCalendar = "Sun *-*-* 03:30:00";
+      Persistent = true;
+      RandomizedDelaySec = "30m";
+    };
+  };
 }

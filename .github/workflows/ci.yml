@@ -70,10 +70,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Run ShellCheck
-        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys
+        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host
 
       - name: Check Shell Formatting with Shfmt
-        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host
 
   lint-workflows:
     name: Workflow Linting (Actionlint)
