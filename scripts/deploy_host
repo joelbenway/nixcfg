@@ -179,14 +179,19 @@ fi
 if [[ "$TARGET_HOST" == "michael" ]]; then
   info "[Canary 2/3] Verifying router DNS resolution & forwarders..."
   for _ in {1..5}; do
-    if run_ssh "dig @127.0.0.1 nixos.org +short +time=2 +tries=1" &>/dev/null; then
+    if dig "@${TARGET_ADDRESS}" nixos.org +short +time=2 +tries=1 &>/dev/null; then
       break
     fi
     sleep 1
   done
 
-  if ! run_ssh "dig @127.0.0.1 nixos.org +short +time=3 +tries=2" &>/dev/null; then
-    error "DNS resolution failed on router (127.0.0.1)!"
+  if ! dig "@${TARGET_ADDRESS}" nixos.org +short +time=3 +tries=2 &>/dev/null; then
+    error "DNS resolution query to @${TARGET_ADDRESS} failed!"
+    rollback
+  fi
+
+  if ! run_ssh "getent hosts nixos.org" &>/dev/null; then
+    error "Local hostname resolution failed on router!"
     rollback
   fi
 
