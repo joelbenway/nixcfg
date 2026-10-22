@@ -195,8 +195,8 @@ if [[ "$TARGET_HOST" == "michael" ]]; then
     rollback
   fi
 
-  info "[Canary 3/3] Verifying core router services (pihole-ftl, unbound, nftables)..."
-  for s in pihole-ftl unbound nftables; do
+  info "[Canary 3/3] Verifying core router services (pihole-ftl, unbound, nftables, pia-wireguard)..."
+  for s in pihole-ftl unbound nftables pia-wireguard; do
     if ! run_ssh "systemctl is-active --quiet $s"; then
       error "Critical service '$s' is not active on ${TARGET_HOST}!"
       rollback

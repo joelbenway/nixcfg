@@ -199,12 +199,16 @@ in {
       allowedUDPPorts = lib.mkForce [];
 
       extraInputRules = ''
-        # Allow DNS & Web UI on all internal interfaces
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} tcp dport {53, 80, 443} accept
+        # Allow DNS (53) & DHCP (67) on all internal interfaces
         iifname {${lib.concatStringsSep ", " allInternalInterfaces}} udp dport {53, 67} accept
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} tcp dport 53 accept
 
-        # Allow SSH on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
-        iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport 22 accept
+        # Allow Web UI (80, 443) and SSH (22) only on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
+        iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport {22, 80, 443} accept
+
+        # Prevent untrusted interfaces from reaching router IPs outside their designated gateway
+        iifname "${network.vlans.iot.interface}" ip daddr != "${network.vlans.iot.routerIp}" drop
+        iifname "${network.vlans.skynet.interface}" ip daddr != "${network.vlans.skynet.routerIp}" drop
       '';
       extraForwardRules = ''
         # Allow all internal VLANs and management network to forward outbound to WAN (Internet)
