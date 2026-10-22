@@ -298,7 +298,11 @@ in {
                 "dhcp-option=tag:${vlan.interface},option:domain-name,${vlan.name}.home"
                 "domain=${vlan.name}.home,${vlan.subnet}.0/24"
               ])
-              vlanList);
+              vlanList)
+            ++ [
+              # Match WireGuard tunnel MTU (1420) for IoT DHCP clients
+              "dhcp-option=tag:${network.vlans.iot.interface},option:mtu,1420"
+            ];
         };
       };
       lists = piholeGroups.allLists;
