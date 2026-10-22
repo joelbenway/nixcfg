@@ -238,8 +238,8 @@ in {
       content = ''
         chain prerouting {
           type nat hook prerouting priority dstnat; policy accept;
-          # Transparently redirect any non-MagicDNS port 53 traffic from Tailscale to local Pi-hole
-          ip daddr != 100.100.100.100 iifname "tailscale0" meta l4proto { tcp, udp } th dport 53 redirect to :53;
+          # Transparently redirect all DNS traffic from Tailscale to local Pi-hole
+          iifname "tailscale0" meta l4proto { tcp, udp } th dport 53 redirect to :53;
         }
 
         chain postrouting {
@@ -332,6 +332,9 @@ in {
             ++ [
               # Match WireGuard tunnel MTU (1420) for IoT DHCP clients
               "dhcp-option=tag:${network.vlans.iot.interface},option:mtu,1420"
+
+              # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
+              "server=/${config.tailscale.tailnet}/100.100.100.100"
             ];
         };
       };
