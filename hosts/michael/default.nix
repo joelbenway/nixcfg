@@ -142,6 +142,7 @@ in {
 
   networking = {
     useDHCP = false;
+    dhcpcd.extraConfig = "nohook resolv.conf";
     nameservers = [
       "127.0.0.1" # Local Pi-hole + Unbound root recursive resolver
       "9.9.9.9" # Quad9 primary (Swiss privacy foundation, zero-logging)
@@ -205,6 +206,9 @@ in {
         iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} udp dport {53, 67} accept
         iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} tcp dport 53 accept
 
+        # Reject DNS-over-TLS (853) on Tailscale with TCP reset so Android instantly falls back to port 53
+        iifname "tailscale0" tcp dport 853 reject with tcp reset;
+
         # Allow Web UI (80, 443) and SSH (22) only on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
         iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport {22, 80, 443} accept
 
@@ -213,10 +217,6 @@ in {
         iifname "${network.vlans.skynet.interface}" ip daddr != "${network.vlans.skynet.routerIp}" drop
       '';
       extraForwardRules = ''
-        # Clamp TCP MSS for Tailscale exit node traffic to prevent MTU black holes
-        oifname "tailscale0" tcp flags syn tcp option maxseg size set 1240
-        iifname "tailscale0" tcp flags syn tcp option maxseg size set 1240
-
         # Allow all internal VLANs, management network, and Tailscale exit node to forward outbound to WAN (Internet)
         iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} oifname "${network.wanInterface}" accept
 
@@ -242,10 +242,14 @@ in {
           iifname "tailscale0" meta l4proto { tcp, udp } th dport 53 redirect to :53;
         }
 
-        chain postrouting {
-          type nat hook postrouting priority srcnat; policy accept;
-          # Masquerade IPv6 Tailscale traffic exiting WAN
-          ip6 saddr fd7a:115c:a1e0::/48 oifname "${network.wanInterface}" masquerade;
+        chain forward {
+          type filter hook forward priority filter - 1; policy accept;
+          # Clamp TCP MSS for Tailscale exit node traffic in both directions to prevent MTU black holes
+          oifname "tailscale0" tcp flags syn tcp option maxseg size set 1220;
+          iifname "tailscale0" tcp flags syn tcp option maxseg size set 1220;
+
+          # Reject IPv6 traffic attempting to route from Tailscale to WAN (no IPv6 internet on WAN)
+          iifname "tailscale0" oifname "${network.wanInterface}" meta nfproto ipv6 reject with icmpv6 type no-route;
         }
       '';
     };
@@ -276,10 +280,6 @@ in {
       "intel_iommu=on"
       "tpm_tis.interrupts=0"
     ];
-    kernel.sysctl = {
-      "net.ipv6.conf.all.forwarding" = 1;
-      "net.ipv6.conf.${network.wanInterface}.accept_ra" = 2;
-    };
   };
 
   services = {
@@ -335,6 +335,9 @@ in {
 
               # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
               "server=/${config.tailscale.tailnet}/100.100.100.100"
+
+              # Suppress AAAA records since WAN has no IPv6 internet connectivity
+              "filter-aaaa"
             ];
         };
       };
