@@ -124,6 +124,28 @@ in {
     networkConfig = network;
   };
 
+  cake-sqm = {
+    enable = true;
+    wanInterface = network.wanInterface;
+    downloadBandwidth = "275mbit";
+    uploadBandwidth = "45mbit";
+    diffserv = "diffserv4";
+    ackFilter = true;
+    rtt = "100ms";
+  };
+
+  telemetry = {
+    enable = true;
+    interfaces = [
+      network.wanInterface
+      network.lanInterface
+      network.vlans.skylab.interface
+      network.vlans.skynet.interface
+      network.vlans.iot.interface
+    ];
+    port = 3000;
+  };
+
   services.vpn-gateway = {
     enable = true;
     wanInterface = network.wanInterface;
