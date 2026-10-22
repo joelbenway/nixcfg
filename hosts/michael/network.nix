@@ -135,6 +135,7 @@ rec {
     ip = "192.168.1.3";
     subnet = "255.255.255.0";
     gateway = "192.168.1.1";
+    lan2Vlan = 62; # Secondary LAN port (apartment wall plate) -> skynet (VLAN 62)
     ssids = {
       skylab = {
         vlanId = 77;
@@ -145,7 +146,7 @@ rec {
       };
       skynet = {
         vlanId = 62;
-        security = "wpa2-psk";
+        security = "wpa3-sae-wpa2-psk";
         band = "all";
         clientIsolation = true;
         desc = "Guest and friend WiFi";

@@ -5,10 +5,12 @@
   hostname,
   lib,
   modulesPath,
+  pkgs,
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   network = import ./network.nix;
+  piholeGroups = import ./pihole-groups.nix {inherit lib;};
   vlanList = builtins.attrValues network.vlans;
   allInternalInterfaces = [network.lanInterface network.oob.interface] ++ (map (v: v.interface) vlanList);
 in {
@@ -72,6 +74,13 @@ in {
         owner = "root";
         group = "root";
       };
+      pia-env = {
+        file = lib.custom.relativeToRoot "secrets/pia.env.age";
+        name = "pia.env";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
     };
   };
 
@@ -113,6 +122,22 @@ in {
     networkConfig = network;
   };
 
+  services.vpn-gateway = {
+    enable = true;
+    wanInterface = network.wanInterface;
+    routedInterfaces = [network.vlans.iot.interface];
+    torrentPorts = [51413];
+    killSwitch = true;
+    providers.pia = {
+      enable = true;
+      credentialsFile = config.age.secrets.pia-env.path;
+      region = "us_chicago";
+    };
+    providers.proton = {
+      enable = false;
+    };
+  };
+
   networking = {
     useDHCP = false;
     nameservers = [
@@ -122,6 +147,7 @@ in {
     ];
 
     networkmanager.unmanaged = [
+      network.wanInterface
       network.lanInterface
       network.oob.interface
       "interface-name:${network.lanInterface}.*"
@@ -166,6 +192,7 @@ in {
         vlanList));
 
     firewall = {
+      checkReversePath = false;
       filterForward = true;
       # Do not expose ports globally across all interfaces (protects WAN)
       allowedTCPPorts = lib.mkForce [];
@@ -236,64 +263,41 @@ in {
       openFirewallDHCP = false;
       settings = {
         dns = {
-          upstream = ["127.0.0.1#5353"];
+          upstreams = ["127.0.0.1#5353"];
           listeningMode = "ALL";
         };
         dhcp = {
           active = true;
-          hosts = [
-            "80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
-          ];
-          ranges =
+          start = "${network.mgmt.subnet}.10";
+          end = "${network.mgmt.subnet}.50";
+          router = network.mgmt.routerIp;
+          netmask = "255.255.255.0";
+          leaseTime = "24h";
+        };
+        misc = {
+          dnsmasq_lines =
             [
-              {
-                from = "${network.mgmt.subnet}.10";
-                to = "${network.mgmt.subnet}.50";
-                router = network.mgmt.routerIp;
-                domain = "${network.mgmt.name}.home";
-              }
+              # Management LAN interface
+              "dhcp-range=tag:${network.lanInterface},${network.mgmt.subnet}.10,${network.mgmt.subnet}.50,255.255.255.0,24h"
+              "dhcp-option=tag:${network.lanInterface},option:router,${network.mgmt.routerIp}"
+              "dhcp-option=tag:${network.lanInterface},option:dns-server,${network.mgmt.routerIp}"
+              "dhcp-option=tag:${network.lanInterface},option:domain-name,${network.mgmt.name}.home"
+              "domain=${network.mgmt.name}.home,${network.mgmt.subnet}.0/24"
+
+              # Static reservation for Zyxel AP
+              "dhcp-host=80:ea:0b:4b:b2:bb,${network.ap.ip},zyxel-ap,infinite"
             ]
-            ++ (map (vlan: {
-                from = "${vlan.subnet}.100";
-                to = "${vlan.subnet}.250";
-                router = vlan.routerIp;
-                domain = "${vlan.name}.home";
-              })
+            ++ (lib.concatMap (vlan: [
+                "dhcp-range=tag:${vlan.interface},${vlan.subnet}.100,${vlan.subnet}.250,255.255.255.0,24h"
+                "dhcp-option=tag:${vlan.interface},option:router,${vlan.routerIp}"
+                "dhcp-option=tag:${vlan.interface},option:dns-server,${vlan.routerIp}"
+                "dhcp-option=tag:${vlan.interface},option:domain-name,${vlan.name}.home"
+                "domain=${vlan.name}.home,${vlan.subnet}.0/24"
+              ])
               vlanList);
         };
       };
-      lists = [
-        {
-          url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts";
-          type = "block";
-          description = "Steven Black's unified hosts file";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt";
-          type = "block";
-          description = "Disconnect simple ad list";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt";
-          type = "block";
-          description = "Disconnect simple tracking list";
-          enabled = true;
-        }
-        {
-          url = "https://s3.amazonaws.com/lists.disconnect.me/simple_malware.txt";
-          type = "block";
-          description = "Disconnect simple malware list";
-          enabled = true;
-        }
-        {
-          url = "https://raw.githubusercontent.com/AnonymouseGlobal/blocklist/master/blocklist.txt";
-          type = "block";
-          description = "Anonymouse ad blocklist";
-          enabled = true;
-        }
-      ];
+      lists = piholeGroups.allLists;
     };
 
     pihole-web = {
@@ -346,5 +350,62 @@ in {
       "/dev/disk/by-partlabel/disk-main-swap"
       "/dev/disk/by-partlabel/disk-main-root"
     ];
+  };
+
+  systemd.services.pihole-ftl.wants = ["pihole-ftl-groups.service"];
+
+  systemd.services.pihole-ftl-groups = {
+    description = "Pi-hole FTL Group Management Configuration";
+    after = ["pihole-ftl-setup.service"];
+    wants = ["pihole-ftl-setup.service"];
+    wantedBy = ["multi-user.target"];
+    serviceConfig = {
+      Type = "oneshot";
+      User = config.services.pihole-ftl.user;
+      Group = config.services.pihole-ftl.group;
+    };
+    path = with pkgs; [sqlite procps];
+    script = let
+      gravityDb = config.services.pihole-ftl.settings.files.gravity;
+      sqlStatements = lib.concatStringsSep "\n" (
+        (lib.mapAttrsToList (name: cat: ''
+            INSERT OR IGNORE INTO "group" (name, description, enabled)
+            VALUES ('${name}', '${lib.replaceStrings ["'"] ["''"] cat.description}', 1);
+          '')
+          piholeGroups.categories)
+        ++ (lib.mapAttrsToList (name: cat: ''
+            INSERT OR IGNORE INTO adlist_by_group (adlist_id, group_id)
+            SELECT a.id, g.id FROM adlist a, "group" g
+            WHERE g.name = '${name}' AND a.address IN (
+              ${lib.concatMapStringsSep ",\n            " (it: "'${it.url}'") cat.lists}
+            );
+          '')
+          piholeGroups.categories)
+        ++ [
+          ''
+            DELETE FROM adlist_by_group
+            WHERE group_id = 0 AND adlist_id IN (
+              SELECT a.id FROM adlist a
+              WHERE a.address IN (
+                ${lib.concatMapStringsSep ",\n                " (it: "'${it.url}'") piholeGroups.categories.Other.lists}
+              )
+            );
+          ''
+        ]
+      );
+    in ''
+      if [ ! -f "${gravityDb}" ]; then
+        echo "Gravity database not found at ${gravityDb}, skipping."
+        exit 0
+      fi
+
+      sqlite3 "${gravityDb}" << 'EOF'
+      PRAGMA busy_timeout = 5000;
+      ${sqlStatements}
+      EOF
+
+      pkill -RTMIN pihole-FTL || true
+      echo "Pi-hole groups configured successfully."
+    '';
   };
 }

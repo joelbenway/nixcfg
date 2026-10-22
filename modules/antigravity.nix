@@ -15,6 +15,11 @@
       python = lib.mkEnableOption "Enables python tooling";
       shell = lib.mkEnableOption "Enables Shell tooling";
       ai = lib.mkEnableOption "Enables AI tooling";
+      servers = lib.mkOption {
+        type = lib.types.attrs;
+        default = {};
+        description = "MCP servers for Antigravity";
+      };
     }; # options
   }; # userConfigType
 in {
@@ -29,7 +34,7 @@ in {
 
   config = lib.mkIf config.antigravity.enable {
     home-manager.users =
-      lib.mapAttrs (_: userConfig: {
+      lib.mapAttrs (user: userConfig: hm: {
         disabledModules = ["programs/antigravity.nix"];
         imports = [
           (import "${inputs.home-manager}/modules/programs/vscode/mkVscodeModule.nix" {
@@ -43,6 +48,48 @@ in {
         ];
 
         home = {
+          file = lib.mkIf userConfig.ai {
+            ".gemini/config/mcp_config.json".text = let
+              allServers =
+                (lib.optionalAttrs (hm.config.programs ? mcp && hm.config.programs.mcp.enable) hm.config.programs.mcp.servers)
+                // userConfig.servers;
+
+              cleanServer = srv: let
+                isDisabled =
+                  if (srv.disabled or false) == true
+                  then true
+                  else if (srv.enabled or null) == false
+                  then true
+                  else null;
+                common = {
+                  disabled = isDisabled;
+                  disabledTools = srv.disabledTools or null;
+                  alwaysAllow = srv.alwaysAllow or null;
+                };
+              in
+                if (srv.command or null) != null
+                then
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                      inherit (srv) command;
+                      args = srv.args or null;
+                      env = srv.env or null;
+                      cwd = srv.cwd or null;
+                    }
+                    // common)
+                else if (srv.serverUrl or srv.url or null) != null
+                then
+                  lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                      serverUrl = srv.serverUrl or srv.url;
+                      headers = srv.headers or null;
+                    }
+                    // common)
+                else {};
+            in
+              builtins.toJSON {
+                mcpServers = lib.mapAttrs (_: cleanServer) allServers;
+              };
+          };
+
           packages = with pkgs;
             lib.optionals userConfig.cpp [
               clang-tools

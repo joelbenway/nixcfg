@@ -65,14 +65,21 @@ def ping(ip: str) -> bool:
 
 
 def load_wifi_env(env_path: Optional[str] = None) -> Dict[str, str]:
+    """Load Wi-Fi credentials from environment files.
+
+    Files are loaded in precedence order:
+    1. Base guest credentials (wifi-guest.env)
+    2. Primary Wi-Fi credentials (wifi.env, overriding guest if conflicting)
+    3. Custom env file supplied via CLI (highest precedence)
+    """
     env_vars = {}
     paths = [
-        "/run/agenix/wifi.env",
         "/run/agenix/wifi-guest.env",
-        "/persist/run/agenix/wifi.env",
+        "/run/agenix/wifi.env",
         "/persist/run/agenix/wifi-guest.env",
-        "./secrets/wifi.env",
+        "/persist/run/agenix/wifi.env",
         "./secrets/wifi-guest.env",
+        "./secrets/wifi.env",
         env_path,
     ]
     for p in paths:
@@ -368,24 +375,59 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
     ap_cfg = cfg.get("ap", {})
     ssids = ap_cfg.get("ssids", {})
     wifi_env = load_wifi_env(env_file)
-    commands = ["configure terminal"]
+    commands = [
+        "configure terminal",
+        f"manager ap vlan ip dns {ap_cfg.get('gateway', '192.168.1.1')}",
+        "manager ap no login-ip",
+    ]
+
+    lan2_vlan = ap_cfg.get("lan2Vlan")
+    if lan2_vlan:
+        commands.extend([
+            f"! --- Secondary LAN Port (LAN2) -> VLAN {lan2_vlan} ---",
+            f"vlan vlan{lan2_vlan}",
+            f"  vlanid {lan2_vlan}",
+            "  no shutdown",
+            "  join lan1 untag",
+            "exit",
+            "vlan vlan1",
+            "  no join lan1",
+            "exit",
+            "port status lan1",
+            f"  pvid {lan2_vlan}",
+            "exit",
+        ])
 
     # 1. Security profiles
     for s_name, s in ssids.items():
         if s_name == "skylab":
-            psk = wifi_env.get("LAB_WIFI_PSK") or wifi_env.get("HOME_WIFI_PSK") or "SkylabFamilyKey2026!"
+            key_name = "LAB_WIFI_PSK"
         elif s_name == "skynet":
-            psk = wifi_env.get("HOME_WIFI_PSK") or "SkynetGuestKey2026!"
-        else: # iot
-            psk = wifi_env.get("IOT_WIFI_PSK") or "IoTDeviceSecretKey2026!"
+            key_name = "HOME_WIFI_PSK"
+        elif s_name == "guest":
+            key_name = "GUEST_WIFI_PSK"
+        elif s_name == "iot":
+            key_name = "IOT_WIFI_PSK"
+        else:
+            key_name = f"{s_name.upper()}_WIFI_PSK"
+
+        psk = wifi_env.get(key_name)
+        if not psk:
+            raise ValueError(
+                f"Missing required WiFi passphrase for SSID '{s_name}': "
+                f"'{key_name}' must be defined and non-empty in wifi.env / wifi-guest.env."
+            )
 
         commands.append(f"! --- Security Profile for {s_name} ---")
         commands.append(f"wlan-security-profile {s_name}")
         if s.get("security") == "wpa3-sae-wpa2-psk":
-            commands.append("  mode wpa2-mix")
+            commands.append("  mode wpa3")
+            commands.append("  transition-mode")
             commands.append(f"  wpa-psk {psk}")
-            commands.append("  dot11w activate")
-            commands.append("  dot11w-op 2")
+        elif s.get("security") == "wpa3-sae":
+            commands.append("  mode wpa3")
+            commands.append("  no transition-mode")
+            commands.append(f"  wpa-psk {psk}")
         else:
             commands.append("  mode wpa2")
             commands.append(f"  wpa-psk {psk}")
@@ -398,7 +440,7 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
 
         commands.append(f"! --- SSID Profile for {actual_ssid} (VLAN {vlan_id}) ---")
         commands.append(f"wlan-ssid-profile {s_name}")
-        commands.append(f"  ssid \"{actual_ssid}\"")
+        commands.append(f"  ssid {actual_ssid}")
         commands.append(f"  security {s_name}")
         commands.append(f"  vlan-id {vlan_id}")
         commands.append("  data-forward localbridge")
@@ -444,7 +486,11 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
 def cmd_ap_generate(args, cfg: Dict[str, Any]):
     ap_cfg = cfg.get("ap", {})
     mode = getattr(args, "mode", "test")
-    commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    try:
+        commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    except ValueError as e:
+        print(f"[!] Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"# Zyxel AP (NWA130BE / WBE530) Standalone ZySH Configuration Script")
     print(f"# Mode: {mode.upper()} ({'Pre-cutover bench testing' if mode == 'test' else 'Production cutover'})")
@@ -477,14 +523,10 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
 
     mode = getattr(args, "mode", "test")
 
-    if not check_tcp_port(ap_ip, 22) and not args.ip:
-        if check_tcp_port("192.168.1.2", 22):
-            print("[*] Found AP at factory default IP: 192.168.1.2")
-            ap_ip = "192.168.1.2"
-
     print(f"[*] Connecting to Zyxel AP at {ap_ip}:22 via SSH...")
     if not check_tcp_port(ap_ip, 22):
         print(f"[!] SSH (port 22) on {ap_ip} is not reachable.")
+        print("    If provisioning an unconfigured AP, specify '--ip <factory-ip>' explicitly.")
         print("    Note: On new Zyxel APs, SSH must be enabled via the Web Configurator (System -> SSH).")
         print("    You can copy and paste the commands using 'netprov ap generate':\n")
         cmd_ap_generate(args, cfg)
@@ -505,18 +547,32 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
         failed_commands = []
         full_log = []
 
-        def exec_cmd(cmd: str) -> str:
+        def exec_cmd(cmd: str, timeout: float = 10.0) -> str:
             chan.send(cmd.strip() + "\n")
-            time.sleep(0.4)
             resp = ""
-            while chan.recv_ready():
-                resp += chan.recv(4096).decode("utf-8", errors="ignore")
+            start = time.time()
+            prompt_pattern = re.compile(r"[#>](\s*)$")
+            while time.time() - start < timeout:
+                if chan.recv_ready():
+                    chunk = chan.recv(4096).decode("utf-8", errors="ignore")
+                    if not chunk:
+                        break
+                    resp += chunk
+                    if prompt_pattern.search(resp.strip()):
+                        break
+                else:
+                    time.sleep(0.05)
             return resp
 
         for cmd in commands:
-            resp = exec_cmd(cmd)
+            cmd_timeout = 30.0 if cmd.strip() == "write" else 10.0
+            resp = exec_cmd(cmd, timeout=cmd_timeout)
             full_log.append((cmd, resp))
             if "ERROR:" in resp or "% Parse error" in resp:
+                # Some ZySH commands are idempotent and harmlessly report if already applied
+                # (e.g. unjoining a port from a VLAN that it has already left)
+                if "not exist" in resp.lower():
+                    continue
                 failed_commands.append((cmd, resp.strip()))
 
         client.close()
