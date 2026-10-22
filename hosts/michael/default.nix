@@ -335,9 +335,6 @@ in {
 
               # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
               "server=/${config.tailscale.tailnet}/100.100.100.100"
-
-              # Suppress AAAA records since WAN has no IPv6 internet connectivity
-              "filter-aaaa"
             ];
         };
       };
