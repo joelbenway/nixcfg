@@ -85,6 +85,9 @@
         after = ["tailscaled.service" "network-online.target"] ++ lib.optional (config ? age) "agenix.service";
         wants = ["tailscaled.service" "network-online.target"] ++ lib.optional (config ? age) "agenix.service";
         wantedBy = ["multi-user.target"];
+        restartTriggers = [
+          (builtins.toJSON cfg.extraUpFlags)
+        ];
         serviceConfig = {
           Type = "notify";
           Restart = "on-failure";
@@ -158,7 +161,8 @@
                     tailscale up --authkey="$auth_key" ${lib.concatStringsSep " " cfg.extraUpFlags}
                     ;;
                   Running)
-                    echo "Tailscale is running"
+                    echo "Tailscale is running, applying current configuration..."
+                    tailscale up ${lib.concatStringsSep " " cfg.extraUpFlags}
                     systemd-notify --ready
                     exit 0
                     ;;
