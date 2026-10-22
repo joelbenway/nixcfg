@@ -105,6 +105,7 @@ in {
 
   tailscale = {
     enable = true;
+    advertiseExitNode = true;
     envFile = config.age.secrets.tailscale-oauth-env.path;
   };
 
@@ -114,6 +115,7 @@ in {
     vlans = network.vlans;
     extraInternalIPs = [
       "${network.mgmt.subnet}.0/${toString network.mgmt.prefix}"
+      "100.64.0.0/10" # Tailscale CGNAT range for exit node NAT masquerade
     ];
   };
 
@@ -199,9 +201,9 @@ in {
       allowedUDPPorts = lib.mkForce [];
 
       extraInputRules = ''
-        # Allow DNS (53) & DHCP (67) on all internal interfaces
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} udp dport {53, 67} accept
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} tcp dport 53 accept
+        # Allow DNS (53) & DHCP (67) on all internal interfaces and Tailscale
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} udp dport {53, 67} accept
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} tcp dport 53 accept
 
         # Allow Web UI (80, 443) and SSH (22) only on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
         iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport {22, 80, 443} accept
@@ -211,8 +213,12 @@ in {
         iifname "${network.vlans.skynet.interface}" ip daddr != "${network.vlans.skynet.routerIp}" drop
       '';
       extraForwardRules = ''
-        # Allow all internal VLANs and management network to forward outbound to WAN (Internet)
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} oifname "${network.wanInterface}" accept
+        # Clamp TCP MSS for Tailscale exit node traffic to prevent MTU black holes
+        oifname "tailscale0" tcp flags syn tcp option maxseg size set 1240
+        iifname "tailscale0" tcp flags syn tcp option maxseg size set 1240
+
+        # Allow all internal VLANs, management network, and Tailscale exit node to forward outbound to WAN (Internet)
+        iifname {${lib.concatStringsSep ", " allInternalInterfaces}}, "tailscale0"} oifname "${network.wanInterface}" accept
 
         # skylab (trusted family) -> all other internal zones
         iifname "${network.vlans.skylab.interface}" oifname "${network.vlans.skynet.interface}" accept
@@ -221,6 +227,26 @@ in {
 
         # skynet (guests) -> iot (casting to TVs/speakers)
         iifname "${network.vlans.skynet.interface}" oifname "${network.vlans.iot.interface}" accept
+
+        # Allow Tailscale to access trusted internal zone (skylab)
+        iifname "tailscale0" oifname "${network.vlans.skylab.interface}" accept
+      '';
+    };
+
+    nftables.tables.tailscale-exit = {
+      family = "inet";
+      content = ''
+        chain prerouting {
+          type nat hook prerouting priority dstnat; policy accept;
+          # Transparently redirect any non-MagicDNS port 53 traffic from Tailscale to local Pi-hole
+          ip daddr != 100.100.100.100 iifname "tailscale0" meta l4proto { tcp, udp } th dport 53 redirect to :53;
+        }
+
+        chain postrouting {
+          type nat hook postrouting priority srcnat; policy accept;
+          # Masquerade IPv6 Tailscale traffic exiting WAN
+          ip6 saddr fd7a:115c:a1e0::/48 oifname "${network.wanInterface}" masquerade;
+        }
       '';
     };
   };
@@ -250,6 +276,10 @@ in {
       "intel_iommu=on"
       "tpm_tis.interrupts=0"
     ];
+    kernel.sysctl = {
+      "net.ipv6.conf.all.forwarding" = 1;
+      "net.ipv6.conf.${network.wanInterface}.accept_ra" = 2;
+    };
   };
 
   services = {

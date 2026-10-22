@@ -43,6 +43,18 @@
       default = true;
       description = "Enable Tailscale SSH";
     };
+
+    advertiseExitNode = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether to advertise this device as a Tailscale exit node";
+    };
+
+    advertiseRoutes = lib.mkOption {
+      type = with lib.types; listOf str;
+      default = [];
+      description = "List of subnet routes (CIDR) to advertise via Tailscale";
+    };
   }; # options.tailscale
 
   config = lib.mkIf config.tailscale.enable {
@@ -58,6 +70,8 @@
             else "--ssh=false"
           )
         ]
+        ++ lib.optional config.tailscale.advertiseExitNode "--advertise-exit-node"
+        ++ lib.optional (config.tailscale.advertiseRoutes != []) "--advertise-routes=${lib.concatStringsSep "," config.tailscale.advertiseRoutes}"
         ++ lib.optional (config.tailscale.tags != []) "--advertise-tags=${lib.concatStringsSep "," config.tailscale.tags}";
       extraSetFlags = [];
       extraDaemonFlags = [];
