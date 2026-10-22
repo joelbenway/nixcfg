@@ -67,6 +67,10 @@
           url = "https://raw.githubusercontent.com/bigdargon/hostsVN/master/hosts";
           description = "Firebog Green (Advertising Lists) - hostsVN";
         }
+        {
+          url = "https://raw.githubusercontent.com/kboghdady/youTube_ads_4_pi-hole/refs/heads/master/youtubelist.txt";
+          description = "YouTube Ads 4 Pi-hole - kboghdady";
+        }
       ];
     };
 
