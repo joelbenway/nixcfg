@@ -67,6 +67,10 @@
           url = "https://raw.githubusercontent.com/bigdargon/hostsVN/master/hosts";
           description = "Firebog Green (Advertising Lists) - hostsVN";
         }
+        {
+          url = "https://raw.githubusercontent.com/kboghdady/youTube_ads_4_pi-hole/refs/heads/master/youtubelist.txt";
+          description = "YouTube Ads 4 Pi-hole - kboghdady";
+        }
       ];
     };
 
@@ -128,7 +132,7 @@
           description = "Firebog Green (Malicious Lists) - Echap's Stalkerware Indicators";
         }
         {
-          url = "https://urlhaus.abuse.ch/downloads/hostfile/";
+          url = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt";
           description = "Firebog Green (Malicious Lists) - URLhaus Malicious URL blocklist";
         }
         {
@@ -181,10 +185,6 @@
     {
       url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts";
       description = "Steven Black unified hosts file";
-    }
-    {
-      url = "https://raw.githubusercontent.com/AnonymouseGlobal/blocklist/master/blocklist.txt";
-      description = "Anonymouse ad blocklist";
     }
   ];
 

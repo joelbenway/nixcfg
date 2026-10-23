@@ -90,6 +90,10 @@ in {
     keyFile = config.age.secrets.nix-builder-ssh.path;
   };
 
+  binary-cache.server = {
+    enable = true;
+  };
+
   joel = {
     enable = true;
     desktop = false;

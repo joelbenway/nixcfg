@@ -69,6 +69,7 @@
     age
     btop
     curl
+    dnsutils
     htop
     nh
     p7zip

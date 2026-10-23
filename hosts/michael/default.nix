@@ -105,6 +105,7 @@ in {
 
   tailscale = {
     enable = true;
+    advertiseExitNode = true;
     envFile = config.age.secrets.tailscale-oauth-env.path;
   };
 
@@ -114,12 +115,35 @@ in {
     vlans = network.vlans;
     extraInternalIPs = [
       "${network.mgmt.subnet}.0/${toString network.mgmt.prefix}"
+      "100.64.0.0/10" # Tailscale CGNAT range for exit node NAT masquerade
     ];
   };
 
   netprov = {
     enable = true;
     networkConfig = network;
+  };
+
+  cake-sqm = {
+    enable = true;
+    wanInterface = network.wanInterface;
+    downloadBandwidth = "275mbit";
+    uploadBandwidth = "45mbit";
+    diffserv = "diffserv4";
+    ackFilter = true;
+    rtt = "100ms";
+  };
+
+  telemetry = {
+    enable = true;
+    interfaces = [
+      network.wanInterface
+      network.lanInterface
+      network.vlans.skylab.interface
+      network.vlans.skynet.interface
+      network.vlans.iot.interface
+    ];
+    port = 3000;
   };
 
   services.vpn-gateway = {
@@ -140,6 +164,7 @@ in {
 
   networking = {
     useDHCP = false;
+    dhcpcd.extraConfig = "nohook resolv.conf";
     nameservers = [
       "127.0.0.1" # Local Pi-hole + Unbound root recursive resolver
       "9.9.9.9" # Quad9 primary (Swiss privacy foundation, zero-logging)
@@ -199,16 +224,23 @@ in {
       allowedUDPPorts = lib.mkForce [];
 
       extraInputRules = ''
-        # Allow DNS & Web UI on all internal interfaces
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} tcp dport {53, 80, 443} accept
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} udp dport {53, 67} accept
+        # Allow DNS (53) & DHCP (67) on all internal interfaces and Tailscale
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} udp dport {53, 67} accept
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} tcp dport 53 accept
 
-        # Allow SSH on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
-        iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport 22 accept
+        # Reject DNS-over-TLS (853) on Tailscale with TCP reset so Android instantly falls back to port 53
+        iifname "tailscale0" tcp dport 853 reject with tcp reset;
+
+        # Allow Web UI (80, 443) and SSH (22) only on trusted internal LAN (skylab + mgmt), emergency OOB rescue port, and Tailscale
+        iifname {"${network.lanInterface}", "${network.vlans.skylab.interface}", "${network.oob.interface}", "tailscale0"} tcp dport {22, 80, 443} accept
+
+        # Prevent untrusted interfaces from reaching router IPs outside their designated gateway
+        iifname "${network.vlans.iot.interface}" ip daddr != "${network.vlans.iot.routerIp}" drop
+        iifname "${network.vlans.skynet.interface}" ip daddr != "${network.vlans.skynet.routerIp}" drop
       '';
       extraForwardRules = ''
-        # Allow all internal VLANs and management network to forward outbound to WAN (Internet)
-        iifname {${lib.concatStringsSep ", " allInternalInterfaces}} oifname "${network.wanInterface}" accept
+        # Allow all internal VLANs, management network, and Tailscale exit node to forward outbound to WAN (Internet)
+        iifname {${lib.concatStringsSep ", " (allInternalInterfaces ++ ["tailscale0"])}} oifname "${network.wanInterface}" accept
 
         # skylab (trusted family) -> all other internal zones
         iifname "${network.vlans.skylab.interface}" oifname "${network.vlans.skynet.interface}" accept
@@ -217,6 +249,30 @@ in {
 
         # skynet (guests) -> iot (casting to TVs/speakers)
         iifname "${network.vlans.skynet.interface}" oifname "${network.vlans.iot.interface}" accept
+
+        # Allow Tailscale to access trusted internal zone (skylab)
+        iifname "tailscale0" oifname "${network.vlans.skylab.interface}" accept
+      '';
+    };
+
+    nftables.tables.tailscale-exit = {
+      family = "inet";
+      content = ''
+        chain prerouting {
+          type nat hook prerouting priority dstnat; policy accept;
+          # Transparently redirect all DNS traffic from Tailscale to local Pi-hole
+          iifname "tailscale0" meta l4proto { tcp, udp } th dport 53 redirect to :53;
+        }
+
+        chain forward {
+          type filter hook forward priority filter - 1; policy accept;
+          # Clamp TCP MSS for Tailscale exit node traffic in both directions to prevent MTU black holes
+          oifname "tailscale0" tcp flags syn tcp option maxseg size set 1220;
+          iifname "tailscale0" tcp flags syn tcp option maxseg size set 1220;
+
+          # Reject IPv6 traffic attempting to route from Tailscale to WAN (no IPv6 internet on WAN)
+          iifname "tailscale0" oifname "${network.wanInterface}" meta nfproto ipv6 reject with icmpv6 type no-route;
+        }
       '';
     };
   };
@@ -294,7 +350,14 @@ in {
                 "dhcp-option=tag:${vlan.interface},option:domain-name,${vlan.name}.home"
                 "domain=${vlan.name}.home,${vlan.subnet}.0/24"
               ])
-              vlanList);
+              vlanList)
+            ++ [
+              # Match WireGuard tunnel MTU (1420) for IoT DHCP clients
+              "dhcp-option=tag:${network.vlans.iot.interface},option:mtu,1420"
+
+              # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
+              "server=/${config.tailscale.tailnet}/100.100.100.100"
+            ];
         };
       };
       lists = piholeGroups.allLists;
@@ -407,5 +470,27 @@ in {
       pkill -RTMIN pihole-FTL || true
       echo "Pi-hole groups configured successfully."
     '';
+  };
+
+  systemd.services.pihole-gravity-update = {
+    description = "Update Pi-hole Gravity blocklists from remote sources";
+    after = ["network-online.target" "pihole-ftl.service"];
+    wants = ["network-online.target"];
+    serviceConfig = {
+      Type = "oneshot";
+      User = config.services.pihole-ftl.user;
+      Group = config.services.pihole-ftl.group;
+      ExecStart = "${config.services.pihole-ftl.piholePackage}/bin/pihole updateGravity";
+    };
+  };
+
+  systemd.timers.pihole-gravity-update = {
+    description = "Weekly update of Pi-hole blocklist domains";
+    wantedBy = ["timers.target"];
+    timerConfig = {
+      OnCalendar = "Sun *-*-* 03:30:00";
+      Persistent = true;
+      RandomizedDelaySec = "30m";
+    };
   };
 }

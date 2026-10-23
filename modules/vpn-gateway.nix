@@ -320,6 +320,10 @@ in {
             '')
             cfg.routedInterfaces}
         ''}
+
+          # Clamp TCP MSS for VPN traffic in both directions to prevent MTU black holes
+          oifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } tcp flags syn tcp option maxseg size set rt mtu;
+          iifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } tcp flags syn tcp option maxseg size set 1380;
         }
 
         chain postrouting {
@@ -330,5 +334,10 @@ in {
         }
       '';
     };
+
+    networking.firewall.extraForwardRules = ''
+      # Allow routed interfaces and VPN-marked traffic to forward out over active VPN tunnels
+      oifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } accept
+    '';
   };
 }
