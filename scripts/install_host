@@ -241,10 +241,35 @@ if [[ -n "$HOST_KEY_PUB" ]]; then
   echo "    Host SSH public key staged from data/keys.nix."
 fi
 
+DISK_ENCRYPTION_KEYS=(--disk-encryption-keys /tmp/secret.key "$LUKS_KEY_STAGED")
+
+# Stage storage LUKS passphrase and initrd host key if host is zita
+if [[ "$TARGET_HOST" == "zita" ]]; then
+  STORAGE_SECRET="${SECRET_DIR}/storage-luks-passphrase.age"
+  STORAGE_KEY_STAGED="${TEMP_DIR}/storage-secret.key"
+
+  if [[ -f "$KEY_PATH" && -f "$STORAGE_SECRET" ]] && age -d -i "$KEY_PATH" "$STORAGE_SECRET" >"$STORAGE_KEY_STAGED" 2>/dev/null; then
+    chmod 600 "$STORAGE_KEY_STAGED"
+    mkdir -p "${EXTRA_FILES_DIR}/persist/secrets"
+    cp "$STORAGE_KEY_STAGED" "${EXTRA_FILES_DIR}/persist/secrets/storage-luks.key"
+    chmod 400 "${EXTRA_FILES_DIR}/persist/secrets/storage-luks.key"
+    DISK_ENCRYPTION_KEYS+=(--disk-encryption-keys /tmp/storage-secret.key "$STORAGE_KEY_STAGED")
+    echo ">>> Successfully decrypted and staged storage LUKS key for '${TARGET_HOST}'."
+  else
+    echo "WARNING: Could not decrypt storage LUKS passphrase for '${TARGET_HOST}'."
+  fi
+
+  if [[ ! -f "${PERSIST_SSH_DIR}/initrd_host_ed25519_key" ]]; then
+    echo ">>> Generating initrd SSH host key for ${TARGET_HOST}..."
+    ssh-keygen -t ed25519 -N "" -f "${PERSIST_SSH_DIR}/initrd_host_ed25519_key" >/dev/null
+    chmod 600 "${PERSIST_SSH_DIR}/initrd_host_ed25519_key"
+  fi
+fi
+
 echo ">>> Launching nixos-anywhere..."
 nixos-anywhere \
   --flake "${ROOT_DIR}#${TARGET_HOST}" \
-  --disk-encryption-keys /tmp/secret.key "$LUKS_KEY_STAGED" \
+  "${DISK_ENCRYPTION_KEYS[@]}" \
   --extra-files "$EXTRA_FILES_DIR" \
   -i "$KEY_PATH" \
   --ssh-option "UserKnownHostsFile=/dev/null" \
