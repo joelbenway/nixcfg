@@ -75,12 +75,16 @@
                   id = "nngceckbapebfimnlniiiahkandclblb"; # bitwarden
                 }
               ]
-              ++ (lib.mapAttrsToList (id: value: (
-                  {inherit id;}
-                  // (lib.optionalAttrs (value.source != null && builtins.isPath value.source) {crxPath = value.source;})
-                  // (lib.optionalAttrs (value.source != null && builtins.isString value.source) {updateUrl = value.source;})
-                  // (lib.optionalAttrs (value.version != null) {inherit (value) version;})
-                ))
+              ++ (lib.mapAttrsToList (
+                  id: value: let
+                    isUrl = value.source != null && (lib.hasPrefix "http://" (toString value.source) || lib.hasPrefix "https://" (toString value.source));
+                    isPath = value.source != null && !isUrl;
+                  in
+                    {inherit id;}
+                    // (lib.optionalAttrs isPath {crxPath = value.source;})
+                    // (lib.optionalAttrs isUrl {updateUrl = value.source;})
+                    // (lib.optionalAttrs (value.version != null) {inherit (value) version;})
+                )
                 config.brave.extensions);
             commandLineArgs = [
               "-no-default-browser-check"

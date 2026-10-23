@@ -179,7 +179,7 @@ jobs:
             sed -i '/self.submodules = true;/d' flake.nix
             for f in \
               agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
-              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass-paywalls-chrome-clean-latest.crx.age \
               bypass_paywalls_clean-latest.xpi.age \
               francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
               hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \

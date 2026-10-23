@@ -121,9 +121,9 @@ in {
                   }; # xai
                 }; # provider
               }; # settings;
-              tui = {
+              cli = {
                 theme = "system";
-              }; # tui
+              }; # cli
             }; # opencode
           }; # programs
         }

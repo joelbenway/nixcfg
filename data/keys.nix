@@ -14,5 +14,13 @@ let
     michael = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHZwO9bTOrXssKPzLX8fymkzNi+JoKMBkZlS0/KnMWdy";
     zita = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEURzS57xEY66xkTP5GEJShmXrsd8PO06znqqsvoEex4";
   };
+
+  hostsBase64 = {
+    agnes = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUtsQ0lyaHY2RnlaTGl4YmZ6cFRrbjNRZjFXRDJWTkVjQjlCZmRSaVErSis=";
+    francis = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1Jc2taR2F4M3c4dm53eFV0bURyMnVmaGNNV25ydGZIeVpHOGpoc2crYU0=";
+    jerome = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUpyeVVmaHZ4VUFXZ3N6RUNRTll3RkJGeU9FY1ViRTZ2TFZYdWJiajZaZzg=";
+    michael = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUhad085YlRPclhzc0tQekxYOGZ5bWt6TmkrSm9LTUJrWmxTMC9Lbk1XZHk=";
+    zita = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUVVUnpTNTd4RVk2NnhrVFA1R0VKU2htWHJzZDhQTzA2em5xcXN2b0VleDQ=";
+  };
 in
-  users // hosts // {inherit users hosts;}
+  users // hosts // {inherit users hosts hostsBase64;}

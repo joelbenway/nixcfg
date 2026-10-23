@@ -12,7 +12,6 @@
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
-    inputs.nixos-hardware.nixosModules.common-cpu-intel-cpu-only
     (lib.custom.relativeToRoot "hardware/quadrom2000.nix")
     (lib.custom.relativeToRoot "hardware/ivybridge.nix")
   ]; # imports
@@ -196,8 +195,29 @@ in {
         "usbhid"
         "sd_mod"
         "rtsx_pci_sdmmc"
+        "e1000e" # Intel 82579LM & 82574L Gigabit Ethernet for HP Z620
       ];
       kernelModules = [];
+      network = {
+        enable = true;
+        ssh = {
+          enable = true;
+          port = 2222;
+          authorizedKeys = [
+            (import (lib.custom.relativeToRoot "data/keys.nix")).hosts.michael
+            (import (lib.custom.relativeToRoot "data/keys.nix")).users.joel
+          ];
+          hostKeys = ["/persist/etc/ssh/initrd_host_ed25519_key"];
+          ignoreEmptyHostKeys = true;
+        };
+      };
+      systemd.network = {
+        enable = true;
+        networks."99-ethernet" = {
+          matchConfig.Name = "en* eth*";
+          networkConfig.DHCP = "yes";
+        };
+      };
     }; # initrd
     kernelModules = [];
     kernelParams = [
@@ -212,10 +232,12 @@ in {
   # Merge disko configurations
   disko.devices = lib.mkMerge [
     (import ./disks.nix {}).disko.devices
-    (import ./storage.nix {
-      passwordFile = config.age.secrets.storage-luks-passphrase.path;
-    }).disko.devices
+    (import ./storage.nix {}).disko.devices
   ]; # disko.devices
+
+  environment.etc.crypttab.text = ''
+    cryptstorage /dev/disk/by-partlabel/disk-storage1-storage /persist/secrets/storage-luks.key
+  '';
 
   fileSystems."/var/log".neededForBoot = true;
 }

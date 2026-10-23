@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 {
   disks ? ["/dev/sdb"],
-  passwordFile ? "/run/agenix/storage-luks-passphrase",
+  passwordFile ? "/tmp/storage-secret.key",
+  keyFile ? "/persist/secrets/storage-luks.key",
   ...
 }: let
   btrfsOpts = [
@@ -12,6 +13,8 @@
     "autodefrag"
     "commit=120"
     "compress=zstd"
+    "nofail"
+    "x-systemd.device-timeout=10s"
   ];
 in {
   disko.devices = {
@@ -27,7 +30,11 @@ in {
               content = {
                 type = "luks";
                 name = "cryptstorage";
-                settings.allowDiscards = true;
+                initrdUnlock = false;
+                settings = {
+                  allowDiscards = true;
+                  keyFile = keyFile;
+                };
                 passwordFile = passwordFile;
                 content = {
                   type = "btrfs";

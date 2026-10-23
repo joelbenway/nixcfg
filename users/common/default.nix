@@ -99,8 +99,8 @@ in {
                 group = "users";
               };
               bypass-paywalls-chrome = {
-                file = relativeToRoot "secrets/bypass-paywalls-chrome-clean-3.8.5.0.crx.age";
-                name = "bypass-paywalls-chrome-clean-3.8.5.0.crx";
+                file = relativeToRoot "secrets/bypass-paywalls-chrome-clean-latest.crx.age";
+                name = "bypass-paywalls-chrome-clean-latest.crx";
                 mode = "644";
                 owner = "root";
                 group = "users";
@@ -132,7 +132,7 @@ in {
             enable = true;
             extensions."lkbebcjgcmobigpeffafkodonchffocl" = {
               source = config.age.secrets.bypass-paywalls-chrome.path;
-              version = "3.8.5.0";
+              version = "4.4.7.7";
             };
           };
 

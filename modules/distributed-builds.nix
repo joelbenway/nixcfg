@@ -17,7 +17,7 @@
     sshUser = "nix-ssh";
     sshKey = cfg.keyFile;
     protocol = "ssh-ng";
-    publicHostKey = null;
+    publicHostKey = keys.hostsBase64.${name} or null;
     supportedFeatures = info.supportedFeatures;
     mandatoryFeatures = [];
     maxJobs = info.maxJobs;

@@ -59,11 +59,13 @@
               default_area = "navbar";
             };
           }
-          // (lib.mapAttrs (_: value: {
+          // (lib.mapAttrs (_: value: let
+              src = toString value.source;
+            in {
               install_url =
-                if builtins.isPath value.source
-                then "file://${value.source}"
-                else value.source;
+                if lib.hasPrefix "http://" src || lib.hasPrefix "https://" src || lib.hasPrefix "file://" src
+                then src
+                else "file://${src}";
               inherit (value) installation_mode default_area;
             })
             config.firefox.extensions);

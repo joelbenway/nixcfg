@@ -37,8 +37,13 @@
         ]; # hostKeys
         knownHosts = let
           keys = import (lib.custom.relativeToRoot "data/keys.nix");
+          tailnet = config.tailscale.tailnet or "";
         in
-          lib.mapAttrs (_: publicKey: {inherit publicKey;}) keys.hosts; # knownHosts
+          lib.mapAttrs (name: publicKey: {
+            inherit publicKey;
+            extraHostNames = lib.optional (tailnet != "") "${name}.${tailnet}";
+          })
+          keys.hosts; # knownHosts
       }; # openssh
     }; # services
   }; # config
