@@ -239,8 +239,25 @@ if ! "${SWITCH_CMD[@]}"; then
 fi
 
 info "Verifying post-finalization health..."
-if ! run_ssh "systemctl is-system-running --quiet" 2>/dev/null; then
-  warn "Host ${TARGET_HOST} reported non-optimal system state after finalization."
+if [[ "$TARGET_HOST" == "michael" ]]; then
+  DNS_RES=$(dig "@${TARGET_ADDRESS}" nixos.org +short +time=3 +tries=2 2>/dev/null || true)
+  if [[ -z "$DNS_RES" ]]; then
+    error "Post-finalization DNS resolution check failed on ${TARGET_HOST}!"
+    rollback
+  fi
+
+  for s in pihole-ftl unbound nftables pia-wireguard; do
+    if ! run_ssh "systemctl is-active --quiet $s"; then
+      error "Critical service '$s' is not active after finalization on ${TARGET_HOST}!"
+      rollback
+    fi
+  done
+else
+  if ! run_ssh "systemctl is-system-running --quiet"; then
+    STATE=$(run_ssh "systemctl is-system-running 2>/dev/null" || echo "unreachable")
+    error "Post-finalization health check failed: system state is '${STATE}' on ${TARGET_HOST}!"
+    rollback
+  fi
 fi
 
 success "Successfully deployed and finalized update on ${TARGET_HOST}!"
