@@ -138,6 +138,11 @@ if ! run_ssh "hostname" &>/dev/null; then
 fi
 
 REMOTE_HOSTNAME=$(run_ssh "hostname")
+REMOTE_SHORT="${REMOTE_HOSTNAME%%.*}"
+if [[ "$REMOTE_SHORT" != "$TARGET_HOST" ]]; then
+  error "Target host identity mismatch: expected '${TARGET_HOST}', but connected to '${REMOTE_HOSTNAME}' (${SSH_TARGET})!"
+  exit 1
+fi
 info "Connected to remote host: ${REMOTE_HOSTNAME}"
 
 # 2. Stage deployment with 'test'
@@ -156,7 +161,7 @@ fi
 
 if ! "${REBUILD_CMD[@]}"; then
   error "nixos-rebuild test failed on ${TARGET_HOST}."
-  exit 1
+  rollback
 fi
 
 success "Configuration activated in memory on ${TARGET_HOST}. Running canary checks..."
@@ -179,14 +184,16 @@ fi
 if [[ "$TARGET_HOST" == "michael" ]]; then
   info "[Canary 2/3] Verifying router DNS resolution & forwarders..."
   for _ in {1..5}; do
-    if dig "@${TARGET_ADDRESS}" nixos.org +short +time=2 +tries=1 &>/dev/null; then
+    DNS_RES=$(dig "@${TARGET_ADDRESS}" nixos.org +short +time=2 +tries=1 2>/dev/null || true)
+    if [[ -n "$DNS_RES" ]]; then
       break
     fi
     sleep 1
   done
 
-  if ! dig "@${TARGET_ADDRESS}" nixos.org +short +time=3 +tries=2 &>/dev/null; then
-    error "DNS resolution query to @${TARGET_ADDRESS} failed!"
+  DNS_RES=$(dig "@${TARGET_ADDRESS}" nixos.org +short +time=3 +tries=2 2>/dev/null || true)
+  if [[ -z "$DNS_RES" ]]; then
+    error "DNS resolution query to @${TARGET_ADDRESS} returned no answer!"
     rollback
   fi
 
@@ -204,7 +211,11 @@ if [[ "$TARGET_HOST" == "michael" ]]; then
   done
 else
   info "[Canary 2/3] Verifying target system responsiveness..."
-  run_ssh "systemctl is-system-running || true"
+  if ! run_ssh "systemctl is-system-running --quiet"; then
+    STATE=$(run_ssh "systemctl is-system-running 2>/dev/null" || echo "unknown")
+    error "System responsiveness canary failed: system state is '${STATE}' on ${TARGET_HOST}!"
+    rollback
+  fi
 fi
 
 trap - ERR
@@ -224,7 +235,12 @@ fi
 
 if ! "${SWITCH_CMD[@]}"; then
   error "Failed to persist configuration to bootloader on ${TARGET_HOST}."
-  exit 1
+  rollback
+fi
+
+info "Verifying post-finalization health..."
+if ! run_ssh "systemctl is-system-running --quiet" 2>/dev/null; then
+  warn "Host ${TARGET_HOST} reported non-optimal system state after finalization."
 fi
 
 success "Successfully deployed and finalized update on ${TARGET_HOST}!"
