@@ -186,6 +186,9 @@ in {
         "usbhid"
         "sd_mod"
         "rtsx_pci_sdmmc"
+        "isci" # Intel C600 SAS/SATA SCU controller for internal drive bays on HP Z620
+        "mpt3sas"
+        "mpt2sas"
         "e1000e" # Intel 82579LM & 82574L Gigabit Ethernet for HP Z620
       ];
       kernelModules = [];
@@ -204,9 +207,14 @@ in {
       };
       systemd.network = {
         enable = true;
-        networks."99-ethernet" = {
+        networks."10-lan" = {
           matchConfig.Name = "en* eth*";
-          networkConfig.DHCP = "yes";
+          networkConfig = {
+            Address = "192.168.77.20/24";
+            Gateway = "192.168.77.1";
+            DNS = ["192.168.77.1"];
+            DHCP = "yes";
+          };
         };
       };
     }; # initrd

@@ -17,7 +17,7 @@
     "defaults"
     "ssd"
     "discard=async"
-    "noatime"
+    "relatime"
     "space_cache=v2"
     "autodefrag"
     "commit=120"
@@ -33,7 +33,7 @@
   btrfsStorageOpts = [
     "subvol=@"
     "defaults"
-    "noatime"
+    "relatime"
     "space_cache=v2"
     "autodefrag"
     "commit=120"
@@ -63,7 +63,7 @@ in {
   # Filesystem mounts
   fileSystems = {
     # 24TB Seagate HDD (Backing Bulk Storage)
-    "/mnt/storage1" = {
+    "/mnt/storage" = {
       device = "/dev/mapper/cryptstorage";
       fsType = "btrfs";
       options = btrfsStorageOpts;
@@ -77,14 +77,14 @@ in {
     };
 
     # Unified Tiered Storage via MergerFS
-    # Writes land on /mnt/cache/storage first (category.create=ff)
-    # Reads search /mnt/cache/storage then /mnt/storage1
+    # Writes land on /mnt/cache/data first (category.create=ff)
+    # Reads search /mnt/cache/data then /mnt/storage
     "/storage" = {
       fsType = "fuse.mergerfs";
-      device = "/mnt/cache/storage:/mnt/storage1";
+      device = "/mnt/cache/data:/mnt/storage";
       depends = [
         "/mnt/cache"
-        "/mnt/storage1"
+        "/mnt/storage"
       ];
       options = [
         "defaults"
@@ -102,13 +102,13 @@ in {
 
   # Ensure directories exist on cache and storage
   systemd.tmpfiles.rules = [
-    "d /mnt/cache/storage 0775 root users -"
+    "d /mnt/cache/data 0775 root users -"
     "d /mnt/cache/appdata 0775 root users -"
-    "d /mnt/storage1/public 0775 nobody users -"
-    "d /mnt/storage1/media 0775 root users -"
-    "d /mnt/storage1/users 0755 root root -"
-    "d /mnt/storage1/users/joel 0700 joel users -"
-    "d /mnt/storage1/users/katy 0700 katy users -"
+    "d /mnt/storage/public 0775 nobody users -"
+    "d /mnt/storage/media 0775 root users -"
+    "d /mnt/storage/users 0755 root root -"
+    "d /mnt/storage/users/joel 0700 joel users -"
+    "d /mnt/storage/users/katy 0700 katy users -"
   ];
 
   # Monthly scrub for root, cache, and bulk storage pools
@@ -118,37 +118,48 @@ in {
     fileSystems = [
       "/"
       "/mnt/cache"
-      "/mnt/storage1"
+      "/mnt/storage"
     ];
   };
 
-  # Cache Mover: Migrates cold files from /mnt/cache/storage to /mnt/storage1
-  # Leaves /mnt/cache/appdata completely untouched
+  # Intelligent Cache Mover: Migrates cold files from /mnt/cache/data to /mnt/storage
+  # only when cache usage exceeds threshold (e.g., 75%).
+  # Leaves /mnt/cache/appdata completely untouched.
   systemd.services.mergerfs-mover = {
-    description = "Move cached files from SSD cache to 24TB bulk storage";
+    description = "Intelligently evict cold cached files from SSD cache to 24TB bulk storage";
     path = with pkgs; [
+      coreutils
       findutils
       rsync
     ];
     script = ''
       set -euo pipefail
 
-      CACHE_SRC="/mnt/cache/storage"
-      STORAGE_DST="/mnt/storage1"
+      CACHE_SRC="/mnt/cache/data"
+      STORAGE_DST="/mnt/storage"
+      HIGH_WATERMARK=75
+      MIN_AGE_DAYS=14
 
       if [ ! -d "$CACHE_SRC" ] || [ ! -d "$STORAGE_DST" ]; then
         echo "Source or destination directory does not exist. Skipping."
         exit 0
       fi
 
-      echo "Starting MergerFS cache mover..."
+      USAGE=$(df --output=pcent "$CACHE_SRC" | tail -1 | tr -dc '0-9')
+      echo "Current cache usage: ''${USAGE}% (Threshold: ''${HIGH_WATERMARK}%)"
 
-      # Find files older than 15 minutes to avoid moving active writes
-      find "$CACHE_SRC" -type f -mmin +15 | while IFS= read -r file; do
+      if [ "$USAGE" -lt "$HIGH_WATERMARK" ]; then
+        echo "Cache usage is below ''${HIGH_WATERMARK}%. Keeping files on SSD cache for silent/fast reads."
+        exit 0
+      fi
+
+      echo "Cache threshold reached! Evicting cold files older than ''${MIN_AGE_DAYS} days..."
+
+      find "$CACHE_SRC" -type f -atime +"$MIN_AGE_DAYS" ! -name "*.part" | while IFS= read -r file; do
         relpath="''${file#$CACHE_SRC/}"
         target_dir="$STORAGE_DST/$(dirname "$relpath")"
         mkdir -p "$target_dir"
-        echo "Moving: $relpath -> $target_dir/"
+        echo "Evicting cold file: $relpath -> $target_dir/"
         rsync -aHAX --remove-source-files "$file" "$target_dir/"
       done
 
@@ -164,7 +175,7 @@ in {
   };
 
   systemd.timers.mergerfs-mover = {
-    description = "Nightly timer for MergerFS cache mover";
+    description = "Nightly check for MergerFS cache threshold eviction";
     wantedBy = ["timers.target"];
     timerConfig = {
       OnCalendar = "03:00";
