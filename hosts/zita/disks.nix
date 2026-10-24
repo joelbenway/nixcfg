@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 {
   # ls -l /dev/disk/by-id/
-  disks ? ["/dev/sda"],
+  disks ? ["/dev/disk/by-id/ata-MTFDDAK256MAM-1K1_1350095E2305"],
   ...
 }: let
   btrfsOpts = [

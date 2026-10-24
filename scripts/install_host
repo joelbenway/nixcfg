@@ -253,7 +253,6 @@ if [[ "$TARGET_HOST" == "zita" ]]; then
     mkdir -p "${EXTRA_FILES_DIR}/persist/secrets"
     cp "$STORAGE_KEY_STAGED" "${EXTRA_FILES_DIR}/persist/secrets/storage-luks.key"
     chmod 400 "${EXTRA_FILES_DIR}/persist/secrets/storage-luks.key"
-    DISK_ENCRYPTION_KEYS+=(--disk-encryption-keys /tmp/storage-secret.key "$STORAGE_KEY_STAGED")
     echo ">>> Successfully decrypted and staged storage LUKS key for '${TARGET_HOST}'."
   else
     echo "WARNING: Could not decrypt storage LUKS passphrase for '${TARGET_HOST}'."

@@ -14,6 +14,7 @@ in {
     (modulesPath + "/installer/scan/not-detected.nix")
     (lib.custom.relativeToRoot "hardware/quadrom2000.nix")
     (lib.custom.relativeToRoot "hardware/ivybridge.nix")
+    ./storage.nix
   ]; # imports
 
   age = {
@@ -69,16 +70,6 @@ in {
     ];
   }; # impermanence
 
-  services = {
-    btrfs = {
-      autoScrub = {
-        enable = true;
-        interval = "monthly";
-        fileSystems = ["/" "/storage"];
-      }; # autoScrub
-    }; # btrfs
-  }; # services
-
   openssh = {
     enable = true;
     inherit hostKeyPath;
@@ -119,7 +110,7 @@ in {
   }; # tailscale
 
   hermes = {
-    enable = true;
+    enable = false;
     environmentFiles = [
       config.age.secrets.hermes-env.path
     ];
@@ -229,15 +220,7 @@ in {
     }; # loader
   }; # boot
 
-  # Merge disko configurations
-  disko.devices = lib.mkMerge [
-    (import ./disks.nix {}).disko.devices
-    (import ./storage.nix {}).disko.devices
-  ]; # disko.devices
-
-  environment.etc.crypttab.text = ''
-    cryptstorage /dev/disk/by-partlabel/disk-storage1-storage /persist/secrets/storage-luks.key
-  '';
+  disko.devices = (import ./disks.nix {}).disko.devices;
 
   fileSystems."/var/log".neededForBoot = true;
 }
