@@ -3,7 +3,6 @@
 {
   config,
   hostname,
-  inputs,
   lib,
   modulesPath,
   ...
