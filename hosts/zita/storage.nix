@@ -30,7 +30,7 @@
     "x-systemd.after=dev-mapper-cryptcache2.device"
   ];
 
-  btrfsStorageOpts = [
+  btrfsDiskOpts = [
     "subvol=@"
     "defaults"
     "relatime"
@@ -40,8 +40,8 @@
     "compress=zstd"
     "nofail"
     "x-systemd.device-timeout=10s"
-    "x-systemd.requires=dev-mapper-cryptstorage.device"
-    "x-systemd.after=dev-mapper-cryptstorage.device"
+    "x-systemd.requires=dev-mapper-cryptdisk1.device"
+    "x-systemd.after=dev-mapper-cryptdisk1.device"
   ];
 in {
   environment.systemPackages = with pkgs; [
@@ -55,18 +55,18 @@ in {
 
   # Decrypt persistent data and cache disks in Stage 2 using keyfile on /persist
   environment.etc.crypttab.text = ''
-    cryptstorage ${storageDiskPart} ${storageKeyPath}
+    cryptdisk1   ${storageDiskPart} ${storageKeyPath}
     cryptcache1  ${cacheDisk1Part}  ${storageKeyPath}
     cryptcache2  ${cacheDisk2Part}  ${storageKeyPath}
   '';
 
   # Filesystem mounts
   fileSystems = {
-    # 24TB Seagate HDD (Backing Bulk Storage)
-    "/mnt/storage" = {
-      device = "/dev/mapper/cryptstorage";
+    # 24TB Seagate HDD (Backing Bulk Storage Disk 1)
+    "/mnt/disk1" = {
+      device = "/dev/mapper/cryptdisk1";
       fsType = "btrfs";
-      options = btrfsStorageOpts;
+      options = btrfsDiskOpts;
     };
 
     # 2x 120GB SSDs (Btrfs RAID 1 Cache Pool)
@@ -78,13 +78,13 @@ in {
 
     # Unified Tiered Storage via MergerFS
     # Writes land on /mnt/cache/data first (category.create=ff)
-    # Reads search /mnt/cache/data then /mnt/storage
+    # Reads search /mnt/cache/data then /mnt/disk1
     "/storage" = {
       fsType = "fuse.mergerfs";
-      device = "/mnt/cache/data:/mnt/storage";
+      device = "/mnt/cache/data:/mnt/disk1";
       depends = [
         "/mnt/cache"
-        "/mnt/storage"
+        "/mnt/disk1"
       ];
       options = [
         "defaults"
@@ -100,29 +100,29 @@ in {
     };
   };
 
-  # Ensure directories exist on cache and storage
+  # Ensure directories exist on cache and backing disk
   systemd.tmpfiles.rules = [
     "d /mnt/cache/data 0775 root users -"
     "d /mnt/cache/appdata 0775 root users -"
-    "d /mnt/storage/public 0775 nobody users -"
-    "d /mnt/storage/media 0775 root users -"
-    "d /mnt/storage/users 0755 root root -"
-    "d /mnt/storage/users/joel 0700 joel users -"
-    "d /mnt/storage/users/katy 0700 katy users -"
+    "d /mnt/disk1/public 0775 nobody users -"
+    "d /mnt/disk1/media 0775 root users -"
+    "d /mnt/disk1/users 0755 root root -"
+    "d /mnt/disk1/users/joel 0700 joel users -"
+    "d /mnt/disk1/users/katy 0700 katy users -"
   ];
 
-  # Monthly scrub for root, cache, and bulk storage pools
+  # Monthly scrub for root, cache, and bulk storage disks
   services.btrfs.autoScrub = {
     enable = true;
     interval = "monthly";
     fileSystems = [
       "/"
       "/mnt/cache"
-      "/mnt/storage"
+      "/mnt/disk1"
     ];
   };
 
-  # Intelligent Cache Mover: Migrates cold files from /mnt/cache/data to /mnt/storage
+  # Intelligent Cache Mover: Migrates cold files from /mnt/cache/data to /mnt/disk1
   # only when cache usage exceeds threshold (e.g., 75%).
   # Leaves /mnt/cache/appdata completely untouched.
   systemd.services.mergerfs-mover = {
@@ -136,7 +136,7 @@ in {
       set -euo pipefail
 
       CACHE_SRC="/mnt/cache/data"
-      STORAGE_DST="/mnt/storage"
+      STORAGE_DST="/mnt/disk1"
       HIGH_WATERMARK=75
       MIN_AGE_DAYS=14
 
