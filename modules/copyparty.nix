@@ -108,8 +108,8 @@ in {
 
           services.copyparty = {
             enable = true;
-            user = "copyparty";
-            group = "copyparty";
+            user = "root";
+            group = "root";
 
             accounts = userAccounts;
 
