@@ -66,7 +66,7 @@ in {
       "/var/lib/samba"
       "/var/lib/containers"
       "/var/lib/hermes"
-      "/var/lib/actual"
+      "/var/lib/private/actual"
     ];
   }; # impermanence
 
@@ -191,7 +191,7 @@ in {
         "mpt2sas"
         "e1000e" # Intel 82579LM & 82574L Gigabit Ethernet for HP Z620
       ];
-      kernelModules = [];
+      kernelModules = ["e1000e"];
       network = {
         enable = true;
         ssh = {
