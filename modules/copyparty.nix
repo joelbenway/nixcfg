@@ -116,7 +116,7 @@ in {
             settings = {
               i = "0.0.0.0";
               p = cfg.port;
-              no_reload = true;
+              no-reload = true;
             };
 
             volumes =

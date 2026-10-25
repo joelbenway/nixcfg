@@ -45,8 +45,8 @@ in {
         file = lib.custom.relativeToRoot "secrets/hermes.env.age";
         name = "hermes.env";
         mode = "440";
-        owner = "hermes";
-        group = "hermes";
+        owner = "root";
+        group = "root";
       }; # hermes-env
       nix-builder-ssh = {
         file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
