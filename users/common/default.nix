@@ -26,6 +26,9 @@
   passphraseFile = relativeToRoot "secrets/${username}-passphrase.age";
   hasPassphrase = builtins.pathExists passphraseFile;
 
+  copypartyPassphraseFile = relativeToRoot "secrets/${username}-copyparty.age";
+  hasCopypartyPassphrase = builtins.pathExists copypartyPassphraseFile;
+
   sshKeyFile = relativeToRoot "secrets/${username}-ssh.age";
   hasSshKey = builtins.pathExists sshKeyFile;
 
@@ -71,6 +74,9 @@ in {
           age.secrets =
             (lib.optionalAttrs hasPassphrase {
               "${username}-passphrase".file = passphraseFile;
+            })
+            // (lib.optionalAttrs hasCopypartyPassphrase {
+              "${username}-copyparty".file = copypartyPassphraseFile;
             })
             // (lib.optionalAttrs hasSshKey {
               "${username}-ssh" = {
@@ -136,15 +142,16 @@ in {
             };
           };
 
-          copyparty.users = lib.mkIf hasPassphrase (lib.mkMerge [
-            [
-              {
-                name = username;
-                passwordFile = config.age.secrets."${username}-passphrase".path;
-                canWriteMedia = isWheel;
-              }
-            ]
-          ]);
+          copyparty.users = lib.mkIf (hasCopypartyPassphrase || hasPassphrase) [
+            {
+              name = username;
+              passwordFile =
+                if hasCopypartyPassphrase
+                then config.age.secrets."${username}-copyparty".path
+                else config.age.secrets."${username}-passphrase".path;
+              canWriteMedia = isWheel;
+            }
+          ];
 
           users.users.${username} =
             {
