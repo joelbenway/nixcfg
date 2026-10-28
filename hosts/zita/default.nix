@@ -114,6 +114,7 @@ in {
   }; # tailscale
 
   services.tailscale.extraSetFlags = ["--operator=caddy"];
+  systemd.services.tailscaled.environment.TS_PERMIT_CERT_UID = "caddy";
 
   hermes = {
     enable = false;
