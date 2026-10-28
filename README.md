@@ -37,7 +37,7 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * [Brave](./modules/brave.nix) is similar to my firefox module, but maybe not as optimized.
 * [Tailscale](./modules/tailscale.nix) My tailscale module uses an oauth token that doesn't have to be rotated as often as an API key.
 * [AI](./modules/llm.nix) I have a local ai module with llama-cpp and llama-swap others might find interesting.
-* [Loadkeys](./modules/loadkeys.nix) A systemd user service that imports API keys into the session environment for tools like [opencode](./modules/opencode.nix) and [gemini](./modules/gemini.nix) as well as a shared [mcp](./modules/mcp.nix) server setup.
+* [Loadkeys](./modules/loadkeys.nix) A systemd user service that imports API keys into the session environment for tools like [opencode](./modules/opencode.nix) and [antigravity](./modules/antigravity.nix) as well as a shared [mcp](./modules/mcp.nix) server setup.
 
 ## Get Started
 1. **Build the Installer ISO**:

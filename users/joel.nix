@@ -89,10 +89,6 @@ in
         envFile = config.age.secrets."${username}-api-env".path;
       };
 
-      gemini.users.${username} = {
-        enable = false;
-      };
-
       opencode.users.${username} = {
         enable = true;
       };
@@ -154,7 +150,8 @@ in
       };
 
       antigravity = {
-        enable = config.${username}.desktop;
+        ide.enable = config.${username}.desktop;
+        agy.enable = true;
         users.${username} = {
           cpp = true;
           flutter = true;
