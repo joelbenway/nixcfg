@@ -366,9 +366,9 @@ in {
               "server=/${config.tailscale.tailnet}/100.100.100.100"
 
               # Service CNAMEs pointing to Zita
-              "cname=files.benway.me,zita.gentoo-humboldt.ts.net"
-              "cname=budget.benway.me,zita.gentoo-humboldt.ts.net"
-              "cname=zita.home,zita.gentoo-humboldt.ts.net"
+              "cname=files.benway.me,zita.${config.tailscale.tailnet}"
+              "cname=budget.benway.me,zita.${config.tailscale.tailnet}"
+              "cname=zita.home,zita.${config.tailscale.tailnet}"
             ];
         };
       };

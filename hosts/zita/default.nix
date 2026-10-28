@@ -242,18 +242,18 @@ in {
         }
       }
 
-      zita.gentoo-humboldt.ts.net {
-        redir https://zita.gentoo-humboldt.ts.net:3923
+      ${hostname}.${config.tailscale.tailnet} {
+        redir https://${hostname}.${config.tailscale.tailnet}:3923
       }
 
-      zita.gentoo-humboldt.ts.net:3923 {
+      ${hostname}.${config.tailscale.tailnet}:3923 {
         import tailscale_auth
         reverse_proxy 127.0.0.1:3920 {
           header_up X-Tailscale-User {ts_user}
         }
       }
 
-      zita.gentoo-humboldt.ts.net:5006 {
+      ${hostname}.${config.tailscale.tailnet}:5006 {
         import tailscale_auth
         reverse_proxy 127.0.0.1:5005 {
           header_up x-actual-password {actual_pw}

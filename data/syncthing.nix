@@ -1,8 +1,6 @@
 # Copyright (c) Joel Benway
 # SPDX-License-Identifier: MIT
-let
-  tailnet = "gentoo-humboldt.ts.net";
-in {
+{tailnet ? "gentoo-humboldt.ts.net", ...}: {
   inherit tailnet;
 
   devices = {

@@ -7,7 +7,9 @@
   ...
 }: let
   cfg = config.syncthing;
-  topology = import (lib.custom.relativeToRoot "data/syncthing.nix");
+  topology = (import (lib.custom.relativeToRoot "data/syncthing.nix")) {
+    inherit (config.tailscale) tailnet;
+  };
 
   certPath = lib.custom.relativeToRoot "data/syncthing/certs/${hostname}.cert.pem";
   keySecretPath = lib.custom.relativeToRoot "secrets/${hostname}-syncthing-key.age";
