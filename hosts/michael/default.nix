@@ -458,6 +458,22 @@ in {
           piholeGroups.categories)
         ++ [
           ''
+            DELETE FROM gravity
+            WHERE adlist_id IN (
+              SELECT a.id FROM adlist a
+              WHERE a.address NOT IN (
+                ${lib.concatMapStringsSep ",\n                " (it: "'${it.url}'") piholeGroups.allLists}
+              )
+            );
+
+            DELETE FROM adlist_by_group
+            WHERE adlist_id IN (
+              SELECT a.id FROM adlist a
+              WHERE a.address NOT IN (
+                ${lib.concatMapStringsSep ",\n                " (it: "'${it.url}'") piholeGroups.allLists}
+              )
+            );
+
             DELETE FROM adlist
             WHERE address NOT IN (
               ${lib.concatMapStringsSep ",\n              " (it: "'${it.url}'") piholeGroups.allLists}
@@ -481,7 +497,6 @@ in {
 
       sqlite3 "${gravityDb}" << 'EOF'
       PRAGMA busy_timeout = 5000;
-      PRAGMA foreign_keys = ON;
       ${sqlStatements}
       EOF
 
