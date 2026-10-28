@@ -116,25 +116,25 @@ jobs:
             git rm --cached secrets 2>/dev/null || true
             rm -rf secrets && mkdir -p secrets
             sed -i '/self.submodules = true;/d' flake.nix
-            for f in \
-              agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
-              bypass-paywalls-chrome-clean-latest.crx.age \
-              bypass_paywalls_clean-latest.xpi.age \
-              cloudflare-api.env.age \
-              francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
-              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
-              joel-api.env.age joel-copyparty.age joel-gpg-keys.asc.age joel-passphrase.age \
-              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
-              katy-copyparty.age katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
-              michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
-              nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
+            # Dynamically discover all secret filenames referenced across the codebase
+            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
               touch "secrets/$f"
             done
-            grep -rhoE '[A-Za-z0-9_.-]+\.age' hosts/ modules/ users/ 2>/dev/null | while read -r f; do
-              touch "secrets/$f"
+
+            # Expand templates with ${hostname} and ${username}
+            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+              for h in agnes francis jerome michael zita; do
+                touch "secrets/${h}${suffix}"
+              done
             done
+
+            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+              for u in joel katy; do
+                touch "secrets/${u}${suffix}"
+              done
+            done
+
+            touch secrets/secrets.nix secrets/agenix-rules.nix
             git config user.name "CI"
             git config user.email "ci@local"
             git add -f secrets flake.nix
@@ -181,25 +181,25 @@ jobs:
             git rm --cached secrets 2>/dev/null || true
             rm -rf secrets && mkdir -p secrets
             sed -i '/self.submodules = true;/d' flake.nix
-            for f in \
-              agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
-              bypass-paywalls-chrome-clean-latest.crx.age \
-              bypass_paywalls_clean-latest.xpi.age \
-              cloudflare-api.env.age \
-              francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
-              hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
-              joel-api.env.age joel-copyparty.age joel-gpg-keys.asc.age joel-passphrase.age \
-              joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
-              katy-copyparty.age katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
-              michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
-              nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
-              tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
-              zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
+            # Dynamically discover all secret filenames referenced across the codebase
+            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
               touch "secrets/$f"
             done
-            grep -rhoE '[A-Za-z0-9_.-]+\.age' hosts/ modules/ users/ 2>/dev/null | while read -r f; do
-              touch "secrets/$f"
+
+            # Expand templates with ${hostname} and ${username}
+            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+              for h in agnes francis jerome michael zita; do
+                touch "secrets/${h}${suffix}"
+              done
             done
+
+            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+              for u in joel katy; do
+                touch "secrets/${u}${suffix}"
+              done
+            done
+
+            touch secrets/secrets.nix secrets/agenix-rules.nix
             git config user.name "CI"
             git config user.email "ci@local"
             git add -f secrets flake.nix
