@@ -70,6 +70,10 @@ in {
     ];
   }; # impermanence
 
+  systemd.tmpfiles.rules = [
+    "d /var/lib/private 0700 root root -"
+  ];
+
   openssh = {
     enable = true;
     inherit hostKeyPath;
