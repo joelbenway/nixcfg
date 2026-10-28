@@ -5,6 +5,7 @@
   hostname,
   lib,
   modulesPath,
+  pkgs,
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
@@ -48,6 +49,13 @@ in {
         owner = "root";
         group = "root";
       }; # hermes-env
+      cloudflare-api-env = {
+        file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
+        name = "cloudflare.env";
+        mode = "440";
+        owner = "caddy";
+        group = "caddy";
+      };
       nix-builder-ssh = {
         file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
         path = "/root/.ssh/nix-builder";
@@ -191,6 +199,11 @@ in {
 
   services.caddy = {
     enable = true;
+    package = pkgs.caddy.withPlugins {
+      plugins = ["github.com/caddy-dns/cloudflare@v0.2.4"];
+      hash = "sha256-5a5cpFl90pEWt0lUC4ZJQ7g+1//ZvsRhee64Dt9vh5o=";
+    };
+    environmentFile = config.age.secrets.cloudflare-api-env.path;
     extraConfig = ''
       (tailscale_auth) {
         map {remote_host} {ts_user} {
@@ -210,7 +223,9 @@ in {
       }
 
       files.benway.me {
-        tls internal
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
         import tailscale_auth
         reverse_proxy 127.0.0.1:3920 {
           header_up X-Tailscale-User {ts_user}
@@ -218,7 +233,9 @@ in {
       }
 
       budget.benway.me {
-        tls internal
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
         import tailscale_auth
         reverse_proxy 127.0.0.1:5005 {
           header_up x-actual-password {actual_pw}

@@ -368,6 +368,7 @@ in {
               # Service CNAMEs pointing to Zita
               "cname=files.benway.me,zita.gentoo-humboldt.ts.net"
               "cname=budget.benway.me,zita.gentoo-humboldt.ts.net"
+              "cname=zita.home,zita.gentoo-humboldt.ts.net"
             ];
         };
       };
