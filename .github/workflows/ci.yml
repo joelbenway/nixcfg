@@ -118,17 +118,21 @@ jobs:
             sed -i '/self.submodules = true;/d' flake.nix
             for f in \
               agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
-              bypass-paywalls-chrome-clean-3.8.5.0.crx.age \
+              bypass-paywalls-chrome-clean-latest.crx.age \
               bypass_paywalls_clean-latest.xpi.age \
+              cloudflare-api.env.age \
               francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
               hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
-              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joel-api.env.age joel-copyparty.age joel-gpg-keys.asc.age joel-passphrase.age \
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
-              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              katy-copyparty.age katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
               zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
+              touch "secrets/$f"
+            done
+            grep -rhoE '[A-Za-z0-9_.-]+\.age' hosts/ modules/ users/ 2>/dev/null | while read -r f; do
               touch "secrets/$f"
             done
             git config user.name "CI"
@@ -181,15 +185,19 @@ jobs:
               agnes-host-key.age agnes-luks-passphrase.age agnes-syncthing-key.age \
               bypass-paywalls-chrome-clean-latest.crx.age \
               bypass_paywalls_clean-latest.xpi.age \
+              cloudflare-api.env.age \
               francis-host-key.age francis-luks-passphrase.age francis-syncthing-key.age \
               hermes.env.age jerome-host-key.age jerome-luks-passphrase.age jerome-syncthing-key.age \
-              joel-api.env.age joel-gpg-keys.asc.age joel-passphrase.age \
+              joel-api.env.age joel-copyparty.age joel-gpg-keys.asc.age joel-passphrase.age \
               joels-pfp.png.age joel-ssh.age joels-wallpaper.jpg.age \
-              katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
+              katy-copyparty.age katy-passphrase.age katys-pfp.jpg.age katy-ssh.age \
               michael-host-key.age michael-luks-passphrase.age michael-syncthing-key.age \
               nix-builder-ssh.age secrets.nix agenix-rules.nix storage-luks-passphrase.age \
               tailscale-oauth.env.age tailscale-oauth-bootstrap.env.age tailscale-bootstrap-oauth.env.age wifi.env.age wifi-guest.env.age zita-host-key.age \
               zita-luks-passphrase.age zita-syncthing-key.age pia.env.age; do
+              touch "secrets/$f"
+            done
+            grep -rhoE '[A-Za-z0-9_.-]+\.age' hosts/ modules/ users/ 2>/dev/null | while read -r f; do
               touch "secrets/$f"
             done
             git config user.name "CI"
