@@ -364,6 +364,10 @@ in {
 
               # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
               "server=/${config.tailscale.tailnet}/100.100.100.100"
+
+              # Service CNAMEs pointing to Zita
+              "cname=files.benway.me,zita.gentoo-humboldt.ts.net"
+              "cname=budget.benway.me,zita.gentoo-humboldt.ts.net"
             ];
         };
       };

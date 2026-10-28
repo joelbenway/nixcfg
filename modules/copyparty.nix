@@ -114,9 +114,12 @@ in {
             accounts = userAccounts;
 
             settings = {
-              i = "0.0.0.0";
+              i = "127.0.0.1";
               p = cfg.port;
               no-reload = true;
+              rproxy = 1;
+              xff-src = "127.0.0.1,::1";
+              idp-h-usr = "X-Tailscale-User";
             };
 
             volumes =

@@ -18,7 +18,7 @@ in {
 
     hostname = lib.mkOption {
       type = lib.types.str;
-      default = "0.0.0.0";
+      default = "127.0.0.1";
       description = "Address for Actual Budget to listen on";
     };
 
@@ -32,11 +32,15 @@ in {
   config = lib.mkIf cfg.enable {
     services.actual = {
       enable = true;
-      openFirewall = true;
+      openFirewall = false;
       settings = {
         port = cfg.port;
         hostname = cfg.hostname;
         dataDir = cfg.dataDir;
+        loginMethod = "header";
+        allowedLoginMethods = ["header" "password"];
+        trustedProxies = ["127.0.0.1" "::1"];
+        trustedAuthProxies = ["127.0.0.1" "::1"];
       };
     };
   };

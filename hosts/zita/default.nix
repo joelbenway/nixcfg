@@ -66,6 +66,7 @@ in {
       "/var/lib/containers"
       "/var/lib/hermes"
       "/var/lib/private/actual"
+      "/var/lib/caddy"
     ];
   }; # impermanence
 
@@ -107,6 +108,8 @@ in {
     enable = true;
     envFile = config.age.secrets.tailscale-oauth-env.path;
   }; # tailscale
+
+  services.tailscale.extraSetFlags = ["--operator=caddy"];
 
   hermes = {
     enable = false;
@@ -165,11 +168,82 @@ in {
 
   copyparty = {
     enable = true;
+    port = 3920;
   }; # copyparty
 
   actual = {
     enable = true;
+    hostname = "127.0.0.1";
+    port = 5005;
   }; # actual
+
+  networking.firewall.allowedTCPPorts = [
+    80
+    443
+    3923
+    5006
+  ];
+
+  services.caddy = {
+    enable = true;
+    extraConfig = ''
+      (tailscale_auth) {
+        map {remote_host} {ts_user} {
+          100.82.75.113 joel
+          100.117.132.66 joel
+          100.67.148.7 joel
+          100.77.161.1 joel
+          100.75.211.110 joel
+          100.74.22.119 katy
+          default ""
+        }
+        map {ts_user} {actual_pw} {
+          joel "snark"
+          katy "snark"
+          default ""
+        }
+      }
+
+      files.benway.me {
+        tls internal
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:3920 {
+          header_up X-Tailscale-User {ts_user}
+        }
+      }
+
+      budget.benway.me {
+        tls internal
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:5005 {
+          header_up x-actual-password {actual_pw}
+        }
+      }
+
+      zita.gentoo-humboldt.ts.net {
+        redir https://zita.gentoo-humboldt.ts.net:3923
+      }
+
+      zita.gentoo-humboldt.ts.net:3923 {
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:3920 {
+          header_up X-Tailscale-User {ts_user}
+        }
+      }
+
+      zita.gentoo-humboldt.ts.net:5006 {
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:5005 {
+          header_up x-actual-password {actual_pw}
+        }
+      }
+    '';
+  };
+
+  systemd.services.caddy = {
+    after = ["tailscaled-set.service"];
+    wants = ["tailscaled-set.service"];
+  };
 
   boot = {
     enableContainers = true;

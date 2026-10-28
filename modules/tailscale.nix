@@ -73,8 +73,8 @@
         ++ lib.optional config.tailscale.advertiseExitNode "--advertise-exit-node"
         ++ lib.optional (config.tailscale.advertiseRoutes != []) "--advertise-routes=${lib.concatStringsSep "," config.tailscale.advertiseRoutes}"
         ++ lib.optional (config.tailscale.tags != []) "--advertise-tags=${lib.concatStringsSep "," config.tailscale.tags}";
-      extraSetFlags = [];
-      extraDaemonFlags = [];
+      extraSetFlags = lib.mkDefault [];
+      extraDaemonFlags = lib.mkDefault [];
     }; # services.tailscale
 
     systemd.services = {
