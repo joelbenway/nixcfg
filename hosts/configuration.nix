@@ -63,7 +63,12 @@
   time.timeZone = "America/Chicago";
   i18n.defaultLocale = "en_US.UTF-8";
 
-  security.polkit.enable = true;
+  security = {
+    polkit.enable = true;
+    sudo.extraConfig = ''
+      Defaults env_keep += "SSH_AUTH_SOCK"
+    '';
+  };
 
   environment.systemPackages = with pkgs; [
     age
