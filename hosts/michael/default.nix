@@ -368,6 +368,7 @@ in {
               # Service CNAMEs pointing to Zita
               "cname=files.benway.me,zita.${config.tailscale.tailnet}"
               "cname=budget.benway.me,zita.${config.tailscale.tailnet}"
+              "cname=plaid.benway.me,zita.${config.tailscale.tailnet}"
               "cname=zita.home,zita.${config.tailscale.tailnet}"
             ];
         };

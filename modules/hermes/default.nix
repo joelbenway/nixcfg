@@ -146,6 +146,14 @@ in {
     services.hermes-agent = {
       enable = true;
       container.enable = false; # Native mode (no container layers)
+      package = let
+        pmPackages =
+          (pkgs.callPackage "${inputs.hermes-agent}/nix/pm-packages.nix" {})
+          // {
+            node = pkgs.nodejs_22;
+          };
+      in
+        inputs.hermes-agent.packages.${pkgs.system}.default.override {inherit pmPackages;};
 
       # Inject dependencies from leaf module
       extraPackages = agentEnv.extraPackages;

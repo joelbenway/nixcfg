@@ -63,6 +63,13 @@ in {
         owner = "root";
         group = "root";
       };
+      plaid-env = {
+        file = lib.custom.relativeToRoot "secrets/plaid.env.age";
+        name = "plaid.env";
+        mode = "440";
+        owner = "plaid-sync";
+        group = "plaid-sync";
+      };
     }; # secrets
   }; # age
 
@@ -188,6 +195,11 @@ in {
     enable = true;
     hostname = "127.0.0.1";
     port = 5005;
+    plaid = {
+      enable = true;
+      port = 8084;
+      environmentFile = config.age.secrets.plaid-env.path;
+    };
   }; # actual
 
   networking.firewall.allowedTCPPorts = [
@@ -195,6 +207,7 @@ in {
     443
     3923
     5006
+    8085
   ];
 
   services.caddy = {
@@ -242,6 +255,14 @@ in {
         }
       }
 
+      plaid.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:8084
+      }
+
       ${hostname}.${config.tailscale.tailnet} {
         redir https://${hostname}.${config.tailscale.tailnet}:3923
       }
@@ -258,6 +279,11 @@ in {
         reverse_proxy 127.0.0.1:5005 {
           header_up x-actual-password {actual_pw}
         }
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:8085 {
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:8084
       }
     '';
   };

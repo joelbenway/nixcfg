@@ -49,6 +49,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
     };
+    gone-to-plaid = {
+      url = "github:joelbenway/gone-to-plaid";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -130,7 +134,10 @@
       zita = mkHost {
         name = "zita";
         hmModules = [inputs.agenix.homeManagerModules.default];
-        overlays = [inputs.copyparty.overlays.default];
+        overlays = [
+          inputs.copyparty.overlays.default
+          inputs.gone-to-plaid.overlays.default
+        ];
       }; # zita
     }; # nixosConfigurations
   };
