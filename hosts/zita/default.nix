@@ -125,7 +125,7 @@ in {
   systemd.services.tailscaled.environment.TS_PERMIT_CERT_UID = "caddy";
 
   hermes = {
-    enable = false;
+    enable = true;
     environmentFiles = [
       config.age.secrets.hermes-env.path
     ];
