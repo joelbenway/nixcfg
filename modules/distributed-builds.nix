@@ -11,6 +11,8 @@
   builders = import (lib.custom.relativeToRoot "data/builders.nix");
   tailnet = config.tailscale.tailnet;
 
+  isBuilder = builtins.hasAttr hostname builders;
+
   mkBuildMachine = name: info: {
     hostName = "${name}.${tailnet}";
     system = "x86_64-linux";
@@ -23,14 +25,13 @@
     maxJobs = info.maxJobs;
     speedFactor = info.speedFactor;
   };
-
-  otherBuilders = lib.removeAttrs builders [hostname];
 in {
   options.distributed-builds = {
     enable = lib.mkEnableOption "distributed Nix builds over Tailscale";
 
     keyFile = lib.mkOption {
-      type = with lib.types; either path str;
+      type = with lib.types; nullOr (either path str);
+      default = null;
       description = "Path to the SSH private key used to connect to remote builders";
       example = "/run/secrets/nix-builder-ssh";
     };
@@ -42,24 +43,32 @@ in {
         assertion = config.tailscale.tailnet != "";
         message = "tailscale.tailnet must be set when distributed-builds is enabled";
       }
+      {
+        assertion = isBuilder || cfg.keyFile != null;
+        message = "distributed-builds.keyFile must be set for client build machines";
+      }
     ];
+
     nix = {
-      distributedBuilds = true;
-      extraOptions = ''
+      # Build servers (Michael and Zita) build locally and never delegate to remote machines.
+      # Only client hosts distribute builds to the build servers.
+      distributedBuilds = !isBuilder;
+      extraOptions = lib.mkIf (!isBuilder) ''
         builders-use-substitutes = true
       '';
-      buildMachines = lib.mapAttrsToList mkBuildMachine otherBuilders;
+      buildMachines = lib.mkIf (!isBuilder) (lib.mapAttrsToList mkBuildMachine builders);
     };
 
+    # Only designated build servers accept incoming build jobs over SSH.
     nix.sshServe = {
-      enable = true;
+      enable = isBuilder;
       write = true;
       trusted = true;
       keys = [keys.users.builder];
       protocol = "ssh-ng";
     };
 
-    systemd.tmpfiles.rules = [
+    systemd.tmpfiles.rules = lib.mkIf (!isBuilder) [
       "d /root/.ssh 0700 root root -"
     ];
   };
