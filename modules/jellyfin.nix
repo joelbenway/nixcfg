@@ -139,6 +139,9 @@ in {
 
     # Allow access to Nvidia device nodes in systemd sandbox when using nvenc
     systemd.services.jellyfin = {
+      preStart = lib.mkBefore ''
+        mkdir -p "${cfg.configDir}" "${cfg.logDir}" "${cfg.cacheDir}"
+      '';
       serviceConfig = lib.mkIf (cfg.hardwareAcceleration.enable && cfg.hardwareAcceleration.type == "nvenc") {
         DeviceAllow = [
           "/dev/nvidiactl rw"
@@ -172,9 +175,17 @@ in {
       }
     ];
 
-    systemd.tmpfiles.rules = lib.mkIf config.impermanence.enable [
-      "d /persist${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
-      "Z /persist${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
-    ];
+    systemd.tmpfiles.rules =
+      [
+        "d ${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.configDir} 0700 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.cacheDir} 0700 ${cfg.user} ${cfg.group} -"
+        "d ${cfg.logDir} 0700 ${cfg.user} ${cfg.group} -"
+      ]
+      ++ lib.optionals config.impermanence.enable [
+        "d /persist${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
+        "d /persist${cfg.configDir} 0700 ${cfg.user} ${cfg.group} -"
+        "Z /persist${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
+      ];
   };
 }
