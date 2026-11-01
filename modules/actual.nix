@@ -4,6 +4,7 @@
   config,
   inputs,
   lib,
+  pkgs,
   ...
 }: let
   cfg = config.actual;
@@ -40,7 +41,7 @@ in {
 
       port = lib.mkOption {
         type = lib.types.port;
-        default = 8085;
+        default = 8086;
         description = "Port for the gone-to-plaid web dashboard and API";
       };
 
@@ -120,13 +121,30 @@ in {
 
       # Persist data directory across reboots when impermanence is enabled
       impermanence.directories = lib.mkIf config.impermanence.enable [
-        plaidCfg.dataDir
+        {
+          directory = plaidCfg.dataDir;
+          user = "plaid-sync";
+          group = "plaid-sync";
+          mode = "0750";
+        }
       ];
 
       # Ensure dataDir exists with correct ownership and permissions
       systemd.tmpfiles.rules = [
         "d ${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
+        "Z ${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
+        "d /persist${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
+        "Z /persist${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
       ];
+
+      # Order background sync pass after daemon is up, with retry logic on curl
+      systemd.services.gone-to-plaid-run = {
+        after = ["gone-to-plaid.service"];
+        wants = ["gone-to-plaid.service"];
+        serviceConfig = {
+          ExecStart = lib.mkForce "${pkgs.curl}/bin/curl -s --retry 5 --retry-connrefused --retry-delay 2 -X POST http://127.0.0.1:${toString plaidCfg.port}/api/sync";
+        };
+      };
     })
   ];
 }
