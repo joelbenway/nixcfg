@@ -8,6 +8,7 @@
   imports = [inputs.nixos-hardware.nixosModules.common-gpu-nvidia-nonprime];
 
   hardware = {
+    graphics.enable = true;
     nvidia = {
       # The open source driver does not support Maxwell GPUs.
       open = false;

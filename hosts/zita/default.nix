@@ -202,12 +202,24 @@ in {
     };
   }; # actual
 
+  jellyfin = {
+    enable = true;
+    port = 8096;
+    mediaDir = "/storage/media";
+    hardwareAcceleration = {
+      enable = true;
+      type = "nvenc";
+      device = "/dev/dri/renderD128";
+    };
+  }; # jellyfin
+
   networking.firewall.allowedTCPPorts = [
     80
     443
     3923
     5006
-    8085
+    8086
+    8097
   ];
 
   services.caddy = {
@@ -250,6 +262,7 @@ in {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
         import tailscale_auth
+        header Cross-Origin-Resource-Policy cross-origin
         reverse_proxy 127.0.0.1:5005 {
           header_up x-actual-password {actual_pw}
         }
@@ -261,6 +274,14 @@ in {
         }
         import tailscale_auth
         reverse_proxy 127.0.0.1:8084
+      }
+
+      jellyfin.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:8096
       }
 
       ${hostname}.${config.tailscale.tailnet} {
@@ -276,14 +297,20 @@ in {
 
       ${hostname}.${config.tailscale.tailnet}:5006 {
         import tailscale_auth
+        header Cross-Origin-Resource-Policy cross-origin
         reverse_proxy 127.0.0.1:5005 {
           header_up x-actual-password {actual_pw}
         }
       }
 
-      ${hostname}.${config.tailscale.tailnet}:8085 {
+      ${hostname}.${config.tailscale.tailnet}:8086 {
         import tailscale_auth
         reverse_proxy 127.0.0.1:8084
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:8097 {
+        import tailscale_auth
+        reverse_proxy 127.0.0.1:8096
       }
     '';
   };
