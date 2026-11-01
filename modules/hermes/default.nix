@@ -119,6 +119,12 @@ in {
 
     environment.systemPackages = [
       rebuildScript
+      (pkgs.writeShellScriptBin "hermes-chat" ''
+        exec sudo -u hermes hermes chat "$@"
+      '')
+      (pkgs.writeShellScriptBin "hermes-cli" ''
+        exec sudo -u hermes hermes "$@"
+      '')
     ];
 
     # Blast Radius: Only the leaf file is writable by the hermes user/group
@@ -126,7 +132,8 @@ in {
       "z ${cfg.repoPath}/modules/hermes/agent-env.nix 0664 hermes hermes - -"
     ];
 
-    # Privilege Separation: Only allow rebuild-agent-env via sudo without password
+    # Privilege Separation: Only allow rebuild-agent-env via sudo without password,
+    # and allow wheel users to interact with the hermes gateway user without password
     security.sudo.extraRules = [
       {
         users = ["hermes"];
@@ -137,6 +144,16 @@ in {
           }
           {
             command = "/run/current-system/sw/bin/rebuild-agent-env";
+            options = ["NOPASSWD"];
+          }
+        ];
+      }
+      {
+        groups = ["wheel"];
+        runAs = "hermes";
+        commands = [
+          {
+            command = "ALL";
             options = ["NOPASSWD"];
           }
         ];
@@ -290,7 +307,7 @@ in {
 
         # Allow hermes to modify the leaf module within the sandboxed namespace
         ReadWritePaths = [
-          "${cfg.repoPath}/modules/hermes/agent-env.nix"
+          "-${cfg.repoPath}/modules/hermes/agent-env.nix"
         ];
       };
     };
