@@ -119,11 +119,38 @@ in {
 
     environment.systemPackages = [
       rebuildScript
+      pkgs.signal-cli
+      pkgs.qrencode
       (pkgs.writeShellScriptBin "hermes-chat" ''
         exec sudo -u hermes hermes chat "$@"
       '')
       (pkgs.writeShellScriptBin "hermes-cli" ''
         exec sudo -u hermes hermes "$@"
+      '')
+      (pkgs.writeShellScriptBin "signal-cli" ''
+        if [[ "$*" == *"--config"* ]]; then
+          exec sudo -u hermes ${pkgs.signal-cli}/bin/signal-cli "$@"
+        else
+          exec sudo -u hermes ${pkgs.signal-cli}/bin/signal-cli --config /var/lib/signal-cli "$@"
+        fi
+      '')
+      (pkgs.writeShellScriptBin "signal-link" ''
+        NAME="''${1:-Hermes-Zita}"
+        echo "==> Generating Signal device link for ''${NAME}..."
+        echo "==> Open Signal on your phone -> Settings -> Linked Devices -> Add Device (+)"
+        sudo -u hermes ${pkgs.signal-cli}/bin/signal-cli --config /var/lib/signal-cli link -n "''${NAME}" | while read -r line; do
+          echo "$line"
+          if [[ "$line" =~ sgnl://linkdevice\?.* ]]; then
+            URI="''${BASH_REMATCH[0]}"
+            echo ""
+            echo "Scan this QR code in Signal:"
+            ${pkgs.qrencode}/bin/qrencode -t ansiutf8 "$URI" || true
+            echo ""
+            echo "Raw link: $URI"
+          fi
+        done
+        echo "==> Device linked! Restarting signal-cli service..."
+        sudo systemctl restart signal-cli.service
       '')
     ];
 
