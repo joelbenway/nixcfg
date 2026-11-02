@@ -22,5 +22,9 @@ let
     michael = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUhad085YlRPclhzc0tQekxYOGZ5bWt6TmkrSm9LTUJrWmxTMC9Lbk1XZHk=";
     zita = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUVVUnpTNTd4RVk2NnhrVFA1R0VKU2htWHJzZDhQTzA2em5xcXN2b0VleDQ=";
   };
+
+  binaryCache = {
+    zita = "zita-cache-1:NZnUaNEPyAcPpeqdhZscnTzryEAw1mqA37W7v18lDWQ=";
+  };
 in
-  users // hosts // {inherit users hosts hostsBase64;}
+  users // hosts // {inherit users hosts hostsBase64 binaryCache;}

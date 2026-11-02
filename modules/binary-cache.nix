@@ -6,6 +6,7 @@
   ...
 }: let
   cfg = config.binary-cache;
+  keys = import (lib.custom.relativeToRoot "data/keys.nix");
 in {
   options.binary-cache = {
     server = {
@@ -42,7 +43,9 @@ in {
       };
       trustedPublicKeys = lib.mkOption {
         type = with lib.types; listOf str;
-        default = [];
+        default = [
+          keys.binaryCache.zita
+        ];
         description = "Public keys trusted to sign binaries from local substituters";
       };
     };

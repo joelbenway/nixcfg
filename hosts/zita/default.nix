@@ -70,6 +70,12 @@ in {
         owner = "plaid-sync";
         group = "plaid-sync";
       };
+      zita-cache-priv-key = {
+        file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
     }; # secrets
   }; # age
 
@@ -101,6 +107,7 @@ in {
 
   binary-cache.server = {
     enable = true;
+    signKeyPath = config.age.secrets.zita-cache-priv-key.path;
   };
 
   joel = {
