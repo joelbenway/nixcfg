@@ -31,7 +31,7 @@ jobs:
         run: nix flake update
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@271a8d0f68c164746f096eb252d43a60a3e813f2 # v7.0.8
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
         with:
           token: ${{ secrets.GH_PAT || secrets.AUTOMATION_TOKEN || secrets.GITHUB_TOKEN }}
           commit-message: "chore(flake): update inputs in flake.lock"
