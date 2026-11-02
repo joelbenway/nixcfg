@@ -290,7 +290,6 @@ in {
     enableContainers = true;
     extraModulePackages = [];
     initrd = {
-      systemd.enable = true;
       availableKernelModules = [
         "xhci_pci"
         "ahci"
