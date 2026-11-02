@@ -308,12 +308,13 @@ in {
         ExecStartPre = [
           ("+"
             + (pkgs.writeShellScript "signal-cli-credentials-setup" ''
-              if [ ! -d /var/lib/signal-cli/data ] && [ -d /home/joel/.local/share/signal-cli/data ]; then
+              if [ -d /home/joel/.local/share/signal-cli/data ] && [ ! -f /var/lib/signal-cli/data/accounts.json ]; then
                 echo "==> Migrating Signal credentials from /home/joel/.local/share/signal-cli to /var/lib/signal-cli..."
-                cp -r /home/joel/.local/share/signal-cli/* /var/lib/signal-cli/
-                chown -R hermes:hermes /var/lib/signal-cli
-                chmod -R 0700 /var/lib/signal-cli
+                mkdir -p /var/lib/signal-cli
+                cp -rn /home/joel/.local/share/signal-cli/* /var/lib/signal-cli/ || true
               fi
+              chown -R hermes:hermes /var/lib/signal-cli
+              chmod -R 0700 /var/lib/signal-cli
             ''))
         ];
         EnvironmentFile = cfg.environmentFiles;
