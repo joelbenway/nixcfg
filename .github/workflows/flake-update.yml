@@ -28,7 +28,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Update flake.lock
-        run: nix flake update
+        run: |
+          sed -i '/self.submodules = true;/d' flake.nix
+          nix flake update
+          git checkout flake.nix
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
