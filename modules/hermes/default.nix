@@ -127,8 +127,11 @@ in {
       '')
     ];
 
-    # Blast Radius: Only the leaf file is writable by the hermes user/group
+    # Blast Radius: Only the leaf file is writable by the hermes user/group,
+    # and ~/.hermes must not have group-writable permissions (mode 0700)
     systemd.tmpfiles.rules = [
+      "d /var/lib/hermes 0750 hermes hermes - -"
+      "d /var/lib/hermes/.hermes 0700 hermes hermes - -"
       "z ${cfg.repoPath}/modules/hermes/agent-env.nix 0664 hermes hermes - -"
     ];
 
