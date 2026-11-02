@@ -86,6 +86,7 @@ in {
       "/var/lib/samba"
       "/var/lib/containers"
       "/var/lib/hermes"
+      "/var/lib/signal-cli"
       "/var/lib/private/actual"
       "/var/lib/caddy"
     ];
