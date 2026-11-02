@@ -102,6 +102,12 @@ in {
         default = config.networking.hostName;
         description = "Target host name in the flake nixosConfigurations.";
       };
+      registrationBackup = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to decrypted agenix tarball backup of signal-cli data directory.";
+        example = literalExpression ''config.age.secrets.signal-data.path'';
+      };
     }; # hermes
   }; # options
 
@@ -308,10 +314,19 @@ in {
         ExecStartPre = [
           ("+"
             + (pkgs.writeShellScript "signal-cli-credentials-setup" ''
-              if [ -d /home/joel/.local/share/signal-cli/data ] && [ ! -f /var/lib/signal-cli/data/accounts.json ]; then
-                echo "==> Migrating Signal credentials from /home/joel/.local/share/signal-cli to /var/lib/signal-cli..."
-                mkdir -p /var/lib/signal-cli
-                cp -rn /home/joel/.local/share/signal-cli/* /var/lib/signal-cli/ || true
+              if [ ! -f /var/lib/signal-cli/data/accounts.json ]; then
+                ${lib.optionalString (cfg.registrationBackup != null) ''
+                if [ -f "${cfg.registrationBackup}" ]; then
+                  echo "==> Restoring Signal registration data from ${cfg.registrationBackup}..."
+                  mkdir -p /var/lib/signal-cli
+                  ${pkgs.gnutar}/bin/tar -xzf "${cfg.registrationBackup}" -C /var/lib/signal-cli
+                fi
+              ''}
+                if [ ! -f /var/lib/signal-cli/data/accounts.json ] && [ -d /home/joel/.local/share/signal-cli/data ]; then
+                  echo "==> Migrating Signal credentials from /home/joel/.local/share/signal-cli to /var/lib/signal-cli..."
+                  mkdir -p /var/lib/signal-cli
+                  cp -rn /home/joel/.local/share/signal-cli/* /var/lib/signal-cli/ || true
+                fi
               fi
               chown -R hermes:hermes /var/lib/signal-cli
               chmod -R 0700 /var/lib/signal-cli

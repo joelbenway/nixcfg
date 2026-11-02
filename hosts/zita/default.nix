@@ -76,6 +76,13 @@ in {
         owner = "root";
         group = "root";
       };
+      signal-data = {
+        file = lib.custom.relativeToRoot "secrets/signal-data.tar.gz.age";
+        name = "signal-data.tar.gz";
+        mode = "440";
+        owner = "hermes";
+        group = "hermes";
+      };
     }; # secrets
   }; # age
 
@@ -144,6 +151,7 @@ in {
     environmentFiles = [
       config.age.secrets.hermes-env.path
     ];
+    registrationBackup = config.age.secrets.signal-data.path;
   }; # hermes
 
   # Samba Configuration
