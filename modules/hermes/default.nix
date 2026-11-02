@@ -106,7 +106,7 @@ in {
         type = types.nullOr types.path;
         default = null;
         description = "Path to decrypted agenix tarball backup of signal-cli data directory.";
-        example = literalExpression ''config.age.secrets.signal-data.path'';
+        example = literalExpression ''config.age.secrets.hermes-signal-data.path'';
       };
     }; # hermes
   }; # options
