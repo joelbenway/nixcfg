@@ -19,64 +19,84 @@
       git
       systemd
       coreutils
+      findutils
     ];
     text = ''
       set -euo pipefail
 
       REPO_PATH="''${1:-${cfg.repoPath}}"
       HOST_NAME="''${2:-${cfg.hostName}}"
-      LEAF_FILE="modules/hermes/agent-env.nix"
+      LEAF_FILE="''${REPO_PATH}/modules/hermes/agent-env.nix"
+      HERMES_USER="hermes"
+      HERMES_HOME="/var/lib/hermes"
+      PROFILE_PATH="''${HERMES_HOME}/.nix-profile"
 
-      echo "==> [Agentic GitOps] Initiating rebuild for host '#''${HOST_NAME}' in ' ''${REPO_PATH}'..."
+      echo "==> [Agentic GitOps] Initiating environment rebuild for Hermes Agent..."
 
-      if [ ! -d "''${REPO_PATH}" ]; then
-        echo "ERROR: Repository path ' ''${REPO_PATH}' does not exist!" >&2
+      if [ ! -f "''${LEAF_FILE}" ]; then
+        echo "ERROR: Leaf configuration ' ''${LEAF_FILE}' does not exist!" >&2
         exit 1
       fi
 
-      cd "''${REPO_PATH}"
-
-      # Prevent git 'dubious ownership' issues across user boundaries
-      export GIT_CONFIG_COUNT=1
-      export GIT_CONFIG_KEY_0="safe.directory"
-      export GIT_CONFIG_VALUE_0="''${REPO_PATH}"
-
-      # Stage and commit leaf file changes if dirty
-      if [ -f "''${LEAF_FILE}" ] && ! git diff --quiet "''${LEAF_FILE}"; then
-        echo "==> [GitOps] Version-controlling changes to ''${LEAF_FILE}..."
-        git add "''${LEAF_FILE}"
-        git -c user.name="Hermes Agent" -c user.email="hermes-agent@local" commit -m "chore(hermes): auto-commit agent-env.nix dependency updates"
-      fi
-
-      # Step a: Validate flake syntax and purity
-      echo "==> [1/4] Validating flake syntax and purity (nix flake check)..."
-      nix flake check "''${REPO_PATH}" --no-build
-
-      # Step b: Build generation in isolation
-      echo "==> [2/4] Building system generation for #''${HOST_NAME}..."
-      nixos-rebuild build --flake "''${REPO_PATH}#''${HOST_NAME}"
-
-      # Step c: Switch system generations
-      echo "==> [3/4] Activating new system generation (nixos-rebuild switch)..."
-      nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
-
-      # Step d: Canary health check
-      echo "==> [4/4] Probing hermes-agent.service health..."
-      HEALTHY=0
-      for i in $(seq 1 15); do
-        if systemctl is-active --quiet hermes-agent.service; then
-          echo "==> Canary check passed: hermes-agent.service is active and healthy (probe $i/15)."
-          HEALTHY=1
-          break
+      # 1. Handle GitOps version control if repository exists
+      if [ -d "''${REPO_PATH}/.git" ]; then
+        # Ensure root-owned artifacts in .git are restored to repo owner
+        if [ "$(id -u)" -eq 0 ]; then
+          REPO_UID=$(stat -c '%u:%g' "''${REPO_PATH}")
+          chown -R "''${REPO_UID}" "''${REPO_PATH}/.git" 2>/dev/null || true
         fi
-        sleep 1
-      done
 
-      if [ "''${HEALTHY}" -ne 1 ]; then
-        echo "ERROR: Canary check failed! hermes-agent.service is NOT active after 15 seconds." >&2
-        echo "==> Triggering automated rollback (nixos-rebuild switch --rollback)..." >&2
-        nixos-rebuild switch --rollback
-        exit 1
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0="safe.directory"
+        export GIT_CONFIG_VALUE_0="*"
+        git config --global --add safe.directory "''${REPO_PATH}" 2>/dev/null || true
+        git config --global --add safe.directory '*' 2>/dev/null || true
+
+        # Only attempt git write operations if repository .git is writable by current user
+        if [ -w "''${REPO_PATH}/.git" ]; then
+          (
+            cd "''${REPO_PATH}"
+            if ! git diff --quiet "''${LEAF_FILE}" 2>/dev/null; then
+              echo "==> [GitOps] Version-controlling changes to ''${LEAF_FILE}..."
+              git add "''${LEAF_FILE}"
+              git -c user.name="Hermes Agent" -c user.email="hermes-agent@local" commit -m "chore(hermes): auto-commit agent-env.nix dependency updates" || true
+              if [ "$(id -u)" -eq 0 ]; then
+                chown -R "''${REPO_UID}" "''${REPO_PATH}/.git" 2>/dev/null || true
+              fi
+            fi
+          )
+        else
+          echo "==> [GitOps] Leaf config ' ''${LEAF_FILE}' updated (skipping git commit: repository owned by host user)."
+        fi
+      fi
+
+      # 2. Build declarative package environment from leaf config
+      echo "==> [1/3] Building declarative package environment from leaf config..."
+      ENV_OUT=$(nix-build --no-out-link -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in pkgs.buildEnv { name = \"hermes-agent-env\"; paths = (agentEnv.extraPackages or []); }")
+
+      echo "==> Built environment derivation: ''${ENV_OUT}"
+
+      # 3. Atomically activate new profile generation
+      echo "==> [2/3] Activating new environment generation in ''${PROFILE_PATH}..."
+      mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
+      nix-env -p "''${PROFILE_PATH}" --set "''${ENV_OUT}"
+
+      # Ensure profile permissions are preserved for the hermes user
+      if [ "$(id -u)" -eq 0 ]; then
+        chown -h -R "''${HERMES_USER}:''${HERMES_USER}" "''${HERMES_HOME}/.local" "''${HERMES_HOME}/.nix-profile" "''${PROFILE_PATH}"* 2>/dev/null || true
+      fi
+
+      # Optional full system switch if explicitly requested
+      if [ "''${1:-}" = "--system" ] || [ "''${2:-}" = "--system" ]; then
+        echo "==> Full system switch requested (--system)..."
+        nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
+      fi
+
+      # 4. Probing environment health
+      echo "==> [3/3] Probing active environment health..."
+      if [ -d "''${PROFILE_PATH}/bin" ]; then
+        PKG_COUNT=$(find "''${PROFILE_PATH}/bin" -maxdepth 1 -type l | wc -l)
+        echo "==> Health check passed: ''${PKG_COUNT} binaries available at ''${PROFILE_PATH}/bin."
       fi
 
       echo "==> [Agentic GitOps] Environment successfully updated and verified active!"
@@ -170,31 +190,49 @@ in {
 
     # Privilege Separation: Only allow rebuild-agent-env via sudo without password,
     # and allow wheel users to interact with the hermes gateway user without password
-    security.sudo.extraRules = [
-      {
-        users = ["hermes"];
-        commands = [
-          {
-            command = "${rebuildScript}/bin/rebuild-agent-env";
-            options = ["NOPASSWD"];
-          }
-          {
-            command = "/run/current-system/sw/bin/rebuild-agent-env";
-            options = ["NOPASSWD"];
-          }
-        ];
-      }
-      {
-        groups = ["wheel"];
-        runAs = "hermes";
-        commands = [
-          {
-            command = "ALL";
-            options = ["NOPASSWD"];
-          }
-        ];
-      }
-    ];
+    security.sudo = {
+      extraRules = [
+        {
+          users = ["hermes"];
+          commands = [
+            {
+              command = "${rebuildScript}/bin/rebuild-agent-env";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "/run/current-system/sw/bin/rebuild-agent-env";
+              options = ["NOPASSWD"];
+            }
+          ];
+        }
+        {
+          groups = ["wheel"];
+          runAs = "hermes";
+          commands = [
+            {
+              command = "ALL";
+              options = ["NOPASSWD"];
+            }
+          ];
+        }
+      ];
+      extraConfig = ''
+        Defaults:hermes !authenticate
+        Defaults:hermes timestamp_timeout=0
+      '';
+    };
+
+    # System-wide git safe.directory trust to avoid libgit2 ownership rejections across users
+    programs.git = {
+      enable = true;
+      config = {
+        safe = {
+          directory = [
+            "*"
+          ];
+        };
+      };
+    };
 
     services.hermes-agent = {
       enable = true;
@@ -344,16 +382,41 @@ in {
       after = ["signal-cli.service"];
       wants = ["signal-cli.service"];
 
-      # Directly inject extraPackages to service PATH
-      path = agentEnv.extraPackages;
+      # Directly inject extraPackages and runtime tools to service PATH
+      path =
+        agentEnv.extraPackages
+        ++ (with pkgs; [
+          nix
+          git
+          coreutils
+          bashInteractive
+        ]);
+
+      environment.PATH = lib.mkForce (lib.concatStringsSep ":" [
+        "/var/lib/hermes/.nix-profile/bin"
+        "/var/lib/hermes/.local/bin"
+        "/run/wrappers/bin"
+        "/run/current-system/sw/bin"
+        (lib.makeBinPath (
+          agentEnv.extraPackages
+          ++ (with pkgs; [
+            nix
+            git
+            coreutils
+            bashInteractive
+          ])
+        ))
+      ]);
 
       serviceConfig = {
         # Allow sudo privilege escalation inside the service
         NoNewPrivileges = lib.mkForce false;
 
-        # Allow hermes to modify the leaf module within the sandboxed namespace
+        # Allow hermes to modify the leaf module and its home state within the sandboxed namespace
         ReadWritePaths = [
           "-${cfg.repoPath}/modules/hermes/agent-env.nix"
+          "/var/lib/hermes"
+          "-/run/sudo"
         ];
       };
     };

@@ -7,6 +7,7 @@
     ffmpeg
     jq
     curl
+    opencode
   ];
 
   # Runtime overrides for Hermes's configuration
