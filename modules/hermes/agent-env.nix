@@ -8,6 +8,7 @@
     jq
     curl
     opencode
+    pipx
   ];
 
   # Runtime overrides for Hermes's configuration
@@ -18,6 +19,11 @@
   #   Compression:          nvidia (nvidia/nemotron-3.5-lightning-30b-a3b) - $0.00
   #   Fallbacks:            GLM 5.3 Flash ($0.00) -> Nemotron 3.5 Lightning ($0.00) -> Gemma 4 31B ($0.00) -> DeepSeek Flash (paid failover) -> Local Offline
   extraSettings = {
+    # Memory provider: Mnemosyne (local-first, SQLite, Hermes-native)
+    memory = {
+      provider = "mnemosyne";
+    };
+
     # You can customize or override any specific role below:
 
     # If you ever want to re-enable DeepSeek V4.1 Flash for pure code synthesis:
