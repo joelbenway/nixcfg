@@ -97,6 +97,27 @@ in {
           trustedAuthProxies = ["127.0.0.1/32" "::1/128"];
         };
       };
+
+      systemd.services.actual = {
+        preStart = lib.mkAfter ''
+                    DB_FILE="${cfg.dataDir}/server-files/account.sqlite"
+                    if [[ -f "$DB_FILE" ]]; then
+                      HAS_AUTH=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='auth';" 2>/dev/null || echo 0)
+                      if [[ "$HAS_AUTH" -eq 1 ]]; then
+                        ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" <<'EOF'
+          INSERT INTO auth (method, display_name, active)
+          SELECT 'header', 'Header', 1
+          WHERE EXISTS (SELECT 1 FROM auth WHERE method = 'password')
+          ON CONFLICT (method) DO UPDATE SET active = 1;
+
+          UPDATE auth SET active = 0
+          WHERE method = 'password'
+            AND EXISTS (SELECT 1 FROM auth WHERE method = 'header' AND active = 1);
+          EOF
+                      fi
+                    fi
+        '';
+      };
     })
 
     (lib.mkIf plaidCfg.enable {
