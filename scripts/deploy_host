@@ -196,7 +196,9 @@ if [ "$ASK_PASSWORD" = false ]; then
   ELEVATE_FLAG="--elevate=sudo"
 fi
 
-REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG")
+NIX_OPTIONS=(--option extra-trusted-public-keys "zita-cache-1:NZnUaNEPyAcPpeqdhZscnTzryEAw1mqA37W7v18lDWQ=")
+
+REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG" "${NIX_OPTIONS[@]}")
 
 if [[ -n "$BUILD_HOST" ]]; then
   REBUILD_CMD+=(--build-host "$BUILD_HOST")
@@ -271,7 +273,7 @@ if [ "$TEST_ONLY" = true ]; then
 fi
 
 info "Persisting configuration to bootloader via 'nixos-rebuild switch'..."
-SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG")
+SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG" "${NIX_OPTIONS[@]}")
 if [[ -n "$BUILD_HOST" ]]; then
   SWITCH_CMD+=(--build-host "$BUILD_HOST")
 fi
