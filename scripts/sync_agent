@@ -1,0 +1,88 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p bash coreutils openssh git
+# shellcheck shell=bash
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+
+TARGET_HOST="${1:-zita}"
+REMOTE_USER="${USER}"
+AGENT_LEAF="modules/hermes/agent-env.nix"
+REMOTE_REPO="/home/joel/Projects/nixcfg"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+info() {
+  echo -e "${BLUE}==>${NC} $*"
+}
+
+success() {
+  echo -e "${GREEN}==>${NC} $*"
+}
+
+warn() {
+  echo -e "${YELLOW}==>${NC} $*"
+}
+
+error() {
+  echo -e "${RED}ERROR:${NC} $*" >&2
+}
+
+SSH_TARGET="${REMOTE_USER}@${TARGET_HOST}"
+
+info "Fetching agent updates from ${TARGET_HOST}..."
+if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" "test -d ${REMOTE_REPO}/.git" &>/dev/null; then
+  error "Unable to access git repository on ${TARGET_HOST} (${SSH_TARGET}:${REMOTE_REPO})."
+  exit 1
+fi
+
+# Fetch remote refs into local tracking refs
+git -C "${ROOT_DIR}" fetch "ssh://${SSH_TARGET}${REMOTE_REPO}" "+refs/heads/*:refs/remotes/${TARGET_HOST}/*"
+
+# Check both hermes/agent-env and master refs
+REMOTE_REF=""
+if git -C "${ROOT_DIR}" rev-parse --verify "refs/remotes/${TARGET_HOST}/hermes/agent-env" &>/dev/null; then
+  REMOTE_REF="refs/remotes/${TARGET_HOST}/hermes/agent-env"
+elif git -C "${ROOT_DIR}" rev-parse --verify "refs/remotes/${TARGET_HOST}/master" &>/dev/null; then
+  REMOTE_REF="refs/remotes/${TARGET_HOST}/master"
+fi
+
+if [[ -z "${REMOTE_REF}" ]]; then
+  info "No agent branch found on ${TARGET_HOST}."
+  exit 0
+fi
+
+UNAPPLIED_COMMITS=()
+for c in $(git -C "${ROOT_DIR}" rev-list --reverse HEAD.."${REMOTE_REF}" -- "${AGENT_LEAF}" 2>/dev/null || true); do
+  if git -C "${ROOT_DIR}" cherry HEAD "${c}" 2>/dev/null | grep -q '^+'; then
+    UNAPPLIED_COMMITS+=("${c}")
+  fi
+done
+
+if [[ ${#UNAPPLIED_COMMITS[@]} -eq 0 ]]; then
+  success "Local repository is already in sync with ${TARGET_HOST} (no unmerged agent updates)."
+  exit 0
+fi
+
+warn "Found ${#UNAPPLIED_COMMITS[@]} unmerged agent commit(s) on ${TARGET_HOST}:"
+for c in "${UNAPPLIED_COMMITS[@]}"; do
+  git -C "${ROOT_DIR}" log -1 --format="  %h %s (%an, %cr)" "${c}"
+done
+
+info "Cherry-picking updates into local repository..."
+for c in "${UNAPPLIED_COMMITS[@]}"; do
+  git -C "${ROOT_DIR}" cherry-pick "${c}" || {
+    error "Conflict while cherry-picking ${c}! Resolve conflict or abort, then re-run sync_agent."
+    exit 1
+  }
+done
+
+success "Successfully ingested agent updates from ${TARGET_HOST}!"

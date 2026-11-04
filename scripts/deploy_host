@@ -145,6 +145,49 @@ if [[ "$REMOTE_SHORT" != "$TARGET_HOST" ]]; then
 fi
 info "Connected to remote host: ${REMOTE_HOSTNAME}"
 
+# Check if target host has local agent-env updates (e.g. from Hermes Agent)
+AGENT_LEAF="modules/hermes/agent-env.nix"
+REMOTE_REPO="/home/joel/Projects/nixcfg"
+if run_ssh "test -d ${REMOTE_REPO}/.git" &>/dev/null; then
+  info "Checking for remote agent updates on ${TARGET_HOST}..."
+  git -C "${ROOT_DIR}" fetch "ssh://${SSH_TARGET}${REMOTE_REPO}" "+refs/heads/*:refs/remotes/${TARGET_HOST}/*" &>/dev/null || true
+
+  REMOTE_REF=""
+  if git -C "${ROOT_DIR}" rev-parse --verify "refs/remotes/${TARGET_HOST}/hermes/agent-env" &>/dev/null; then
+    REMOTE_REF="refs/remotes/${TARGET_HOST}/hermes/agent-env"
+  elif git -C "${ROOT_DIR}" rev-parse --verify "refs/remotes/${TARGET_HOST}/master" &>/dev/null; then
+    REMOTE_REF="refs/remotes/${TARGET_HOST}/master"
+  fi
+
+  if [[ -n "${REMOTE_REF}" ]]; then
+    UNAPPLIED_COMMITS=()
+    for c in $(git -C "${ROOT_DIR}" rev-list --reverse HEAD.."${REMOTE_REF}" -- "${AGENT_LEAF}" 2>/dev/null || true); do
+      if git -C "${ROOT_DIR}" cherry HEAD "${c}" 2>/dev/null | grep -q '^+'; then
+        UNAPPLIED_COMMITS+=("${c}")
+      fi
+    done
+
+    if [[ ${#UNAPPLIED_COMMITS[@]} -gt 0 ]]; then
+      warn "Found ${#UNAPPLIED_COMMITS[@]} unmerged agent commit(s) on ${TARGET_HOST}:"
+      for c in "${UNAPPLIED_COMMITS[@]}"; do
+        git -C "${ROOT_DIR}" log -1 --format="  %h %s (%an, %cr)" "${c}"
+      done
+
+      read -rp "==> Ingest remote agent changes into local repository before deploying? [Y/n] " INGEST_REPLY
+      if [[ ! "$INGEST_REPLY" =~ ^[Nn] ]]; then
+        info "Cherry-picking remote agent changes..."
+        for c in "${UNAPPLIED_COMMITS[@]}"; do
+          git -C "${ROOT_DIR}" cherry-pick "${c}" || {
+            error "Conflict while cherry-picking ${c}! Resolve conflict, then re-run deploy_host."
+            exit 1
+          }
+        done
+        success "Ingested remote agent updates into local repository."
+      fi
+    fi
+  fi
+fi
+
 # 2. Stage deployment with 'test'
 info "Deploying configuration to ${TARGET_HOST} via 'nixos-rebuild test'..."
 
@@ -258,6 +301,12 @@ else
     error "Post-finalization health check failed: system state is '${STATE}' on ${TARGET_HOST}!"
     rollback
   fi
+fi
+
+# Sync remote git repo with master so target doesn't stay on diverged branch
+if run_ssh "test -d ${REMOTE_REPO}/.git" &>/dev/null; then
+  info "Synchronizing remote git repository on ${TARGET_HOST}..."
+  run_ssh "cd ${REMOTE_REPO} && git checkout master && git fetch origin master && git reset --hard origin/master" &>/dev/null || true
 fi
 
 success "Successfully deployed and finalized update on ${TARGET_HOST}!"
