@@ -91,11 +91,6 @@ in {
 
   syncthing.enable = true;
 
-  llm = {
-    enable = true;
-    hw.extraFlags = ["--threads" "5"];
-  }; # llm
-
   hardware.bluetooth.enable = true;
 
   secureboot.enable = true;

@@ -53,6 +53,11 @@
       url = "github:joelbenway/gone-to-plaid";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    hex = {
+      url = "github:anomalyco/hex";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
+    };
   };
 
   outputs = {
@@ -91,7 +96,7 @@
             {
               home-manager.useGlobalPkgs = true;
               home-manager.useUserPackages = true;
-              home-manager.sharedModules = hmModules;
+              home-manager.sharedModules = [inputs.hex.homeManagerModules.hex] ++ hmModules;
             }
           ]
           ++ extraModules;

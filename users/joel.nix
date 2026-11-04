@@ -162,6 +162,15 @@ in
         };
       };
 
+      hex = {
+        enable = config.${username}.desktop;
+        users.${username} = {
+          enable = true;
+          autostart = true;
+          installModel = true;
+        };
+      };
+
       devenvshell.enable = true;
 
       programs.appimage = {

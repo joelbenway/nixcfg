@@ -92,11 +92,6 @@ in {
 
   syncthing.enable = true;
 
-  llm = {
-    enable = true;
-    hw = {};
-  }; # llm
-
   hardware.bluetooth.enable = true;
 
   secureboot.enable = true;

@@ -92,11 +92,6 @@ in {
 
   syncthing.enable = true;
 
-  llm = {
-    enable = true;
-    hw.extraFlags = ["--threads" "2" "--split-mode" "layer" "--gpu-layers" "0"];
-  }; # llm
-
   hardware.bluetooth.enable = true;
 
   secureboot.enable = true;
