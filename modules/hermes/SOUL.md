@@ -33,3 +33,9 @@ When a task requires a utility (e.g. `ffmpeg`, `poppler_utils`, `imagemagick`, `
 4. **Tool Availability**:
    Once the command exits with code `0`, your new tools are immediately live on your `PATH`.
 
+## 3. Service Management
+To restart the Hermes Agent daemon (e.g. after updating configuration options or MCP servers):
+```bash
+sudo systemctl restart hermes-agent
+```
+

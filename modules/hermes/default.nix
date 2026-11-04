@@ -58,6 +58,11 @@
             cd "''${REPO_PATH}"
             if ! git diff --quiet "''${LEAF_FILE}" 2>/dev/null; then
               echo "==> [GitOps] Version-controlling changes to ''${LEAF_FILE}..."
+              AGENT_BRANCH="hermes/agent-env"
+              CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+              if [ "$CURRENT_BRANCH" != "$AGENT_BRANCH" ]; then
+                git checkout -B "$AGENT_BRANCH" 2>/dev/null || true
+              fi
               git add "''${LEAF_FILE}"
               git -c user.name="Hermes Agent" -c user.email="hermes-agent@local" commit -m "chore(hermes): auto-commit agent-env.nix dependency updates" || true
               if [ "$(id -u)" -eq 0 ]; then
@@ -195,6 +200,22 @@ in {
             }
             {
               command = "/run/current-system/sw/bin/rebuild-agent-env";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "/run/current-system/sw/bin/systemctl restart hermes-agent";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "/run/current-system/sw/bin/systemctl restart hermes-agent.service";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "${pkgs.systemd}/bin/systemctl restart hermes-agent";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "${pkgs.systemd}/bin/systemctl restart hermes-agent.service";
               options = ["NOPASSWD"];
             }
           ];
