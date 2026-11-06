@@ -7,6 +7,14 @@
   inputs,
   ...
 }: let
+  superpowersSrc =
+    inputs.superpowers or (pkgs.fetchFromGitHub {
+      owner = "obra";
+      repo = "superpowers";
+      rev = "22f0b463e7a5e579904dd6211a520321035526f7";
+      hash = "sha256-rP5YsyGuPd9YSW/Fj3aukrq1bLuV+nwwQMK4JaZQgkI=";
+    });
+
   userConfigType = lib.types.submodule {
     options = {
       ide = {
@@ -29,6 +37,11 @@
       python = lib.mkEnableOption "Enables python tooling";
       shell = lib.mkEnableOption "Enables Shell tooling";
       ai = lib.mkEnableOption "Enables AI tooling";
+      superpowers = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Enables Superpowers agent skills (defaults to ai)";
+      };
       servers = lib.mkOption {
         type = lib.types.attrs;
         default = {};
@@ -57,6 +70,13 @@ in {
         description = "Enables Antigravity CLI (agy)";
       };
     };
+    superpowers = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Enables Superpowers agent skills";
+      };
+    };
     users = lib.mkOption {
       type = lib.types.attrsOf userConfigType;
       default = {};
@@ -67,7 +87,12 @@ in {
   config = {
     home-manager.users =
       lib.mapAttrs (
-        user: userConfig: hm: {
+        user: userConfig: hm: let
+          enableSuperpowers =
+            if userConfig.superpowers != null
+            then userConfig.superpowers
+            else (userConfig.ai && config.antigravity.superpowers.enable);
+        in {
           disabledModules = ["programs/antigravity.nix"];
           imports = [
             (import "${inputs.home-manager}/modules/programs/vscode/mkVscodeModule.nix" {
@@ -81,47 +106,54 @@ in {
           ];
 
           home = lib.mkIf (userConfig.ide.enable || userConfig.agy.enable) {
-            file = lib.mkIf userConfig.ai {
-              ".gemini/config/mcp_config.json".text = let
-                allServers =
-                  (lib.optionalAttrs (hm.config.programs ? mcp && hm.config.programs.mcp.enable) hm.config.programs.mcp.servers)
-                  // userConfig.servers;
+            file =
+              (lib.optionalAttrs userConfig.ai {
+                ".gemini/config/mcp_config.json".text = let
+                  allServers =
+                    (lib.optionalAttrs (hm.config.programs ? mcp && hm.config.programs.mcp.enable) hm.config.programs.mcp.servers)
+                    // userConfig.servers;
 
-                cleanServer = srv: let
-                  isDisabled =
-                    if (srv.disabled or false) == true
-                    then true
-                    else if (srv.enabled or null) == false
-                    then true
-                    else null;
-                  common = {
-                    disabled = isDisabled;
-                    disabledTools = srv.disabledTools or null;
-                    alwaysAllow = srv.alwaysAllow or null;
-                  };
+                  cleanServer = srv: let
+                    isDisabled =
+                      if (srv.disabled or false) == true
+                      then true
+                      else if (srv.enabled or null) == false
+                      then true
+                      else null;
+                    common = {
+                      disabled = isDisabled;
+                      disabledTools = srv.disabledTools or null;
+                      alwaysAllow = srv.alwaysAllow or null;
+                    };
+                  in
+                    if (srv.command or null) != null
+                    then
+                      lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                          inherit (srv) command;
+                          args = srv.args or null;
+                          env = srv.env or null;
+                          cwd = srv.cwd or null;
+                        }
+                        // common)
+                    else if (srv.serverUrl or srv.url or null) != null
+                    then
+                      lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
+                          serverUrl = srv.serverUrl or srv.url;
+                          headers = srv.headers or null;
+                        }
+                        // common)
+                    else {};
                 in
-                  if (srv.command or null) != null
-                  then
-                    lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
-                        inherit (srv) command;
-                        args = srv.args or null;
-                        env = srv.env or null;
-                        cwd = srv.cwd or null;
-                      }
-                      // common)
-                  else if (srv.serverUrl or srv.url or null) != null
-                  then
-                    lib.filterAttrs (_: v: v != null && v != [] && v != {}) ({
-                        serverUrl = srv.serverUrl or srv.url;
-                        headers = srv.headers or null;
-                      }
-                      // common)
-                  else {};
-              in
-                builtins.toJSON {
-                  mcpServers = lib.mapAttrs (_: cleanServer) allServers;
+                  builtins.toJSON {
+                    mcpServers = lib.mapAttrs (_: cleanServer) allServers;
+                  };
+              })
+              // (lib.optionalAttrs enableSuperpowers {
+                ".gemini/config/skills" = {
+                  source = "${superpowersSrc}/skills";
+                  recursive = true;
                 };
-            };
+              });
 
             packages = with pkgs;
               lib.optionals userConfig.cpp [
@@ -145,12 +177,25 @@ in {
             antigravity-cli = lib.mkIf userConfig.agy.enable {
               enable = true;
               package = pkgs.antigravity-cli;
-              enableMcpIntegration = false;
+              enableMcpIntegration = userConfig.ai;
+              mcpServers = lib.mkIf userConfig.ai userConfig.servers;
+              skills = lib.mkIf enableSuperpowers "${superpowersSrc}/skills";
             };
 
             antigravity = lib.mkIf userConfig.ide.enable {
               enable = true;
-              package = pkgs.antigravity-ide;
+              # Work around expired localhost TLS certificate (cert.pem notAfter Nov 3 2026)
+              # bundled in antigravity-ide 2.5.5 for 127.0.0.1 Language Server HTTP/2 IPC.
+              package = pkgs.antigravity-ide.overrideAttrs (old: {
+                postPatch =
+                  (old.postPatch or "")
+                  + ''
+                    substituteInPlace resources/app/out/main.js \
+                      --replace-warn "nodeOptions:{ca:n}" "nodeOptions:{ca:n,rejectUnauthorized:!1}"
+                    substituteInPlace resources/app/extensions/antigravity/dist/extension.js \
+                      --replace-warn "nodeOptions:{ca:R}" "nodeOptions:{ca:R,rejectUnauthorized:!1}"
+                  '';
+              });
               mutableExtensionsDir = false;
               profiles = {
                 default = {
