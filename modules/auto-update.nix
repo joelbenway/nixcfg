@@ -150,13 +150,21 @@
         BOOTED_SYS=$(readlink -f /run/booted-system 2>/dev/null || echo "")
         if [ -n "$TARGET_SYS" ] && [ "$BOOTED_SYS" = "$TARGET_SYS" ]; then
           echo "==> Promoting verified booted entry to default via bootctl set-default @current..."
-          bootctl set-default @current 2>/dev/null || true
-          rm -f "$PENDING_BOOT_FILE"
-          nixos-auto-update-write-status \
-            "healthy" \
-            "info" \
-            "${hostname} successfully rebooted and verified new kernel" \
-            "Booted and verified ''${BOOTED_SYS}."
+          if bootctl set-default @current; then
+            rm -f "$PENDING_BOOT_FILE"
+            nixos-auto-update-write-status \
+              "healthy" \
+              "info" \
+              "${hostname} successfully rebooted and verified new kernel" \
+              "Booted and verified ''${BOOTED_SYS}."
+          else
+            echo "ERROR: Failed to promote @current to default via bootctl set-default on ${hostname}!" >&2
+            nixos-auto-update-write-status \
+              "reboot_required_attended" \
+              "critical" \
+              "${hostname} failed to set verified kernel as default boot entry" \
+              "bootctl set-default @current failed on ''${BOOTED_SYS}. Pending reboot record retained."
+          fi
         else
           echo "WARNING: Pending reboot target (''${TARGET_SYS}) does not match booted system (''${BOOTED_SYS}); skipping promotion." >&2
         fi
