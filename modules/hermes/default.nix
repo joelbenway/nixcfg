@@ -26,21 +26,46 @@
 
       REPO_PATH="''${1:-${cfg.repoPath}}"
       HOST_NAME="''${2:-${cfg.hostName}}"
-      LEAF_FILE="''${REPO_PATH}/modules/hermes/agent-env.nix"
+      REPO_LEAF="''${REPO_PATH}/modules/hermes/agent-env.nix"
+      RUNTIME_LEAF="${cfg.runtimeLeafPath}"
       HERMES_USER="hermes"
       HERMES_HOME="/var/lib/hermes"
       PROFILE_PATH="''${HERMES_HOME}/.nix-profile"
 
       echo "==> [Agentic GitOps] Initiating environment rebuild for Hermes Agent..."
 
-      if [ ! -f "''${LEAF_FILE}" ]; then
-        echo "ERROR: Leaf configuration ' ''${LEAF_FILE}' does not exist!" >&2
+      # Bootstrap runtime leaf from baseline if missing
+      if [ ! -f "''${RUNTIME_LEAF}" ]; then
+        if [ -f "''${REPO_LEAF}" ]; then
+          cp "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+        else
+          cp "${./agent-env.nix}" "''${RUNTIME_LEAF}"
+        fi
+        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
+        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+      fi
+
+      # If the agent edited REPO_LEAF more recently than RUNTIME_LEAF, copy REPO_LEAF -> RUNTIME_LEAF;
+      # otherwise copy RUNTIME_LEAF -> REPO_LEAF so both stay identical.
+      if [ -f "''${REPO_LEAF}" ] && [ "''${REPO_LEAF}" -nt "''${RUNTIME_LEAF}" ]; then
+        cp "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
+        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+      elif [ -d "''${REPO_PATH}/modules/hermes" ]; then
+        cp "''${RUNTIME_LEAF}" "''${REPO_LEAF}"
+        chown "''${HERMES_USER}:''${HERMES_USER}" "''${REPO_LEAF}" 2>/dev/null || true
+        chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
+      fi
+
+      LEAF_FILE="''${RUNTIME_LEAF}"
+
+      if ! nix-instantiate --parse "''${LEAF_FILE}" >/dev/null; then
+        echo "ERROR: Syntax error in ' ''${LEAF_FILE}'!" >&2
         exit 1
       fi
 
       # 1. Handle GitOps version control if repository exists
       if [ -d "''${REPO_PATH}/.git" ]; then
-        # Ensure root-owned artifacts in .git are restored to repo owner
         if [ "$(id -u)" -eq 0 ]; then
           REPO_UID=$(stat -c '%u:%g' "''${REPO_PATH}")
           chown -R "''${REPO_UID}" "''${REPO_PATH}/.git" 2>/dev/null || true
@@ -52,18 +77,17 @@
         git config --global --add safe.directory "''${REPO_PATH}" 2>/dev/null || true
         git config --global --add safe.directory '*' 2>/dev/null || true
 
-        # Only attempt git write operations if repository .git is writable by current user
         if [ -w "''${REPO_PATH}/.git" ]; then
           (
             cd "''${REPO_PATH}"
-            if ! git diff --quiet "''${LEAF_FILE}" 2>/dev/null; then
-              echo "==> [GitOps] Version-controlling changes to ''${LEAF_FILE}..."
+            if ! git diff --quiet "''${REPO_LEAF}" 2>/dev/null; then
+              echo "==> [GitOps] Version-controlling changes to ''${REPO_LEAF}..."
               AGENT_BRANCH="hermes/agent-env"
               CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
               if [ "$CURRENT_BRANCH" != "$AGENT_BRANCH" ]; then
                 git checkout -B "$AGENT_BRANCH" 2>/dev/null || true
               fi
-              git add "''${LEAF_FILE}"
+              git add "''${REPO_LEAF}"
               git -c user.name="Hermes Agent" -c user.email="hermes-agent@local" commit -m "chore(hermes): auto-commit agent-env.nix dependency updates" || true
               if [ "$(id -u)" -eq 0 ]; then
                 chown -R "''${REPO_UID}" "''${REPO_PATH}/.git" 2>/dev/null || true
@@ -86,12 +110,10 @@
       mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
       nix-env -p "''${PROFILE_PATH}" --set "''${ENV_OUT}"
 
-      # Ensure profile permissions are preserved for the hermes user
       if [ "$(id -u)" -eq 0 ]; then
         chown -h -R "''${HERMES_USER}:''${HERMES_USER}" "''${HERMES_HOME}/.local" "''${HERMES_HOME}/.nix-profile" "''${PROFILE_PATH}"* 2>/dev/null || true
       fi
 
-      # Optional full system switch if explicitly requested
       if [ "''${1:-}" = "--system" ] || [ "''${2:-}" = "--system" ]; then
         echo "==> Full system switch requested (--system)..."
         nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
@@ -121,6 +143,11 @@ in {
         type = types.str;
         default = "/home/joel/Projects/nixcfg";
         description = "Absolute path to the NixOS configuration repository.";
+      };
+      runtimeLeafPath = mkOption {
+        type = types.str;
+        default = "/var/lib/hermes/agent-env.nix";
+        description = "Persistent host-local path to Hermes's mutable agent-env.nix leaf.";
       };
       hostName = mkOption {
         type = types.str;
@@ -184,6 +211,8 @@ in {
     systemd.tmpfiles.rules = [
       "d /var/lib/hermes 0750 hermes hermes - -"
       "d /var/lib/hermes/.hermes 0700 hermes hermes - -"
+      "C ${cfg.runtimeLeafPath} 0664 hermes hermes - ${./agent-env.nix}"
+      "z ${cfg.runtimeLeafPath} 0664 hermes hermes - -"
       "z ${cfg.repoPath}/modules/hermes/agent-env.nix 0664 hermes hermes - -"
     ];
 
