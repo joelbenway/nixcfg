@@ -190,10 +190,14 @@ in {
                 postPatch =
                   (old.postPatch or "")
                   + ''
-                    substituteInPlace resources/app/out/main.js \
-                      --replace-warn "nodeOptions:{ca:n}" "nodeOptions:{ca:n,rejectUnauthorized:!1}"
-                    substituteInPlace resources/app/extensions/antigravity/dist/extension.js \
-                      --replace-warn "nodeOptions:{ca:R}" "nodeOptions:{ca:R,rejectUnauthorized:!1}"
+                    if [ -f resources/app/out/main.js ]; then
+                      substituteInPlace resources/app/out/main.js \
+                        --replace-warn "nodeOptions:{ca:n}" "nodeOptions:{ca:n,rejectUnauthorized:!1}"
+                    fi
+                    if [ -f resources/app/extensions/antigravity/dist/extension.js ]; then
+                      substituteInPlace resources/app/extensions/antigravity/dist/extension.js \
+                        --replace-warn "nodeOptions:{ca:R}" "nodeOptions:{ca:R,rejectUnauthorized:!1}"
+                    fi
                   '';
               });
               mutableExtensionsDir = false;

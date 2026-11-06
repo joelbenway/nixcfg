@@ -146,14 +146,20 @@
 
       # If a oneshot reboot was pending and we booted into the target system, promote @current to default
       if [ -f "$PENDING_BOOT_FILE" ]; then
-        echo "==> Promoting verified booted entry to default via bootctl set-default @current..."
-        bootctl set-default @current 2>/dev/null || true
-        rm -f "$PENDING_BOOT_FILE"
-        nixos-auto-update-write-status \
-          "healthy" \
-          "info" \
-          "${hostname} successfully rebooted and verified new kernel" \
-          "Booted and verified $(readlink -f /run/booted-system)."
+        TARGET_SYS=$(jq -r '.targetSystem // ""' "$PENDING_BOOT_FILE" 2>/dev/null || echo "")
+        BOOTED_SYS=$(readlink -f /run/booted-system 2>/dev/null || echo "")
+        if [ -n "$TARGET_SYS" ] && [ "$BOOTED_SYS" = "$TARGET_SYS" ]; then
+          echo "==> Promoting verified booted entry to default via bootctl set-default @current..."
+          bootctl set-default @current 2>/dev/null || true
+          rm -f "$PENDING_BOOT_FILE"
+          nixos-auto-update-write-status \
+            "healthy" \
+            "info" \
+            "${hostname} successfully rebooted and verified new kernel" \
+            "Booted and verified ''${BOOTED_SYS}."
+        else
+          echo "WARNING: Pending reboot target (''${TARGET_SYS}) does not match booted system (''${BOOTED_SYS}); skipping promotion." >&2
+        fi
       elif [ -f "$STATUS_FILE" ]; then
         CUR_STATUS=$(jq -r '.status // "healthy"' "$STATUS_FILE" 2>/dev/null || echo "healthy")
         if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ]; then
@@ -195,6 +201,7 @@
     text = ''
       set -euo pipefail
 
+      HOST_NAME="${hostname}"
       STATE_DIR="${cfg.stateDir}"
       REPO_DIR="''${STATE_DIR}/nixcfg"
       ZITA_REMOTE_URL="git://${cfg.zitaHost}:9418/nixcfg"
@@ -208,6 +215,13 @@
       }"
 
       mkdir -p "''${STATE_DIR}"
+
+      # Serialize updater executions across manual and timer-driven runs
+      exec 9>"''${STATE_DIR}/update.lock"
+      if ! flock -n 9; then
+        echo "==> [Auto-Update] Another nixos-auto-update instance is already running; exiting."
+        exit 0
+      fi
 
       export GIT_CONFIG_COUNT=1
       export GIT_CONFIG_KEY_0="safe.directory"
@@ -231,7 +245,7 @@
       echo "==> [Auto-Update] Synchronizing nixcfg repository in ''${REPO_DIR}..."
       if [ ! -d "''${REPO_DIR}/.git" ]; then
         rm -rf "''${REPO_DIR}"
-        if [ "${hostname}" != "zita" ] && git clone "$ZITA_REMOTE_URL" "''${REPO_DIR}" 2>/dev/null; then
+        if [ "$HOST_NAME" != "zita" ] && git clone "$ZITA_REMOTE_URL" "''${REPO_DIR}" 2>/dev/null; then
           echo "Cloned nixcfg from zita mirror."
         else
           git clone "$ORIGIN_URL" "''${REPO_DIR}"
@@ -244,30 +258,53 @@
       FETCHED_REF=""
       if git -C "''${REPO_DIR}" fetch --prune origin master 2>/dev/null; then
         FETCHED_REF="origin/master"
-        if [ "${hostname}" != "zita" ]; then
+        if [ "$HOST_NAME" != "zita" ]; then
           git -C "''${REPO_DIR}" fetch --prune zita master 2>/dev/null || true
         fi
-      elif [ "${hostname}" != "zita" ] && git -C "''${REPO_DIR}" fetch --prune zita master 2>/dev/null; then
+      elif [ "$HOST_NAME" != "zita" ] && git -C "''${REPO_DIR}" fetch --prune zita master 2>/dev/null; then
         echo "WARNING: GitHub unreachable; falling back to zita git mirror." >&2
         FETCHED_REF="zita/master"
       else
         echo "ERROR: Unable to fetch nixcfg updates from either origin or zita!" >&2
+        nixos-auto-update-write-status \
+          "update_failed" \
+          "critical" \
+          "Failed to fetch nixcfg updates on ${hostname}" \
+          "Unable to fetch nixcfg updates from either origin or zita."
         exit 1
       fi
 
-      git -C "''${REPO_DIR}" checkout -B master "$FETCHED_REF"
+      git -C "''${REPO_DIR}" reset --hard
+      git -C "''${REPO_DIR}" clean -fd
+      git -C "''${REPO_DIR}" checkout -f -B master "$FETCHED_REF"
       git -C "''${REPO_DIR}" reset --hard "$FETCHED_REF"
       git -C "''${REPO_DIR}" clean -fd
 
       # Synchronize secrets submodule and configure both origin and zita remotes on it
       echo "==> [Auto-Update] Synchronizing secrets submodule..."
       if ! git -C "''${REPO_DIR}" submodule update --init --recursive 2>/dev/null; then
-        if [ "${hostname}" != "zita" ]; then
+        if [ "$HOST_NAME" != "zita" ]; then
           echo "Retrying secrets submodule fetch via zita mirror..."
           git -C "''${REPO_DIR}" config submodule.secrets.url "$ZITA_SECRETS_URL"
-          git -C "''${REPO_DIR}" submodule update --init --recursive
+          if [ -d "''${REPO_DIR}/secrets/.git" ] || [ -f "''${REPO_DIR}/secrets/.git" ]; then
+            git -C "''${REPO_DIR}/secrets" remote set-url origin "$ZITA_SECRETS_URL" 2>/dev/null || true
+          fi
+          if ! git -C "''${REPO_DIR}" submodule update --init --recursive; then
+            echo "ERROR: Failed to update secrets submodule via zita mirror on ${hostname}!" >&2
+            nixos-auto-update-write-status \
+              "update_failed" \
+              "critical" \
+              "Failed to synchronize secrets submodule on ${hostname}" \
+              "Could not update secrets submodule from origin or zita mirror."
+            exit 1
+          fi
         else
           echo "ERROR: Failed to update secrets submodule on ${hostname}!" >&2
+          nixos-auto-update-write-status \
+            "update_failed" \
+            "critical" \
+            "Failed to synchronize secrets submodule on ${hostname}" \
+            "Could not update secrets submodule on ${hostname}."
           exit 1
         fi
       fi
@@ -317,11 +354,20 @@
       # Evaluate target system derivation and compare with current-system
       echo "==> [Auto-Update] Building target system closure for ${hostname}..."
       PREV_SYSTEM=$(readlink -f /run/current-system)
-      NEW_SYSTEM=$(nix build --no-link --print-out-paths "''${REPO_DIR}#nixosConfigurations.${hostname}.config.system.build.toplevel")
+      if ! NEW_SYSTEM=$(nix build --no-link --print-out-paths "''${REPO_DIR}#nixosConfigurations.${hostname}.config.system.build.toplevel"); then
+        echo "ERROR: Target system build failed on ${hostname}!" >&2
+        nixos-auto-update-write-status \
+          "update_failed" \
+          "critical" \
+          "Auto-update build failed on ${hostname}" \
+          "Failed to build nixosConfigurations.${hostname}.config.system.build.toplevel."
+        exit 1
+      fi
 
       rollback() {
         echo "ERROR: Update or canary verification failed on ${hostname}! Rolling back to ''${PREV_SYSTEM}..." >&2
-        if "''${PREV_SYSTEM}/bin/switch-to-configuration" test; then
+        nix-env -p /nix/var/nix/profiles/system --set "''${PREV_SYSTEM}" 2>/dev/null || true
+        if "''${PREV_SYSTEM}/bin/switch-to-configuration" switch; then
           nixos-auto-update-write-status \
             "rollback_failed" \
             "critical" \
@@ -364,9 +410,10 @@
       # Pre-warm Harmonia binary cache on Zita for all other fleet hosts
       if ${lib.boolToString cfg.cacheWarmer.enable}; then
         echo "==> [Cache-Warmer] Pre-building fleet closures on ${hostname} for Harmonia..."
+        mkdir -p "''${STATE_DIR}/gcroots"
         for target_host in ${lib.escapeShellArgs cfg.cacheWarmer.hosts}; do
           echo "  -> Building nixosConfigurations.''${target_host}..."
-          nix build --no-link "''${REPO_DIR}#nixosConfigurations.''${target_host}.config.system.build.toplevel" || \
+          nix build --out-link "''${STATE_DIR}/gcroots/''${target_host}" "''${REPO_DIR}#nixosConfigurations.''${target_host}.config.system.build.toplevel" || \
             echo "WARNING: Cache pre-warm build failed for ''${target_host} (continuing)." >&2
         done
         echo "==> [Cache-Warmer] Fleet cache pre-warming complete."
@@ -423,13 +470,24 @@
 
       # Stage safe oneshot boot entry so a panic/watchdog reset falls back to the currently booted generation
       if command -v bootctl >/dev/null 2>&1; then
-        BOOTED_ID=$(bootctl list --json=short 2>/dev/null | jq -r '.[] | select(.isSelected == true) | .id' | head -n1 || true)
-        DEFAULT_ID=$(bootctl list --json=short 2>/dev/null | jq -r '.[] | select(.isDefault == true) | .id' | head -n1 || true)
-        if [ -n "$BOOTED_ID" ] && [ -n "$DEFAULT_ID" ] && [ "$BOOTED_ID" != "$DEFAULT_ID" ]; then
-          echo "==> [Boot-Guard] Setting known-good booted entry ($BOOTED_ID) as default and new entry ($DEFAULT_ID) as oneshot..."
-          bootctl set-default "$BOOTED_ID" || true
-          bootctl set-oneshot "$DEFAULT_ID" || true
+        BOOT_LIST=$(bootctl list --json=short 2>/dev/null || echo "[]")
+        BOOTED_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isSelected == true) | .id' | head -n1 || true)
+        TARGET_ID=$(echo "$BOOT_LIST" | jq -r --arg sys "$NEW_SYSTEM" '.[] | select((.options // "") | contains("init=" + $sys + "/init")) | .id' | head -n1 || true)
+        if [ -z "$TARGET_ID" ]; then
+          TARGET_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isDefault == true) | .id' | head -n1 || true)
         fi
+        if [ -z "$BOOTED_ID" ] || [ -z "$TARGET_ID" ] || [ "$BOOTED_ID" = "$TARGET_ID" ] || \
+           ! bootctl set-default "$BOOTED_ID" || \
+           ! bootctl set-oneshot "$TARGET_ID"; then
+          echo "WARNING: Could not establish bootctl oneshot fallback guard (booted=''${BOOTED_ID:-none}, target=''${TARGET_ID:-none}); skipping unattended reboot!" >&2
+          nixos-auto-update-write-status \
+            "reboot_required_attended" \
+            "critical" \
+            "${hostname} requires an attended reboot (boot guard setup failed)" \
+            "Could not configure bootctl default/oneshot entries for ''${NEW_SYSTEM}."
+          exit 0
+        fi
+        echo "==> [Boot-Guard] Set known-good booted entry ($BOOTED_ID) as default and new entry ($TARGET_ID) as oneshot."
       fi
 
       jq -n \
@@ -521,7 +579,7 @@
         fi
 
         STATUS=$(echo "$RESP" | jq -r '.status // "healthy"' 2>/dev/null || echo "healthy")
-        if [ "$STATUS" != "reboot_required_attended" ] && [ "$STATUS" != "rollback_failed" ]; then
+        if [ "$STATUS" != "reboot_required_attended" ] && [ "$STATUS" != "rollback_failed" ] && [ "$STATUS" != "update_failed" ]; then
           # Clear any seen key if host recovered
           TMP_SEEN=$(mktemp)
           jq --arg h "$host" 'del(.[$h])' "$SEEN_FILE" > "$TMP_SEEN" && mv "$TMP_SEEN" "$SEEN_FILE"
@@ -540,7 +598,7 @@
 
         URGENCY="critical"
         ICON="system-reboot"
-        if [ "$STATUS" = "rollback_failed" ]; then
+        if [ "$STATUS" = "rollback_failed" ] || [ "$STATUS" = "update_failed" ]; then
           ICON="dialog-error"
         fi
 
@@ -701,6 +759,7 @@ in {
         description = "Declarative NixOS Auto-Update with Canary Rollback and TPM Guard";
         after = ["network-online.target" "tailscaled.service"];
         wants = ["network-online.target"];
+        restartIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           ExecStart = "${updateScript}/bin/nixos-auto-update";

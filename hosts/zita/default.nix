@@ -400,7 +400,7 @@ in {
       "harmonia"
       "caddy"
       "samba-smbd"
-      "copyparty"
+      "container@copyparty"
       "hermes-agent"
     ];
     # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots

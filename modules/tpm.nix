@@ -80,24 +80,6 @@
         [ "$live" = "$saved" ]
       }
 
-      wipe_tpm_tokens() {
-        local dev="$1"
-        local pass_file="$2"
-        local meta token_ids tid ks
-        if meta=$(cryptsetup luksDump --dump-json-metadata "$dev" 2>/dev/null); then
-          token_ids=$(echo "$meta" | jq -r '.tokens | to_entries[]? | select(.value.type == "systemd-tpm2") | .key' 2>/dev/null || true)
-          for tid in $token_ids; do
-            ks=$(echo "$meta" | jq -r ".tokens[\"$tid\"].keyslots[0]" 2>/dev/null || true)
-            echo "Wiping TPM2 token $tid from $dev..."
-            cryptsetup token remove --token-id="$tid" "$dev" 2>/dev/null || true
-            if [ -n "$ks" ] && [ "$ks" != "null" ]; then
-              echo "Wiping keyslot $ks associated with token $tid..."
-              cryptsetup luksKillSlot -q --key-file="$pass_file" "$dev" "$ks" 2>/dev/null || true
-            fi
-          done
-        fi
-      }
-
       show_status() {
         echo "=========================================================="
         echo "TPM LUKS Status (Target PCRs: $target_pcrs)"
@@ -142,7 +124,29 @@
       check_reboot_safety() {
         local reasons=()
 
-        # 1. Verify all configured devices exist and have the target TPM2 token enrolled
+        # 1. Check if live PCRs have drifted from the enrolled baseline or if any device lacks the target token.
+        # If so, attempt an automatic re-enroll against current live PCRs first!
+        local needs_reenroll=false
+        if ! live_pcrs_match_saved; then
+          needs_reenroll=true
+        else
+          for dev in "''${devices[@]}"; do
+            if [ -e "$dev" ] && ! device_has_target_token "$dev"; then
+              needs_reenroll=true
+            fi
+          done
+        fi
+
+        if [ "$needs_reenroll" = true ]; then
+          echo "Live PCRs differ from saved baseline or token missing; attempting automatic re-enrollment against current live PCRs..."
+          if "$0" --force >/dev/null 2>&1 && live_pcrs_match_saved; then
+            echo "Successfully re-enrolled TPM2 tokens against current live PCRs."
+          else
+            reasons+=("Live TPM PCR digests ($target_pcrs) do not match enrolled baseline and automatic re-enrollment failed")
+          fi
+        fi
+
+        # 2. Verify all configured devices exist and have the target TPM2 token enrolled
         for dev in "''${devices[@]}"; do
           if [ ! -e "$dev" ]; then
             reasons+=("LUKS device $dev is missing")
@@ -153,23 +157,14 @@
           fi
         done
 
-        # 2. Check if live PCRs have drifted from the enrolled baseline
-        # If they drifted during runtime or after an attended boot, attempt an automatic re-enroll first!
-        if ! live_pcrs_match_saved; then
-          echo "Live PCRs differ from saved baseline; attempting automatic re-enrollment against current live PCRs..."
-          if "$0" --force >/dev/null 2>&1 && live_pcrs_match_saved; then
-            echo "Successfully re-enrolled TPM2 tokens against current live PCRs."
-          else
-            reasons+=("Live TPM PCR digests ($target_pcrs) do not match enrolled baseline and automatic re-enrollment failed")
-          fi
-        fi
-
         # 3. Check Secure Boot & Lanzaboote signature state (affects PCR 7)
         if ${lib.boolToString (config.boot.lanzaboote.enable or false)}; then
           if ! sbctl status --json 2>/dev/null | jq -e '.secure_boot == true' >/dev/null 2>&1; then
             reasons+=("Secure Boot is not currently active according to sbctl status")
           fi
-          if sbctl verify --json 2>/dev/null | jq -e '[.[] | select(.is_signed == 0)] | length > 0' >/dev/null 2>&1; then
+          local verify_json
+          if ! verify_json=$(sbctl verify --json 2>/dev/null) || \
+             ! echo "$verify_json" | jq -e 'type == "array" and length > 0 and ([.[] | select(.is_signed == 0)] | length == 0)' >/dev/null 2>&1; then
             reasons+=("One or more EFI binaries in /boot failed sbctl signature verification (PCR 7/boot failure risk)")
           fi
         fi
@@ -298,10 +293,7 @@
           continue
         fi
 
-        if [ "$force_mode" = true ]; then
-          echo "Clearing existing TPM2 tokens and keyslots on $dev..."
-          wipe_tpm_tokens "$dev" "$pass_file"
-        elif device_has_target_token "$dev"; then
+        if [ "$force_mode" != true ] && device_has_target_token "$dev"; then
           echo "$dev already enrolled with PCRs $target_pcrs, skipping (use --force to re-enroll)."
           continue
         fi
