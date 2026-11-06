@@ -196,7 +196,11 @@ if [ "$ASK_PASSWORD" = false ]; then
   ELEVATE_FLAG="--elevate=sudo"
 fi
 
-NIX_OPTIONS=(--option extra-trusted-public-keys "zita-cache-1:NZnUaNEPyAcPpeqdhZscnTzryEAw1mqA37W7v18lDWQ=")
+NIX_OPTIONS=(
+  --option extra-trusted-public-keys "zita-cache-1:NZnUaNEPyAcPpeqdhZscnTzryEAw1mqA37W7v18lDWQ="
+  --option substituters "https://cache.nixos.org http://100.121.125.19:5000 http://192.168.77.131:5000"
+  --option fallback true
+)
 
 REBUILD_CMD=(nixos-rebuild test --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG" "${NIX_OPTIONS[@]}")
 
