@@ -75,7 +75,15 @@
 
       echo "==> [Canary] Checking critical systemd services..."
       for svc in ${lib.escapeShellArgs cfg.canary.services}; do
-        if ! systemctl is-active --quiet "$svc"; then
+        SVC_ACTIVE=false
+        for _ in 1 2 3 4 5; do
+          if systemctl is-active --quiet "$svc"; then
+            SVC_ACTIVE=true
+            break
+          fi
+          sleep 2
+        done
+        if [ "$SVC_ACTIVE" != true ]; then
           echo "ERROR: Critical service '$svc' is not active on ${hostname}!" >&2
           exit 1
         fi
@@ -128,6 +136,22 @@
 
       PENDING_BOOT_FILE="${cfg.stateDir}/pending-reboot.json"
       STATUS_FILE="${cfg.stateDir}/status.json"
+
+      # Only perform canary verification and boot promotion if a reboot was actually pending
+      HAS_PENDING_BOOT=false
+      if [ -f "$PENDING_BOOT_FILE" ]; then
+        HAS_PENDING_BOOT=true
+      elif [ -f "$STATUS_FILE" ]; then
+        CUR_STATUS=$(jq -r '.status // "healthy"' "$STATUS_FILE" 2>/dev/null || echo "healthy")
+        if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ]; then
+          HAS_PENDING_BOOT=true
+        fi
+      fi
+
+      if [ "$HAS_PENDING_BOOT" = false ]; then
+        echo "==> [Boot Verify] No pending reboot verification on ${hostname}; exiting cleanly."
+        exit 0
+      fi
 
       # Run host canaries on boot
       if ! nixos-auto-update-canary; then
@@ -789,6 +813,8 @@ in {
         wantedBy = ["multi-user.target"];
         after = ["network-online.target"] ++ (map (s: "${s}.service") cfg.canary.services);
         wants = ["network-online.target"];
+        restartIfChanged = false;
+        stopIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
