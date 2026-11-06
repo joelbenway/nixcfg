@@ -133,4 +133,13 @@ in {
       "/dev/disk/by-partlabel/disk-main-root"
     ];
   }; # tpm
+
+  auto-update = {
+    enable = true;
+    dates = "*-*-* 06:15:00";
+    randomizedDelaySec = "15m";
+    # Workstations/laptops apply user-space updates automatically and notify in KDE Plasma when a kernel reboot is ready
+    reboot.enable = false;
+    desktopNotifications.enable = true;
+  };
 }
