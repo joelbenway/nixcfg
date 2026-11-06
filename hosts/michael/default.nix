@@ -592,4 +592,24 @@ in {
       OnUnitActiveSec = "15s";
     };
   };
+
+  auto-update = {
+    enable = true;
+    dates = "*-*-* 06:00:00";
+    randomizedDelaySec = "10m";
+    canary = {
+      checkDns = true;
+      services = [
+        "pihole-ftl"
+        "unbound"
+        "nftables"
+        "pia-wireguard"
+      ];
+    };
+    reboot = {
+      enable = true;
+      window = "03:30";
+      hardwareWatchdog = true;
+    };
+  };
 }

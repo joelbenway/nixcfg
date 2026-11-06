@@ -386,4 +386,27 @@ in {
   disko.devices = (import ./disks.nix {}).disko.devices;
 
   fileSystems."/var/log".neededForBoot = true;
+
+  auto-update = {
+    enable = true;
+    dates = "*-*-* 05:00:00";
+    randomizedDelaySec = "5m";
+    gitMirror.enable = true;
+    cacheWarmer = {
+      enable = true;
+      hosts = ["michael" "francis" "agnes" "jerome"];
+    };
+    canary.services = [
+      "harmonia"
+      "caddy"
+      "samba-smbd"
+      "container@copyparty"
+      "hermes-agent"
+    ];
+    # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots
+    reboot = {
+      enable = true;
+      window = "03:00";
+    };
+  };
 }
