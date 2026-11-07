@@ -6,6 +6,7 @@
   pkgs,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   cfg = config.telemetry;
 in {
   options.telemetry = {
@@ -19,7 +20,7 @@ in {
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 3000;
+      default = ports.telemetry.internal;
       description = "Web UI HTTP port for ntopng";
     };
 

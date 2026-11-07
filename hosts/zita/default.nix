@@ -9,6 +9,7 @@
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
@@ -146,73 +147,22 @@ in {
     ];
   }; # hermes
 
-  # Samba Configuration
-  samba = {
-    enable = true;
-    shares = {
-      # Shared folders
-      Public = {
-        path = "/storage/public";
-        browseable = "yes";
-        "read only" = "no";
-        "guest ok" = "yes";
-        comment = "Public Guest Share";
-        "create mask" = "0664";
-        "directory mask" = "0775";
-        "force user" = "nobody";
-        "force group" = "users";
-      }; # Public
-      Media = {
-        path = "/storage/media";
-        browseable = "yes";
-        "read only" = "yes";
-        "write list" = "joel katy";
-        "guest ok" = "yes";
-        comment = "Shared Media Collection";
-        "create mask" = "0664";
-        "directory mask" = "0775";
-        "force group" = "users";
-      }; # Media
+  # Samba Configuration (shares auto-derived from data/shares.nix)
+  samba.enable = true;
 
-      # Private user folders
-      Joel = {
-        path = "/storage/users/joel";
-        "valid users" = "joel";
-        "read only" = "no";
-        browseable = "yes";
-        "force user" = "joel";
-        "force group" = "users";
-      }; # Joel
-      Katy = {
-        path = "/storage/users/katy";
-        "valid users" = "katy";
-        "read only" = "no";
-        browseable = "yes";
-        "force user" = "katy";
-        "force group" = "users";
-      }; # Katy
-    }; # shares
-  }; # samba
-
-  copyparty = {
-    enable = true;
-    port = 3920;
-  }; # copyparty
+  copyparty.enable = true;
 
   actual = {
     enable = true;
     hostname = "127.0.0.1";
-    port = 5005;
     plaid = {
       enable = true;
-      port = 8084;
       environmentFile = config.age.secrets.plaid-env.path;
     };
   }; # actual
 
   jellyfin = {
     enable = true;
-    port = 8096;
     mediaDir = "/storage/media";
     hardwareAcceleration = {
       enable = true;
@@ -224,10 +174,10 @@ in {
   networking.firewall.allowedTCPPorts = [
     80
     443
-    3923
-    5006
-    8086
-    8097
+    ports.copyparty.tailscale
+    ports.actual.tailscale
+    ports.plaid.tailscale
+    ports.jellyfin.tailscale
   ];
 
   services.caddy = {
@@ -260,7 +210,7 @@ in {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
         import tailscale_auth
-        reverse_proxy 127.0.0.1:3920 {
+        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal} {
           header_up X-Tailscale-User {ts_user}
         }
       }
@@ -271,7 +221,7 @@ in {
         }
         import tailscale_auth
         header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:5005 {
+        reverse_proxy 127.0.0.1:${toString ports.actual.internal} {
           header_up x-actual-password {actual_pw}
         }
       }
@@ -281,7 +231,7 @@ in {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
         import tailscale_auth
-        reverse_proxy 127.0.0.1:8084
+        reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
       }
 
       jellyfin.benway.me {
@@ -289,36 +239,36 @@ in {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
         import tailscale_auth
-        reverse_proxy 127.0.0.1:8096
+        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
 
       ${hostname}.${config.tailscale.tailnet} {
-        redir https://${hostname}.${config.tailscale.tailnet}:3923
+        redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
       }
 
-      ${hostname}.${config.tailscale.tailnet}:3923 {
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale} {
         import tailscale_auth
-        reverse_proxy 127.0.0.1:3920 {
+        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal} {
           header_up X-Tailscale-User {ts_user}
         }
       }
 
-      ${hostname}.${config.tailscale.tailnet}:5006 {
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.actual.tailscale} {
         import tailscale_auth
         header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:5005 {
+        reverse_proxy 127.0.0.1:${toString ports.actual.internal} {
           header_up x-actual-password {actual_pw}
         }
       }
 
-      ${hostname}.${config.tailscale.tailnet}:8086 {
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.plaid.tailscale} {
         import tailscale_auth
-        reverse_proxy 127.0.0.1:8084
+        reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
       }
 
-      ${hostname}.${config.tailscale.tailnet}:8097 {
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {
         import tailscale_auth
-        reverse_proxy 127.0.0.1:8096
+        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
     '';
   };
@@ -351,7 +301,7 @@ in {
         enable = true;
         ssh = {
           enable = true;
-          port = 2222;
+          port = ports.initrdSsh.ssh;
           authorizedKeys = [
             (import (lib.custom.relativeToRoot "data/keys.nix")).hosts.michael
             (import (lib.custom.relativeToRoot "data/keys.nix")).users.joel

@@ -7,13 +7,14 @@
 }: let
   cfg = config.binary-cache;
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
 in {
   options.binary-cache = {
     server = {
       enable = lib.mkEnableOption "Harmonia binary cache server";
       port = lib.mkOption {
         type = lib.types.port;
-        default = 5000;
+        default = ports.binaryCache.internal;
         description = "Port for Harmonia binary cache to listen on";
       };
       openFirewall = lib.mkOption {

@@ -6,6 +6,7 @@
   pkgs,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   cfg = config.jellyfin;
 in {
   options.jellyfin = {
@@ -13,7 +14,7 @@ in {
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 8096;
+      default = ports.jellyfin.internal;
       description = "Port for the Jellyfin web interface";
     };
 

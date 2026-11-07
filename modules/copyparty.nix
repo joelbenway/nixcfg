@@ -6,6 +6,8 @@
   lib,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+
   userOpts = {
     name = lib.mkOption {
       type = lib.types.str;
@@ -35,7 +37,7 @@ in {
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 3923;
+      default = ports.copyparty.internal;
       description = "Port to listen on";
     };
 
@@ -48,13 +50,14 @@ in {
 
   config = let
     cfg = config.copyparty;
+    allUsers = map (u: u.name) cfg.users;
     mediaWriters = map (u: u.name) (lib.filter (u: u.canWriteMedia) cfg.users);
 
     userVolumes = lib.listToAttrs (map (u: {
         name = "/${u.name}";
         value = {
           path = "/storage/users/${u.name}";
-          access.rw = [u.name];
+          access.A = [u.name];
         };
       })
       cfg.users);
@@ -126,17 +129,23 @@ in {
               {
                 "/public" = {
                   path = "/storage/public";
-                  access.rw = "*";
+                  access =
+                    {
+                      rw = "*";
+                    }
+                    // lib.optionalAttrs (allUsers != []) {
+                      A = allUsers;
+                    };
                 };
 
                 "/media" = {
                   path = "/storage/media";
                   access =
-                    if mediaWriters == []
-                    then {r = "*";}
-                    else {
+                    {
                       r = "*";
-                      rw = mediaWriters;
+                    }
+                    // lib.optionalAttrs (mediaWriters != []) {
+                      A = mediaWriters;
                     };
                 };
               }

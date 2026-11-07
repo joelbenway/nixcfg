@@ -9,6 +9,7 @@
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   network = import ./network.nix;
   piholeGroups = import ./pihole-groups.nix {inherit lib;};
   vlanList = builtins.attrValues network.vlans;
@@ -534,7 +535,7 @@ in {
       runtimeInputs = with pkgs; [openssh netcat];
       text = ''
         target="''${1:-zita.home}"
-        port="''${2:-2222}"
+        port="''${2:-${toString ports.initrdSsh.ssh}}"
         keyfile="${config.age.secrets.zita-luks-passphrase.path}"
 
         if [ ! -r "$keyfile" ]; then

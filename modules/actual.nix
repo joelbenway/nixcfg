@@ -7,6 +7,7 @@
   pkgs,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   cfg = config.actual;
   plaidCfg = cfg.plaid;
 in {
@@ -20,7 +21,7 @@ in {
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 5006;
+      default = ports.actual.internal;
       description = "Port for Actual Budget web interface";
     };
 
@@ -41,7 +42,7 @@ in {
 
       port = lib.mkOption {
         type = lib.types.port;
-        default = 8086;
+        default = ports.plaid.internal;
         description = "Port for the gone-to-plaid web dashboard and API";
       };
 

@@ -103,9 +103,11 @@ in {
   # Ensure directories exist on cache and backing disk
   systemd.tmpfiles.rules = [
     "d /mnt/cache/data 0775 root users -"
+    "d /mnt/cache/data/public 2775 nobody users -"
+    "d /mnt/cache/data/media 2775 root users -"
     "d /mnt/cache/appdata 0775 root users -"
-    "d /mnt/disk1/public 0775 nobody users -"
-    "d /mnt/disk1/media 0775 root users -"
+    "d /mnt/disk1/public 2775 nobody users -"
+    "d /mnt/disk1/media 2775 root users -"
     "d /mnt/disk1/users 0755 root root -"
     "d /mnt/disk1/users/joel 0700 joel users -"
     "d /mnt/disk1/users/katy 0700 katy users -"

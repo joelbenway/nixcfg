@@ -23,11 +23,15 @@
   keys = import (relativeToRoot "data/keys.nix");
   userKey = keys.${username} or null;
 
+  capitalizedUser =
+    (lib.toUpper (lib.substring 0 1 username))
+    + (lib.substring 1 (-1) username);
+
+  storageConfig = import (relativeToRoot "data/shares.nix");
+  storageServer = storageConfig.serverHost;
+
   passphraseFile = relativeToRoot "secrets/${username}-passphrase.age";
   hasPassphrase = builtins.pathExists passphraseFile;
-
-  copypartyPassphraseFile = relativeToRoot "secrets/${username}-copyparty.age";
-  hasCopypartyPassphrase = builtins.pathExists copypartyPassphraseFile;
 
   sshKeyFile = relativeToRoot "secrets/${username}-ssh.age";
   hasSshKey = builtins.pathExists sshKeyFile;
@@ -75,9 +79,6 @@ in {
             (lib.optionalAttrs hasPassphrase {
               "${username}-passphrase".file = passphraseFile;
             })
-            // (lib.optionalAttrs hasCopypartyPassphrase {
-              "${username}-copyparty".file = copypartyPassphraseFile;
-            })
             // (lib.optionalAttrs hasSshKey {
               "${username}-ssh" = {
                 file = sshKeyFile;
@@ -113,6 +114,26 @@ in {
               };
             };
 
+          system.activationScripts = lib.mkIf hasPassphrase {
+            users.deps = ["${username}-password-hash"];
+            "${username}-password-hash" = {
+              deps = ["agenixInstall"];
+              text = ''
+                mkdir -m 0700 -p /run/user-password-hashes
+                if [ -f "${config.age.secrets."${username}-passphrase".path}" ]; then
+                  NEW_SUM="$(${pkgs.coreutils}/bin/sha256sum "${config.age.secrets."${username}-passphrase".path}" | ${pkgs.coreutils}/bin/cut -d' ' -f1)"
+                  OLD_SUM="$(cat "/run/user-password-hashes/${username}.sha256" 2>/dev/null || true)"
+                  if [ "$NEW_SUM" != "$OLD_SUM" ] || [ ! -f "/run/user-password-hashes/${username}.hash" ]; then
+                    ${pkgs.coreutils}/bin/tr -d '\r\n' < "${config.age.secrets."${username}-passphrase".path}" | ${pkgs.mkpasswd}/bin/mkpasswd -m sha-512 -s > "/run/user-password-hashes/${username}.hash.tmp"
+                    chmod 0600 "/run/user-password-hashes/${username}.hash.tmp"
+                    mv "/run/user-password-hashes/${username}.hash.tmp" "/run/user-password-hashes/${username}.hash"
+                    echo "$NEW_SUM" > "/run/user-password-hashes/${username}.sha256"
+                  fi
+                fi
+              '';
+            };
+          };
+
           systemd.tmpfiles.rules =
             [
               "d /home/${username}/.ssh 0700 ${username} users -"
@@ -142,16 +163,17 @@ in {
             };
           };
 
-          copyparty.users = lib.mkIf (hasCopypartyPassphrase || hasPassphrase) [
+          copyparty.users = lib.mkIf hasPassphrase [
             {
               name = username;
-              passwordFile =
-                if hasCopypartyPassphrase
-                then config.age.secrets."${username}-copyparty".path
-                else config.age.secrets."${username}-passphrase".path;
+              passwordFile = config.age.secrets."${username}-passphrase".path;
               canWriteMedia = isWheel;
             }
           ];
+
+          samba.users = lib.mkIf hasPassphrase {
+            ${username}.passwordFile = config.age.secrets."${username}-passphrase".path;
+          };
 
           users.users.${username} =
             {
@@ -177,7 +199,7 @@ in {
                   "podman"
                   "scanner"
                 ];
-              hashedPasswordFile = lib.mkIf hasPassphrase config.age.secrets."${username}-passphrase".path;
+              hashedPasswordFile = lib.mkIf hasPassphrase "/run/user-password-hashes/${username}.hash";
               openssh.authorizedKeys.keys = lib.unique (authorizedKeys ++ (lib.optional (userKey != null) userKey));
             }
             // lib.optionalAttrs (shell != null) {inherit shell;}; # users.users.${username}
@@ -233,6 +255,80 @@ in {
                 }; # git
               }; # programs
             }
+            (lib.mkIf config.${username}.desktop {
+              xdg.dataFile =
+                lib.mapAttrs' (_key: share: {
+                  name = "remoteview/${storageServer}-${share.name}.desktop";
+                  value.text = ''
+                    [Desktop Entry]
+                    Icon=${share.desktop.icon or "folder-remote"}
+                    Name=${share.desktop.name or "${storageServer} ${share.name}"}
+                    Type=Link
+                    URL=smb://${username}@${storageServer}/${share.name}
+                  '';
+                })
+                storageConfig.shares
+                // lib.optionalAttrs (storageConfig.userShares.enable or false) {
+                  "remoteview/${storageServer}-${capitalizedUser}.desktop".text = ''
+                    [Desktop Entry]
+                    Icon=${storageConfig.userShares.desktop.icon or "folder-remote"}
+                    Name=${storageServer} ${capitalizedUser}
+                    Type=Link
+                    URL=smb://${username}@${storageServer}/${capitalizedUser}
+                  '';
+                };
+
+              home.activation.sambaPlaces = let
+                sharesList =
+                  (lib.mapAttrsToList (_key: share: [
+                      "smb://${username}@${storageServer}/${share.name}"
+                      (share.desktop.name or "${storageServer} ${share.name}")
+                      (share.desktop.icon or "folder-remote")
+                    ])
+                    storageConfig.shares)
+                  ++ lib.optional (storageConfig.userShares.enable or false) [
+                    "smb://${username}@${storageServer}/${capitalizedUser}"
+                    "${storageServer} ${capitalizedUser}"
+                    (storageConfig.userShares.desktop.icon or "folder-remote")
+                  ];
+                sharesJson = builtins.toJSON sharesList;
+              in
+                inputs.home-manager.lib.hm.dag.entryAfter ["writeBoundary"] ''
+                                  ${pkgs.python3}/bin/python3 -c '
+                  import os
+                  import json
+                  import xml.etree.ElementTree as ET
+
+                  places_file = os.path.expanduser("~/.local/share/user-places.xbel")
+                  if not os.path.exists(places_file):
+                      exit(0)
+
+                  try:
+                      tree = ET.parse(places_file)
+                      root = tree.getroot()
+                      existing_urls = {b.get("href") for b in root.findall(".//bookmark")}
+
+                      shares = json.loads(${lib.escapeShellArg sharesJson})
+
+                      changed = False
+                      for url, title, icon in shares:
+                          if url not in existing_urls:
+                              bm = ET.SubElement(root, "bookmark", href=url)
+                              t = ET.SubElement(bm, "title")
+                              t.text = title
+                              info = ET.SubElement(bm, "info")
+                              meta = ET.SubElement(info, "metadata", owner="http://freedesktop.org")
+                              ET.SubElement(meta, "{http://www.freedesktop.org/standards/desktop-bookmarks}icon", name=icon)
+                              changed = True
+
+                      if changed:
+                          ET.indent(tree, space=" ", level=0)
+                          tree.write(places_file, encoding="UTF-8", xml_declaration=True)
+                  except Exception as e:
+                      print(f"Warning: Could not update user-places.xbel: {e}", flush=True)
+                  '
+                '';
+            })
             resolvedExtraHomeConfig
           ];
         }

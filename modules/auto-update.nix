@@ -9,6 +9,7 @@
 }: let
   cfg = config.auto-update;
   tailnet = config.tailscale.tailnet or "gentoo-humboldt.ts.net";
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   deployKeySecretFile = lib.custom.relativeToRoot "secrets/github-secrets-deploy-key.age";
   hasDeployKeySecret = builtins.pathExists deployKeySecretFile;
 
@@ -747,7 +748,7 @@ in {
       };
       port = lib.mkOption {
         type = lib.types.port;
-        default = 9105;
+        default = ports.autoUpdate.internal;
         description = "TCP port on tailscale0 for status.json HTTP server.";
       };
     };
