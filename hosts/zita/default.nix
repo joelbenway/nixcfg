@@ -95,6 +95,7 @@ in {
 
   systemd.tmpfiles.rules = [
     "d /var/lib/private 0700 root root -"
+    "z /var/lib/private 0700 root root -"
   ];
 
   openssh = {
