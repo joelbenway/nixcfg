@@ -122,7 +122,6 @@ in {
               no-reload = true;
               rproxy = 1;
               xff-src = "127.0.0.1,::1";
-              idp-h-usr = "X-Tailscale-User";
             };
 
             volumes =

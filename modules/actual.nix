@@ -92,10 +92,9 @@ in {
           port = cfg.port;
           hostname = cfg.hostname;
           dataDir = cfg.dataDir;
-          loginMethod = "header";
-          allowedLoginMethods = ["header" "password"];
+          loginMethod = "password";
+          allowedLoginMethods = ["password"];
           trustedProxies = ["127.0.0.1" "::1"];
-          trustedAuthProxies = ["127.0.0.1/32" "::1/128"];
         };
       };
 
@@ -107,13 +106,11 @@ in {
                       if [[ "$HAS_AUTH" -eq 1 ]]; then
                         ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" <<'EOF'
           INSERT INTO auth (method, display_name, active)
-          SELECT 'header', 'Header', 1
-          WHERE EXISTS (SELECT 1 FROM auth WHERE method = 'password')
+          VALUES ('password', 'Password', 1)
           ON CONFLICT (method) DO UPDATE SET active = 1;
 
           UPDATE auth SET active = 0
-          WHERE method = 'password'
-            AND EXISTS (SELECT 1 FROM auth WHERE method = 'header' AND active = 1);
+          WHERE method = 'header';
           EOF
                       fi
                     fi

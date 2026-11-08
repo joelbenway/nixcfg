@@ -197,49 +197,25 @@ in {
     };
     environmentFile = config.age.secrets.cloudflare-api-env.path;
     extraConfig = ''
-      (tailscale_auth) {
-        map {remote_host} {ts_user} {
-          100.82.75.113 joel
-          100.117.132.66 joel
-          100.67.148.7 joel
-          100.77.161.1 joel
-          100.75.211.110 joel
-          100.74.22.119 katy
-          default ""
-        }
-        map {ts_user} {actual_pw} {
-          joel "snark"
-          katy "snark"
-          default ""
-        }
-      }
-
       files.benway.me {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
-        import tailscale_auth
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal} {
-          header_up X-Tailscale-User {ts_user}
-        }
+        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
       }
 
       budget.benway.me {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
-        import tailscale_auth
         header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal} {
-          header_up x-actual-password {actual_pw}
-        }
+        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
       }
 
       plaid.benway.me {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
-        import tailscale_auth
         reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
       }
 
@@ -247,7 +223,6 @@ in {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
         }
-        import tailscale_auth
         reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
 
@@ -256,27 +231,19 @@ in {
       }
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale} {
-        import tailscale_auth
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal} {
-          header_up X-Tailscale-User {ts_user}
-        }
+        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
       }
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.actual.tailscale} {
-        import tailscale_auth
         header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal} {
-          header_up x-actual-password {actual_pw}
-        }
+        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
       }
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.plaid.tailscale} {
-        import tailscale_auth
         reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
       }
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {
-        import tailscale_auth
         reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
     '';
