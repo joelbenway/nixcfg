@@ -93,20 +93,16 @@
       if ${lib.boolToString cfg.canary.checkDns}; then
         echo "==> [Canary] Verifying local DNS resolution and upstream forwarders..."
         DNS_OK=false
-        for _ in 1 2 3 4 5; do
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
           DNS_RES=$(dig @127.0.0.1 nixos.org +short +time=2 +tries=1 2>/dev/null || true)
-          if [ -n "$DNS_RES" ]; then
+          if [ -n "$DNS_RES" ] && getent hosts nixos.org >/dev/null 2>&1; then
             DNS_OK=true
             break
           fi
-          sleep 1
+          sleep 2
         done
         if [ "$DNS_OK" != true ]; then
-          echo "ERROR: Local DNS resolution query (@127.0.0.1 nixos.org) failed on ${hostname}!" >&2
-          exit 1
-        fi
-        if ! getent hosts nixos.org >/dev/null 2>&1; then
-          echo "ERROR: System hostname resolution (getent hosts nixos.org) failed on ${hostname}!" >&2
+          echo "ERROR: Local DNS resolution or system hostname resolution (dig @127.0.0.1 and getent hosts nixos.org) failed on ${hostname}!" >&2
           exit 1
         fi
       else
@@ -287,23 +283,50 @@
 
       configure_remotes "''${REPO_DIR}" "$ORIGIN_URL" "$ZITA_REMOTE_URL"
 
+      # Wait for network connectivity (up to 45 seconds, e.g. on resume from sleep)
+      echo "==> [Auto-Update] Verifying network connectivity before fetching..."
+      NET_OK=false
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if git ls-remote "$ORIGIN_URL" HEAD >/dev/null 2>&1 || \
+           ([ "$HOST_NAME" != "zita" ] && git ls-remote "$ZITA_REMOTE_URL" HEAD >/dev/null 2>&1); then
+          NET_OK=true
+          break
+        fi
+        sleep 3
+      done
+
+      if [ "$NET_OK" != true ]; then
+        echo "WARNING: Network not reachable after 45s wait; proceeding with fetch attempt..." >&2
+      fi
+
       # Fetch latest master from origin (falling back to zita if GitHub is unreachable, or vice-versa)
       FETCHED_REF=""
-      if git -C "''${REPO_DIR}" fetch --prune origin master 2>/dev/null; then
+      FETCH_ERROR=""
+      if FETCH_OUT=$(git -C "''${REPO_DIR}" fetch --prune origin master 2>&1); then
         FETCHED_REF="origin/master"
         if [ "$HOST_NAME" != "zita" ]; then
-          git -C "''${REPO_DIR}" fetch --prune zita master 2>/dev/null || true
+          git -C "''${REPO_DIR}" fetch --prune zita master >/dev/null 2>&1 || true
         fi
-      elif [ "$HOST_NAME" != "zita" ] && git -C "''${REPO_DIR}" fetch --prune zita master 2>/dev/null; then
-        echo "WARNING: GitHub unreachable; falling back to zita git mirror." >&2
-        FETCHED_REF="zita/master"
       else
+        FETCH_ERROR="origin: ''${FETCH_OUT}"
+        if [ "$HOST_NAME" != "zita" ]; then
+          if ZITA_FETCH_OUT=$(git -C "''${REPO_DIR}" fetch --prune zita master 2>&1); then
+            echo "WARNING: GitHub unreachable; falling back to zita git mirror." >&2
+            FETCHED_REF="zita/master"
+          else
+            FETCH_ERROR="''${FETCH_ERROR} | zita: ''${ZITA_FETCH_OUT}"
+          fi
+        fi
+      fi
+
+      if [ -z "$FETCHED_REF" ]; then
         echo "ERROR: Unable to fetch nixcfg updates from either origin or zita!" >&2
+        echo "$FETCH_ERROR" >&2
         nixos-auto-update-write-status \
           "update_failed" \
           "critical" \
           "Failed to fetch nixcfg updates on ${hostname}" \
-          "Unable to fetch nixcfg updates from either origin or zita."
+          "Unable to fetch nixcfg updates from either origin or zita: ''${FETCH_ERROR}"
         exit 1
       fi
 
@@ -315,29 +338,31 @@
 
       # Synchronize secrets submodule and configure both origin and zita remotes on it
       echo "==> [Auto-Update] Synchronizing secrets submodule..."
-      if ! git -C "''${REPO_DIR}" submodule update --init --recursive 2>/dev/null; then
+      if ! SUB_OUT=$(git -C "''${REPO_DIR}" submodule update --init --recursive 2>&1); then
         if [ "$HOST_NAME" != "zita" ]; then
           echo "Retrying secrets submodule fetch via zita mirror..."
           git -C "''${REPO_DIR}" config submodule.secrets.url "$ZITA_SECRETS_URL"
           if [ -d "''${REPO_DIR}/secrets/.git" ] || [ -f "''${REPO_DIR}/secrets/.git" ]; then
             git -C "''${REPO_DIR}/secrets" remote set-url origin "$ZITA_SECRETS_URL" 2>/dev/null || true
           fi
-          if ! git -C "''${REPO_DIR}" submodule update --init --recursive; then
+          if ! SUB_ZITA_OUT=$(git -C "''${REPO_DIR}" submodule update --init --recursive 2>&1); then
             echo "ERROR: Failed to update secrets submodule via zita mirror on ${hostname}!" >&2
+            echo "$SUB_ZITA_OUT" >&2
             nixos-auto-update-write-status \
               "update_failed" \
               "critical" \
               "Failed to synchronize secrets submodule on ${hostname}" \
-              "Could not update secrets submodule from origin or zita mirror."
+              "Could not update secrets submodule from origin (''${SUB_OUT}) or zita mirror (''${SUB_ZITA_OUT})."
             exit 1
           fi
         else
           echo "ERROR: Failed to update secrets submodule on ${hostname}!" >&2
+          echo "$SUB_OUT" >&2
           nixos-auto-update-write-status \
             "update_failed" \
             "critical" \
             "Failed to synchronize secrets submodule on ${hostname}" \
-            "Could not update secrets submodule on ${hostname}."
+            "Could not update secrets submodule on ${hostname}: ''${SUB_OUT}"
           exit 1
         fi
       fi
@@ -605,8 +630,13 @@
       TODAY=$(date +%Y-%m-%d)
 
       for host in ${lib.escapeShellArgs cfg.desktopNotifications.monitoredHosts}; do
-        URL="http://''${host}.${tailnet}:${toString cfg.statusServer.port}/status.json"
-        RESP=$(curl -fsS --max-time 3 "$URL" 2>/dev/null || true)
+        RESP=""
+        for target in "''${host}.${tailnet}" "''${host}.skylab.home" "''${host}"; do
+          URL="http://''${target}:${toString cfg.statusServer.port}/status.json"
+          if RESP=$(curl -fsS --max-time 2 "$URL" 2>/dev/null); then
+            [ -n "$RESP" ] && break
+          fi
+        done
         if [ -z "$RESP" ]; then
           continue
         fi
@@ -665,8 +695,8 @@ in {
 
     zitaHost = lib.mkOption {
       type = lib.types.str;
-      default = "zita.${tailnet}";
-      description = "Hostname of Zita on Tailscale for secondary Git remote and binary cache.";
+      default = "zita.skylab.home";
+      description = "Hostname of Zita for secondary Git remote and binary cache.";
     };
 
     secretsDeployKeyPath = lib.mkOption {
@@ -835,6 +865,7 @@ in {
       networking.firewall.interfaces."tailscale0".allowedTCPPorts = [cfg.statusServer.port];
       networking.firewall.extraInputRules = ''
         iifname "tailscale0" tcp dport ${toString cfg.statusServer.port} accept
+        ip saddr 192.168.0.0/16 tcp dport ${toString cfg.statusServer.port} accept
       '';
 
       systemd.services.nixos-auto-update-status = {
@@ -854,6 +885,10 @@ in {
 
     (lib.mkIf cfg.gitMirror.enable {
       networking.firewall.interfaces."tailscale0".allowedTCPPorts = [9418];
+      networking.firewall.extraInputRules = ''
+        iifname "tailscale0" tcp dport 9418 accept
+        ip saddr 192.168.0.0/16 tcp dport 9418 accept
+      '';
 
       systemd.services.nixos-auto-update-git-mirror = {
         description = "Read-only Git daemon serving nixcfg and nixos-secrets on Tailscale";

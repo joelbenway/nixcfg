@@ -114,6 +114,7 @@ in {
   tailscale = {
     enable = true;
     advertiseExitNode = true;
+    advertiseRoutes = ["192.168.77.0/24"];
     envFile = config.age.secrets.tailscale-oauth-env.path;
   };
 
@@ -175,8 +176,6 @@ in {
     dhcpcd.extraConfig = "nohook resolv.conf";
     nameservers = [
       "127.0.0.1" # Local Pi-hole + Unbound root recursive resolver
-      "9.9.9.9" # Quad9 primary (Swiss privacy foundation, zero-logging)
-      "149.112.112.112" # Quad9 secondary
     ];
 
     networkmanager.unmanaged = [
@@ -258,6 +257,9 @@ in {
         # skynet (guests) -> iot (casting to TVs/speakers)
         iifname "${network.vlans.skynet.interface}" oifname "${network.vlans.iot.interface}" accept
 
+        # Allow trusted internal zones (skylab + mgmt) to route to Tailscale
+        iifname {"${network.vlans.skylab.interface}", "${network.lanInterface}"} oifname "tailscale0" accept
+
         # Allow Tailscale to access trusted internal zone (skylab)
         iifname "tailscale0" oifname "${network.vlans.skylab.interface}" accept
       '';
@@ -280,6 +282,12 @@ in {
 
           # Reject IPv6 traffic attempting to route from Tailscale to WAN (no IPv6 internet on WAN)
           iifname "tailscale0" oifname "${network.wanInterface}" meta nfproto ipv6 reject with icmpv6 type no-route;
+        }
+
+        chain postrouting {
+          type nat hook postrouting priority srcnat; policy accept;
+          # Masquerade traffic from trusted internal zones forwarded to Tailscale so devices without Tailscale can reach Tailscale nodes
+          oifname "tailscale0" ip saddr 192.168.0.0/16 masquerade;
         }
       '';
     };
@@ -362,15 +370,35 @@ in {
               # Match WireGuard tunnel MTU (1420) for IoT DHCP clients
               "dhcp-option=tag:${network.vlans.iot.interface},option:mtu,1420"
 
+              # Never forward plain names (without a dot) to upstream resolvers
+              "domain-needed"
+
+              # Never forward reverse lookups for private address ranges upstream
+              "bogus-priv"
+
+              # Never forward queries for local domains upstream
+              "local=/home/"
+              "local=/skylab.home/"
+              "local=/skynet.home/"
+              "local=/iot.home/"
+              "local=/mgmt.home/"
+
+              # Automatically expand simple hostnames to include the domain
+              "expand-hosts"
+
               # Forward Tailscale MagicDNS queries from Pi-hole to Tailscale Quad-100 resolver
               "server=/${config.tailscale.tailnet}/100.100.100.100"
+              "server=/100.in-addr.arpa/100.100.100.100"
 
-              # Service CNAMEs pointing to Zita
-              "cname=files.benway.me,zita.${config.tailscale.tailnet}"
-              "cname=budget.benway.me,zita.${config.tailscale.tailnet}"
-              "cname=plaid.benway.me,zita.${config.tailscale.tailnet}"
-              "cname=jellyfin.benway.me,zita.${config.tailscale.tailnet}"
-              "cname=zita.home,zita.${config.tailscale.tailnet}"
+              # Static DNS host records for trusted LAN infrastructure
+              "host-record=zita,zita.skylab.home,zita.home,192.168.77.20"
+              "host-record=michael,michael.skylab.home,michael.home,192.168.77.1"
+
+              # Service CNAMEs pointing to Zita on local LAN (reachable with or without Tailscale)
+              "cname=files.benway.me,zita.skylab.home"
+              "cname=budget.benway.me,zita.skylab.home"
+              "cname=plaid.benway.me,zita.skylab.home"
+              "cname=jellyfin.benway.me,zita.skylab.home"
             ];
         };
       };
@@ -402,6 +430,26 @@ in {
           cache-max-ttl = 86400;
           prefetch = true;
           num-threads = 4;
+          domain-insecure = [
+            "home"
+            "skylab.home"
+            "skynet.home"
+            "iot.home"
+            "mgmt.home"
+            "internal"
+            "local"
+            config.tailscale.tailnet
+          ];
+          private-domain = [
+            "home"
+            "skylab.home"
+            "skynet.home"
+            "iot.home"
+            "mgmt.home"
+            "internal"
+            "local"
+            config.tailscale.tailnet
+          ];
         };
         forward-zone = [
           {

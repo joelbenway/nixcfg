@@ -171,14 +171,23 @@ in {
     };
   }; # jellyfin
 
-  networking.firewall.allowedTCPPorts = [
-    80
-    443
-    ports.copyparty.tailscale
-    ports.actual.tailscale
-    ports.plaid.tailscale
-    ports.jellyfin.tailscale
-  ];
+  networking = {
+    nameservers = ["192.168.77.1"];
+    firewall.allowedTCPPorts = [
+      80
+      443
+      ports.copyparty.tailscale
+      ports.actual.tailscale
+      ports.plaid.tailscale
+      ports.jellyfin.tailscale
+    ];
+  };
+
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    openFirewall = true;
+  };
 
   services.caddy = {
     enable = true;

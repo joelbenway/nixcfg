@@ -38,6 +38,7 @@ in {
       substituters = lib.mkOption {
         type = with lib.types; listOf str;
         default = [
+          "http://zita.skylab.home:5000"
           "http://zita.${config.tailscale.tailnet}:5000"
         ];
         description = "List of local binary cache substituter URLs";

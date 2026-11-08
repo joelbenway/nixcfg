@@ -304,13 +304,38 @@ in {
                       exit(0)
 
                   try:
-                      tree = ET.parse(places_file)
-                      root = tree.getroot()
-                      existing_urls = {b.get("href") for b in root.findall(".//bookmark")}
+                      with open(places_file, "r", encoding="utf-8") as f:
+                          xml_text = f.read()
+
+                      for prefix, uri in [
+                          ("bookmark", "http://www.freedesktop.org/standards/desktop-bookmarks"),
+                          ("ns0", "http://www.freedesktop.org/standards/desktop-bookmarks"),
+                          ("kdeprivate", "http://www.kde.org")
+                      ]:
+                          ET.register_namespace(prefix, uri)
+                          if f"xmlns:{prefix}" not in xml_text:
+                              xml_text = xml_text.replace("<xbel ", f"<xbel xmlns:{prefix}=\"{uri}\" ", 1)
+
+                      root = ET.fromstring(xml_text)
+                      tree = ET.ElementTree(root)
 
                       shares = json.loads(${lib.escapeShellArg sharesJson})
+                      target_urls = {url for url, _, _ in shares}
 
+                      # Clean up outdated hostname variants of managed SMB shares
                       changed = False
+                      for bm in list(root.findall(".//bookmark")):
+                          href = bm.get("href", "")
+                          if href.startswith("smb://") and href not in target_urls:
+                              for url, _, _ in shares:
+                                  share_path = "/" + url.rsplit("/", 1)[-1]
+                                  if href.endswith(share_path):
+                                      root.remove(bm)
+                                      changed = True
+                                      break
+
+                      existing_urls = {b.get("href") for b in root.findall(".//bookmark")}
+
                       for url, title, icon in shares:
                           if url not in existing_urls:
                               bm = ET.SubElement(root, "bookmark", href=url)
