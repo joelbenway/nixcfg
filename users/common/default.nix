@@ -319,7 +319,7 @@ in {
                       root = ET.fromstring(xml_text)
                       tree = ET.ElementTree(root)
 
-                      shares = json.loads(${lib.escapeShellArg sharesJson})
+                      shares = ${builtins.toJSON sharesList}
                       target_urls = {url for url, _, _ in shares}
 
                       # Clean up outdated hostname variants of managed SMB shares
