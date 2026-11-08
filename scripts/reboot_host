@@ -1,0 +1,329 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p bash coreutils openssh netcat jq age
+# shellcheck shell=bash
+# Copyright (c) Joel Benway
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+ROOT_DIR="${SCRIPT_DIR}/.."
+SECRETS_DIR="${ROOT_DIR}/secrets"
+
+TARGET_HOST=""
+TARGET_ADDRESS=""
+REMOTE_USER="${USER}"
+INITRD_PORT="2222"
+AUTO_UNLOCK=true
+AUTO_CONFIRM=false
+TIMEOUT=180
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+info() {
+  echo -e "${BLUE}==>${NC} $*"
+}
+
+success() {
+  echo -e "${GREEN}==>${NC} $*"
+}
+
+warn() {
+  echo -e "${YELLOW}WARNING:${NC} $*"
+}
+
+error() {
+  echo -e "${RED}ERROR:${NC} $*" >&2
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options] <hostname>
+
+Safely manage and monitor a reboot of a fleet machine, displaying recovery
+credentials and monitoring initrd SSH (port 2222) and stage-2 SSH (port 22).
+
+Arguments:
+  hostname             Target NixOS host (e.g., michael, zita, francis)
+
+Options:
+  -t, --target ADDR    Target IP or address (default: resolves <hostname>)
+  -u, --user USER      Remote SSH user with sudo access (default: '${USER}')
+  -p, --port PORT      Initrd SSH port (default: 2222)
+  --no-auto-unlock     Do not automatically submit LUKS passphrase to initrd SSH
+  -y, --yes            Skip reboot confirmation prompt
+  --timeout SECS       Max seconds to wait for reboot to complete (default: 180)
+  -h, --help           Show this help message
+EOF
+  exit 0
+}
+
+# Parse CLI options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t | --target)
+      TARGET_ADDRESS="$2"
+      shift 2
+      ;;
+    -u | --user)
+      REMOTE_USER="$2"
+      shift 2
+      ;;
+    -p | --port)
+      INITRD_PORT="$2"
+      shift 2
+      ;;
+    --no-auto-unlock)
+      AUTO_UNLOCK=false
+      shift
+      ;;
+    -y | --yes)
+      AUTO_CONFIRM=true
+      shift
+      ;;
+    --timeout)
+      TIMEOUT="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      if [[ -z "$TARGET_HOST" ]]; then
+        TARGET_HOST="$1"
+        shift
+      else
+        echo "Unexpected argument: $1" >&2
+        usage
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$TARGET_HOST" ]]; then
+  error "Missing required target hostname."
+  usage
+fi
+
+if [[ -z "$TARGET_ADDRESS" ]]; then
+  TARGET_ADDRESS="$TARGET_HOST"
+fi
+
+SSH_TARGET="${REMOTE_USER}@${TARGET_ADDRESS}"
+
+run_ssh() {
+  ssh -o BatchMode=yes -o ConnectTimeout=8 "${SSH_TARGET}" "$@"
+}
+
+SUDO_PW="${SUDO_PASSWORD:-}"
+
+init_sudo() {
+  if run_ssh "sudo -n true" &>/dev/null; then
+    return 0
+  fi
+  if [[ -z "$SUDO_PW" && -t 0 ]]; then
+    read -r -s -p "[sudo] password for ${REMOTE_USER}@${TARGET_ADDRESS}: " SUDO_PW
+    echo ""
+  fi
+}
+
+run_ssh_sudo() {
+  if [[ -n "$SUDO_PW" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "echo \"$SUDO_PW\" | sudo -S $*"
+  else
+    ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
+  fi
+}
+
+# 1. Connectivity Check
+info "Checking SSH connection to ${SSH_TARGET}..."
+if ! run_ssh "hostname" &>/dev/null; then
+  error "Unable to reach ${SSH_TARGET} via SSH. Ensure the host is reachable."
+  exit 1
+fi
+
+init_sudo
+
+REMOTE_HOSTNAME=$(run_ssh "hostname")
+info "Connected to remote host: ${REMOTE_HOSTNAME}"
+
+# 2. System and Kernel Status
+BOOTED_KERNEL=$(run_ssh "uname -r" 2>/dev/null || echo "unknown")
+info "Currently running kernel: ${BOOTED_KERNEL}"
+
+STATUS_JSON=$(run_ssh "cat /var/lib/nixos-auto-update/status.json 2>/dev/null" || echo "")
+if [[ -n "$STATUS_JSON" ]]; then
+  STATUS_SEV=$(echo "$STATUS_JSON" | jq -r '.severity // "info"')
+  STATUS_SUM=$(echo "$STATUS_JSON" | jq -r '.summary // "No summary"')
+  STATUS_DET=$(echo "$STATUS_JSON" | jq -r '.details // ""')
+  info "Auto-update status [${STATUS_SEV}]: ${STATUS_SUM}"
+  if [[ -n "$STATUS_DET" ]]; then
+    echo -e "   Details: ${STATUS_DET}"
+  fi
+fi
+
+# 3. Secure Boot & TPM Pre-flight Checks
+if run_ssh "command -v sbctl &>/dev/null"; then
+  info "Checking Secure Boot signatures via sbctl..."
+  if ! run_ssh_sudo "sbctl verify" &>/dev/null; then
+    warn "One or more EFI binaries failed sbctl verification! Secure Boot may prevent booting."
+    run_ssh_sudo "sbctl verify" || true
+  else
+    success "All EFI binaries in /boot passed Secure Boot verification."
+  fi
+fi
+
+if run_ssh "command -v tpm-reenroll &>/dev/null"; then
+  info "Checking TPM enrollment status..."
+  run_ssh_sudo "tpm-reenroll --status" 2>/dev/null | grep -E "Device:|SLOT|Enrolled PCRs" || true
+  if ! run_ssh_sudo "tpm-reenroll --check-reboot-safety" &>/dev/null; then
+    warn "TPM reboot safety check flagged potential PCR drift:"
+    run_ssh_sudo "tpm-reenroll --check-reboot-safety" 2>/dev/null || true
+  else
+    success "TPM pre-reboot safety checks passed."
+  fi
+fi
+
+# 4. Decrypt & Prepare LUKS Passphrase
+PASSPHRASE=""
+AGE_SECRET="${SECRETS_DIR}/${TARGET_HOST}-luks-passphrase.age"
+
+if [[ -f "$AGE_SECRET" ]]; then
+  # Try age identity paths
+  for id_key in "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/id_rsa" "/etc/ssh/ssh_host_ed25519_key"; do
+    if [[ -r "$id_key" ]]; then
+      if DEC=$(age -d -i "$id_key" "$AGE_SECRET" 2>/dev/null); then
+        PASSPHRASE="$DEC"
+        break
+      fi
+    fi
+  done
+fi
+
+# Fallback: check remote decrypted secret if not locally decrypted
+if [[ -z "$PASSPHRASE" ]]; then
+  REMOTE_PASSPHRASE=$(run_ssh_sudo "cat /run/agenix/${TARGET_HOST}-luks-passphrase.txt 2>/dev/null" || true)
+  if [[ -n "$REMOTE_PASSPHRASE" ]]; then
+    PASSPHRASE="$REMOTE_PASSPHRASE"
+  fi
+fi
+
+echo ""
+echo -e "${BOLD}==========================================================${NC}"
+echo -e "${BOLD}RECOVERY LUKS PASSPHRASE FOR ${TARGET_HOST}:${NC}"
+if [[ -n "$PASSPHRASE" ]]; then
+  echo -e "${GREEN}${BOLD}Passphrase: ${PASSPHRASE}${NC}"
+else
+  echo -e "${YELLOW}Could not automatically decrypt ${TARGET_HOST}-luks-passphrase.age.${NC}"
+fi
+echo -e "${BOLD}==========================================================${NC}"
+echo ""
+
+# 5. Confirmation
+if [[ "$AUTO_CONFIRM" != true ]]; then
+  read -r -p "Are you sure you want to reboot ${TARGET_HOST}? [y/N]: " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[yY]([eE][sS])?$ ]]; then
+    info "Reboot cancelled by user."
+    exit 0
+  fi
+fi
+
+# 6. Issue Reboot Command
+info "Sending reboot command to ${TARGET_HOST}..."
+run_ssh_sudo "systemctl reboot" 2>/dev/null || true
+
+START_TIME=$(date +%s)
+info "Monitoring host reboot cycle (Timeout: ${TIMEOUT}s)..."
+
+# 7. Wait for host to go down
+info "Waiting for ${TARGET_HOST} to disconnect..."
+DOWN=false
+for _ in $(seq 1 30); do
+  if ! nc -z -w 1 "${TARGET_ADDRESS}" 22 2>/dev/null; then
+    DOWN=true
+    success "${TARGET_HOST} has gone down."
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$DOWN" != true ]]; then
+  warn "Host did not drop port 22 within 30s; continuing to monitor..."
+fi
+
+# 8. Monitor for Initrd SSH or Stage-2 SSH
+UNLOCKED=false
+ONLINE=false
+
+while true; do
+  ELAPSED=$(( $(date +%s) - START_TIME ))
+  if [[ "$ELAPSED" -ge "$TIMEOUT" ]]; then
+    error "Timed out after ${TIMEOUT}s waiting for ${TARGET_HOST} to return!"
+    echo "If the host is in initrd, try connecting manually:"
+    echo "  ssh -p ${INITRD_PORT} root@${TARGET_ADDRESS}"
+    exit 1
+  fi
+
+  # Check Initrd SSH (port 2222)
+  if nc -z -w 1 "${TARGET_ADDRESS}" "${INITRD_PORT}" 2>/dev/null; then
+    info "Initrd SSH detected on port ${INITRD_PORT}!"
+    if [[ "$AUTO_UNLOCK" == true && -n "$PASSPHRASE" && "$UNLOCKED" == false ]]; then
+      info "Transmitting LUKS passphrase to initrd..."
+      if echo "$PASSPHRASE" | ssh -o StrictHostKeyChecking=accept-new \
+                                  -o UserKnownHostsFile=/dev/null \
+                                  -o LogLevel=ERROR \
+                                  -o ConnectTimeout=5 \
+                                  -p "${INITRD_PORT}" \
+                                  "root@${TARGET_ADDRESS}" \
+                                  "systemd-tty-ask-password-agent" 2>/dev/null; then
+        success "Passphrase successfully transmitted to initrd!"
+        UNLOCKED=true
+      else
+        warn "Failed to transmit passphrase automatically. You can unlock manually:"
+        echo "  ssh -p ${INITRD_PORT} root@${TARGET_ADDRESS} systemd-tty-ask-password-agent"
+      fi
+    fi
+  fi
+
+  # Check Stage-2 SSH (port 22)
+  if nc -z -w 1 "${TARGET_ADDRESS}" 22 2>/dev/null; then
+    if run_ssh "systemctl is-system-running 2>/dev/null" &>/dev/null; then
+      ONLINE=true
+      success "${TARGET_HOST} is back online in stage-2!"
+      break
+    fi
+  fi
+
+  sleep 2
+done
+
+# 9. Post-Reboot Verification
+echo ""
+success "=========================================================="
+success "${TARGET_HOST} reboot completed successfully in ${ELAPSED}s!"
+success "=========================================================="
+
+NEW_KERNEL=$(run_ssh "uname -r" 2>/dev/null || echo "unknown")
+UPTIME=$(run_ssh "uptime -p" 2>/dev/null || echo "unknown")
+SYSTEM_STATUS=$(run_ssh "systemctl is-system-running 2>/dev/null" || echo "unknown")
+
+echo -e "   Kernel:        ${NEW_KERNEL} (was: ${BOOTED_KERNEL})"
+echo -e "   Uptime:        ${UPTIME}"
+echo -e "   Systemd State: ${SYSTEM_STATUS}"
+
+if run_ssh "command -v tpm-reenroll &>/dev/null"; then
+  echo ""
+  info "Post-reboot TPM status:"
+  run_ssh "sudo tpm-reenroll --status" | grep -E "Device:|SLOT|Enrolled PCRs" || true
+fi
+
+echo ""
