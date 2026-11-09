@@ -173,10 +173,7 @@ in {
   }; # jellyfin
 
   networking = {
-    nameservers = [
-      "192.168.77.1"
-      "1.1.1.1"
-    ];
+    nameservers = ["192.168.77.1"];
     firewall.allowedTCPPorts = [
       80
       443
@@ -327,7 +324,7 @@ in {
       hosts = ["michael" "francis" "agnes" "jerome"];
     };
     canary.services = [
-      "harmonia"
+      "harmonia.socket"
       "caddy"
       "samba-smbd"
       "container@copyparty"

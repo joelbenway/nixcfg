@@ -842,7 +842,13 @@ in {
       systemd.services.nixos-boot-verify = {
         description = "Verify post-boot health canaries and promote bootctl oneshot entry to default";
         wantedBy = ["multi-user.target"];
-        after = ["network-online.target"] ++ (map (s: "${s}.service") cfg.canary.services);
+        after =
+          ["network-online.target"]
+          ++ (map (s:
+            if lib.hasSuffix ".socket" s || lib.hasSuffix ".service" s
+            then s
+            else "${s}.service")
+          cfg.canary.services);
         wants = ["network-online.target"];
         restartIfChanged = false;
         stopIfChanged = false;
