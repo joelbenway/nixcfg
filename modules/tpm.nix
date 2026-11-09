@@ -163,9 +163,11 @@
             reasons+=("Secure Boot is not currently active according to sbctl status")
           fi
           local verify_json
+          # Note: Lanzaboote uses thin stubs (/boot/EFI/Linux/*.efi) which verify raw kernels in /boot/EFI/nixos/ via SHA-256.
+          # Files in /boot/EFI/nixos/ (e.g. kernel-*.efi) are intentionally not Authenticode-signed and must be excluded.
           if ! verify_json=$(sbctl verify --json 2>/dev/null) || \
-             ! echo "$verify_json" | jq -e 'type == "array" and length > 0 and ([.[] | select(.is_signed == 0)] | length == 0)' >/dev/null 2>&1; then
-            reasons+=("One or more EFI binaries in /boot failed sbctl signature verification (PCR 7/boot failure risk)")
+             ! echo "$verify_json" | jq -e 'type == "array" and length > 0 and ([.[] | select(.file_name | test("/EFI/nixos/") | not) | select(.is_signed == 0)] | length == 0)' >/dev/null 2>&1; then
+            reasons+=("One or more EFI bootloader binaries in /boot failed sbctl signature verification (PCR 7/boot failure risk)")
           fi
         fi
 

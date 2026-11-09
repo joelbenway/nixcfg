@@ -174,11 +174,15 @@ fi
 # 3. Secure Boot & TPM Pre-flight Checks
 if run_ssh "command -v sbctl &>/dev/null"; then
   info "Checking Secure Boot signatures via sbctl..."
-  if ! run_ssh_sudo "sbctl verify" &>/dev/null; then
-    warn "One or more EFI binaries failed sbctl verification! Secure Boot may prevent booting."
+  # Note: Lanzaboote uses thin stubs (/boot/EFI/Linux/*.efi) which verify raw kernels in /boot/EFI/nixos/ via SHA-256.
+  # /boot/EFI/nixos/kernel-*.efi are NOT Authenticode-signed and must never be signed with sbctl sign.
+  UNSIGNED_EFI=$(run_ssh_sudo "sbctl verify --json 2>/dev/null" | jq -r '[.[] | select(.file_name | test("/EFI/nixos/") | not) | select(.is_signed == 0) | .file_name] | join(" ")' 2>/dev/null || echo "")
+  if [[ -n "$UNSIGNED_EFI" ]]; then
+    warn "One or more EFI bootloader/stub binaries failed sbctl verification: $UNSIGNED_EFI"
+    warn "Secure Boot may prevent booting."
     run_ssh_sudo "sbctl verify" || true
   else
-    success "All EFI binaries in /boot passed Secure Boot verification."
+    success "All EFI bootloader/stub binaries passed Secure Boot verification (Lanzaboote raw kernels excluded)."
   fi
 fi
 
