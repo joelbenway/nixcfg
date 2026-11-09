@@ -173,7 +173,10 @@ in {
   }; # jellyfin
 
   networking = {
-    nameservers = ["192.168.77.1"];
+    nameservers = [
+      "192.168.77.1"
+      "1.1.1.1"
+    ];
     firewall.allowedTCPPorts = [
       80
       443
