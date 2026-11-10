@@ -33,10 +33,83 @@ When a task requires a utility (e.g. `ffmpeg`, `poppler_utils`, `imagemagick`, `
 4. **Tool Availability**:
    Once the command exits with code `0`, your new tools are immediately live on your `PATH`.
 
-## 3. Service Management
-- **CLI Tools**: Tools provisioned via `rebuild-agent-env` are linked to `~/.nix-profile` and are live on `PATH` immediately. **No service restart is required** for CLI tools.
-- **Daemon Restart**: If a service restart is strictly necessary (e.g. after modifying background options or MCP servers), **never** run synchronous `systemctl restart hermes-agent` directly during a turn, as that terminates your own process mid-turn. Instead, schedule a detached restart and finish your reply to the user:
+## 3. Autonomous Model Provider & Configuration Updates
+You have full autonomy to change your primary model, auxiliary models, and fallback providers by declaring them in `extraSettings` within `/home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` (or `/var/lib/hermes/agent-env.nix`).
+
+### Pre-Configured API Credential Providers on Zita
+The host environment already injects encrypted API keys via Agenix into your daemon environment for the following providers:
+- `openrouter`: Full OpenRouter model library
+- `nvidia`: NVIDIA build endpoint (Nemotron, GLM, Llama, etc.)
+- `google`: Google Gemini API endpoint
+- `deepseek`: DeepSeek official API endpoint
+- `custom`: Local self-hosted endpoints (e.g. `http://localhost:8080/v1`)
+
+### Examples of Model Updates
+To update your models, edit `/home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` (or `/var/lib/hermes/agent-env.nix`):
+
+1. **Switch Primary Model to Nemotron 3.5 Lightning (NVIDIA)**:
+   ```nix
+   extraSettings = {
+     model = {
+       provider = "nvidia";
+       default = "nvidia/nemotron-3.5-lightning-30b-a3b";
+     };
+   };
+   ```
+
+2. **Switch Primary Model to DeepSeek V3 / Chat (OpenRouter)**:
+   ```nix
+   extraSettings = {
+     model = {
+       provider = "openrouter";
+       default = "deepseek/deepseek-chat";
+     };
+   };
+   ```
+
+3. **Update Auxiliary Roles (Review, Vision, Compression)**:
+   ```nix
+   extraSettings = {
+     auxiliary = {
+       review = {
+         provider = "nvidia";
+         model = "z-ai/glm-5.3-flash";
+       };
+       vision = {
+         provider = "google";
+         model = "gemma-4-31b-it";
+       };
+       compression = {
+         provider = "nvidia";
+         model = "nvidia/nemotron-3.5-lightning-30b-a3b";
+       };
+     };
+   };
+   ```
+
+### Applying Changes
+After editing `agent-env.nix`, simply execute:
 ```bash
-systemd-run --on-active=2s sudo systemctl restart hermes-agent
+rebuild-agent-env
 ```
+*(or `sudo rebuild-agent-env`)*
+
+The script automatically:
+1. Validates the Nix syntax.
+2. Synchronizes your leaf file with GitOps.
+3. Merges `extraSettings` directly into `~/.hermes/config.yaml`.
+4. Detects configuration changes and **automatically schedules a detached 2-second reload** (`systemd-run --on-active=2s systemctl restart hermes-agent`).
+
+## 4. Service Management & Avoiding Self-Termination
+- **Immediate Tool Use**: CLI tools added to `extraPackages` link immediately to `~/.nix-profile/bin`. No restart is needed.
+- **Automated Reload on Config Change**: Whenever `rebuild-agent-env` updates `config.yaml`, it automatically schedules a detached reload in 2 seconds.
+- **Forced Daemon Reload**: If you need to restart without config changes, run:
+  ```bash
+  rebuild-agent-env --restart
+  ```
+  or schedule a detached restart directly:
+  ```bash
+  sudo systemd-run --on-active=2s systemctl restart hermes-agent
+  ```
+- **CRITICAL**: **NEVER run synchronous `systemctl restart hermes-agent` directly during a turn.** A synchronous restart terminates your gateway process immediately mid-turn, destroying your current execution and aborting your conversation with the user. Always allow detached reload to give you time to return your final turn message.
 

@@ -10,16 +10,111 @@
   cfg = config.hermes;
   agentEnv = import ./agent-env.nix {inherit pkgs;};
 
+  # Script to merge leaf module extraSettings into Hermes's runtime config.yaml
+  syncConfig = pkgs.writeScriptBin "sync-hermes-config" ''
+    #!${pkgs.python3.withPackages (ps: [ps.ruamel-yaml])}/bin/python3
+    import copy
+    import json
+    import os
+    from pathlib import Path
+    import sys
+    from ruamel.yaml import YAML
+
+    if len(sys.argv) < 3:
+        print("Usage: sync-hermes-config <config_path> <extra_json>", file=sys.stderr)
+        sys.exit(1)
+
+    config_path = Path(sys.argv[1])
+    extra_json = sys.argv[2]
+
+    try:
+        extra = json.loads(extra_json)
+    except Exception as e:
+        print(f"ERROR: Failed to parse extraSettings JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(extra, dict):
+        print(f"WARNING: extraSettings is not a dictionary (type: {type(extra)}), skipping merge.", file=sys.stderr)
+        sys.exit(0)
+
+    if not extra:
+        print("==> No extraSettings to merge.")
+        sys.exit(0)
+
+    yaml = YAML(typ="safe", pure=True)
+    yaml.version = (1, 1)
+    yaml.default_flow_style = False
+    yaml.sort_base_mapping_type_on_output = False
+
+    existing = {}
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                existing = yaml.load(f) or {}
+        except Exception as e:
+            print(f"WARNING: Failed to read existing {config_path}: {e}", file=sys.stderr)
+
+    def deep_merge(base, override):
+        result = dict(base)
+        for k, v in override.items():
+            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                result[k] = deep_merge(result[k], v)
+            else:
+                result[k] = v
+        return result
+
+    merged = deep_merge(existing, extra)
+
+    if merged == existing:
+        print("==> Hermes configuration is already up to date.")
+        sys.exit(0)
+
+    tmp_path = config_path.with_suffix(".tmp")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        yaml.dump(merged, f)
+
+    if config_path.exists():
+        st = config_path.stat()
+        try:
+            os.chmod(tmp_path, st.st_mode)
+        except Exception:
+            pass
+        try:
+            os.chown(tmp_path, st.st_uid, st.st_gid)
+        except Exception:
+            pass
+    else:
+        try:
+            os.chmod(tmp_path, 0o660)
+        except Exception:
+            pass
+        if os.geteuid() == 0:
+            import pwd, grp
+            try:
+                uid = pwd.getpwnam("hermes").pw_uid
+                gid = grp.getgrnam("hermes").gr_gid
+                os.chown(tmp_path, uid, gid)
+            except Exception:
+                pass
+
+    tmp_path.replace(config_path)
+    print(f"==> Hermes configuration updated successfully at {config_path}")
+    sys.exit(42)
+  '';
+
   # Privilege-separated rebuild script
   rebuildScript = pkgs.writeShellApplication {
     name = "rebuild-agent-env";
     runtimeInputs = with pkgs; [
+      syncConfig
       nix
       nixos-rebuild
       git
       systemd
       coreutils
       findutils
+      gnugrep
     ];
     text = ''
       set -euo pipefail
@@ -119,11 +214,44 @@
         nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
       fi
 
-      # 4. Probing environment health
-      echo "==> [3/3] Probing active environment health..."
+      # 4. Sync declarative runtime settings (extraSettings) into config.yaml
+      echo "==> [3/4] Syncing declarative settings into config.yaml..."
+      CONFIG_CHANGED=0
+      CONFIG_FILE="''${HERMES_HOME}/.hermes/config.yaml"
+      EXTRA_JSON=$(nix-instantiate --eval --strict --json -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in (agentEnv.extraSettings or {})" 2>/dev/null || echo "{}")
+
+      SYNC_STATUS=0
+      sync-hermes-config "''${CONFIG_FILE}" "''${EXTRA_JSON}" || SYNC_STATUS=$?
+
+      if [ "$SYNC_STATUS" -eq 42 ]; then
+        CONFIG_CHANGED=1
+      elif [ "$SYNC_STATUS" -ne 0 ]; then
+        echo "WARNING: Failed to merge extraSettings into config.yaml (exit code: $SYNC_STATUS)" >&2
+      fi
+
+      # 5. Probing environment health
+      echo "==> [4/4] Probing active environment health..."
       if [ -d "''${PROFILE_PATH}/bin" ]; then
         PKG_COUNT=$(find "''${PROFILE_PATH}/bin" -maxdepth 1 -type l | wc -l)
         echo "==> Health check passed: ''${PKG_COUNT} binaries available at ''${PROFILE_PATH}/bin."
+      fi
+
+      RESTART_REQUESTED=0
+      for arg in "$@"; do
+        if [ "$arg" = "--restart" ]; then
+          RESTART_REQUESTED=1
+        fi
+      done
+
+      if [ "$CONFIG_CHANGED" -eq 1 ] || [ "$RESTART_REQUESTED" -eq 1 ]; then
+        echo "==> Model/runtime configuration changed (or --restart requested)."
+        echo "==> Scheduling detached background service restart in 2 seconds..."
+        if [ "$(id -u)" -eq 0 ]; then
+          systemd-run --on-active=2s systemctl restart hermes-agent
+        else
+          sudo systemd-run --on-active=2s systemctl restart hermes-agent
+        fi
+        echo "==> Service restart scheduled. Active conversation turn will complete cleanly."
       fi
 
       echo "==> [Agentic GitOps] Environment successfully updated and verified active!"
@@ -171,6 +299,7 @@ in {
 
     environment.systemPackages = [
       rebuildScript
+      syncConfig
       pkgs.signal-cli
       pkgs.qrencode
       (pkgs.writeShellScriptBin "hermes-chat" ''
@@ -246,6 +375,14 @@ in {
             }
             {
               command = "${pkgs.systemd}/bin/systemctl restart hermes-agent.service";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "${pkgs.systemd}/bin/systemd-run";
+              options = ["NOPASSWD"];
+            }
+            {
+              command = "/run/current-system/sw/bin/systemd-run";
               options = ["NOPASSWD"];
             }
           ];
@@ -423,6 +560,7 @@ in {
           git
           coreutils
           bashInteractive
+          systemd
         ]);
 
       environment.PATH = lib.mkForce (lib.concatStringsSep ":" [
