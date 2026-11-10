@@ -34,8 +34,9 @@ When a task requires a utility (e.g. `ffmpeg`, `poppler_utils`, `imagemagick`, `
    Once the command exits with code `0`, your new tools are immediately live on your `PATH`.
 
 ## 3. Service Management
-To restart the Hermes Agent daemon (e.g. after updating configuration options or MCP servers):
+- **CLI Tools**: Tools provisioned via `rebuild-agent-env` are linked to `~/.nix-profile` and are live on `PATH` immediately. **No service restart is required** for CLI tools.
+- **Daemon Restart**: If a service restart is strictly necessary (e.g. after modifying background options or MCP servers), **never** run synchronous `systemctl restart hermes-agent` directly during a turn, as that terminates your own process mid-turn. Instead, schedule a detached restart and finish your reply to the user:
 ```bash
-sudo systemctl restart hermes-agent
+systemd-run --on-active=2s sudo systemctl restart hermes-agent
 ```
 

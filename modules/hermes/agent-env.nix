@@ -19,9 +19,11 @@
   #   Compression:          nvidia (nvidia/nemotron-3.5-lightning-30b-a3b) - $0.00
   #   Fallbacks:            GLM 5.3 Flash ($0.00) -> Nemotron 3.5 Lightning ($0.00) -> Gemma 4 31B ($0.00) -> DeepSeek Flash (paid failover) -> Local Offline
   extraSettings = {
-    # Memory provider: Mnemosyne (local-first, SQLite, Hermes-native)
+    # Memory: built-in only (MEMORY.md / USER.md / SQLite)
     memory = {
-      provider = "mnemosyne";
+      memory_enabled = true;
+      user_profile_enabled = true;
+      provider = "builtin";
     };
 
     # You can customize or override any specific role below:

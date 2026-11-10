@@ -213,6 +213,7 @@ in {
       "d /var/lib/hermes/.hermes 0700 hermes hermes - -"
       "C ${cfg.runtimeLeafPath} 0664 hermes hermes - ${./agent-env.nix}"
       "z ${cfg.runtimeLeafPath} 0664 hermes hermes - -"
+      "z ${cfg.repoPath}/modules/hermes 2775 joel hermes - -"
       "z ${cfg.repoPath}/modules/hermes/agent-env.nix 0664 hermes hermes - -"
     ];
 
@@ -349,13 +350,14 @@ in {
         max_turns = 100;
         compression = {
           enabled = true;
-          threshold = 0.7;
+          threshold = 0.25;
           summary_model = "nvidia/nemotron-3.5-lightning-30b-a3b";
           protect_last_n = 5;
         };
         memory = {
           memory_enabled = true;
           user_profile_enabled = true;
+          provider = "builtin";
         };
         display = {
           compact = false;
