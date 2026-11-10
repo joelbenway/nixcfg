@@ -148,8 +148,6 @@
           inputs.gone-to-plaid.overlays.default
         ];
       }; # zita
-
-      "--system" = self.nixosConfigurations.zita;
     }; # nixosConfigurations
   };
 }
