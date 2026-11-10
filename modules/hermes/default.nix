@@ -119,8 +119,36 @@
     text = ''
       set -euo pipefail
 
-      REPO_PATH="''${1:-${cfg.repoPath}}"
-      HOST_NAME="''${2:-${cfg.hostName}}"
+      REPO_PATH="${cfg.repoPath}"
+      HOST_NAME="${cfg.hostName}"
+      FULL_SYSTEM=0
+      RESTART_REQUESTED=0
+      REPO_PATH_SET=0
+      HOST_NAME_SET=0
+
+      for arg in "$@"; do
+        case "$arg" in
+          --system)
+            FULL_SYSTEM=1
+            ;;
+          --restart)
+            RESTART_REQUESTED=1
+            ;;
+          -*)
+            echo "Unknown flag: $arg" >&2
+            ;;
+          *)
+            if [ "$REPO_PATH_SET" -eq 0 ]; then
+              REPO_PATH="$arg"
+              REPO_PATH_SET=1
+            elif [ "$HOST_NAME_SET" -eq 0 ]; then
+              HOST_NAME="$arg"
+              HOST_NAME_SET=1
+            fi
+            ;;
+        esac
+      done
+
       REPO_LEAF="''${REPO_PATH}/modules/hermes/agent-env.nix"
       RUNTIME_LEAF="${cfg.runtimeLeafPath}"
       HERMES_USER="hermes"
@@ -209,7 +237,7 @@
         chown -h -R "''${HERMES_USER}:''${HERMES_USER}" "''${HERMES_HOME}/.local" "''${HERMES_HOME}/.nix-profile" "''${PROFILE_PATH}"* 2>/dev/null || true
       fi
 
-      if [ "''${1:-}" = "--system" ] || [ "''${2:-}" = "--system" ]; then
+      if [ "$FULL_SYSTEM" -eq 1 ]; then
         echo "==> Full system switch requested (--system)..."
         nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
       fi
@@ -235,13 +263,6 @@
         PKG_COUNT=$(find "''${PROFILE_PATH}/bin" -maxdepth 1 -type l | wc -l)
         echo "==> Health check passed: ''${PKG_COUNT} binaries available at ''${PROFILE_PATH}/bin."
       fi
-
-      RESTART_REQUESTED=0
-      for arg in "$@"; do
-        if [ "$arg" = "--restart" ]; then
-          RESTART_REQUESTED=1
-        fi
-      done
 
       if [ "$CONFIG_CHANGED" -eq 1 ] || [ "$RESTART_REQUESTED" -eq 1 ]; then
         echo "==> Model/runtime configuration changed (or --restart requested)."
