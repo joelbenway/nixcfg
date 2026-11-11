@@ -310,7 +310,7 @@ in {
     }; # loader
   }; # boot
 
-  disko.devices = (import ./disks.nix {}).disko.devices;
+  disko.devices = (import ./disks.nix {inherit lib;}).disko.devices;
 
   fileSystems."/var/log".neededForBoot = true;
 
