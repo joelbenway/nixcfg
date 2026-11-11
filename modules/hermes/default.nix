@@ -447,7 +447,7 @@ in {
             node = pkgs.nodejs_22;
           };
       in
-        inputs.hermes-agent.packages.${pkgs.system}.default.override {inherit pmPackages;};
+        inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default.override {inherit pmPackages;};
 
       # Inject dependencies from leaf module
       extraPackages = agentEnv.extraPackages;

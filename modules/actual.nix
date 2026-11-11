@@ -128,6 +128,7 @@ in {
 
       services.gone-to-plaid = {
         enable = true;
+        package = inputs.gone-to-plaid.packages.${pkgs.stdenv.hostPlatform.system}.default;
         port = plaidCfg.port;
         dataDir = plaidCfg.dataDir;
         syncInterval = plaidCfg.syncInterval;
