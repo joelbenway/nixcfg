@@ -70,10 +70,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Run ShellCheck
-        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host
+        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host scripts/reboot_host scripts/sync_agent pkgs/auto-update/auto-update.sh pkgs/auto-update/boot-verify.sh pkgs/auto-update/canary.sh pkgs/auto-update/desktop-notify.sh pkgs/auto-update/write-status.sh
 
       - name: Check Shell Formatting with Shfmt
-        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host
+        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host scripts/reboot_host scripts/sync_agent pkgs/auto-update/auto-update.sh pkgs/auto-update/boot-verify.sh pkgs/auto-update/canary.sh pkgs/auto-update/desktop-notify.sh pkgs/auto-update/write-status.sh
 
   lint-workflows:
     name: Workflow Linting (Actionlint)

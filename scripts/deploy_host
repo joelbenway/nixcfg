@@ -14,6 +14,7 @@ TARGET_ADDRESS=""
 REMOTE_USER="${USER}"
 TEST_ONLY=false
 BUILD_HOST=""
+REMOTE_REPO="/home/joel/Projects/nixcfg"
 ASK_PASSWORD=true
 
 RED='\033[0;31m'

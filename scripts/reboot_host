@@ -266,10 +266,9 @@ fi
 
 # 8. Monitor for Initrd SSH or Stage-2 SSH
 UNLOCKED=false
-ONLINE=false
 
 while true; do
-  ELAPSED=$(( $(date +%s) - START_TIME ))
+  ELAPSED=$(($(date +%s) - START_TIME))
   if [[ "$ELAPSED" -ge "$TIMEOUT" ]]; then
     error "Timed out after ${TIMEOUT}s waiting for ${TARGET_HOST} to return!"
     echo "If the host is in initrd, try connecting manually:"
@@ -283,12 +282,12 @@ while true; do
     if [[ "$AUTO_UNLOCK" == true && -n "$PASSPHRASE" && "$UNLOCKED" == false ]]; then
       info "Transmitting LUKS passphrase to initrd..."
       if echo "$PASSPHRASE" | ssh -o StrictHostKeyChecking=accept-new \
-                                  -o UserKnownHostsFile=/dev/null \
-                                  -o LogLevel=ERROR \
-                                  -o ConnectTimeout=5 \
-                                  -p "${INITRD_PORT}" \
-                                  "root@${TARGET_ADDRESS}" \
-                                  "systemd-tty-ask-password-agent" 2>/dev/null; then
+        -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR \
+        -o ConnectTimeout=5 \
+        -p "${INITRD_PORT}" \
+        "root@${TARGET_ADDRESS}" \
+        "systemd-tty-ask-password-agent" 2>/dev/null; then
         success "Passphrase successfully transmitted to initrd!"
         UNLOCKED=true
       else
@@ -301,7 +300,6 @@ while true; do
   # Check Stage-2 SSH (port 22)
   if nc -z -w 1 "${TARGET_ADDRESS}" 22 2>/dev/null; then
     if run_ssh "systemctl is-system-running 2>/dev/null" &>/dev/null; then
-      ONLINE=true
       success "${TARGET_HOST} is back online in stage-2!"
       break
     fi

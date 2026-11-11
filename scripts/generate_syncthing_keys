@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i bash -p bash coreutils syncthing
+#! nix-shell -i bash -p agenix bash coreutils syncthing
 # shellcheck shell=bash
 # Copyright (c) Joel Benway
 # SPDX-License-Identifier: MIT
