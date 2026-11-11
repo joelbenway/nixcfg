@@ -81,7 +81,6 @@
     ripgrep
     sbctl
     tmux
-    # tpm2-tss
     tree
     vim
     wget
