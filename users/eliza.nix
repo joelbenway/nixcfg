@@ -18,6 +18,5 @@ in
     ];
     extraConfig = {
       plasma.users.eliza.discover = true;
-      users.users.eliza.password = "eliza";
     }; # extraConfig
   }
