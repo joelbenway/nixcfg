@@ -193,6 +193,10 @@ in {
     openFirewall = true;
   };
 
+  systemd.services.avahi-daemon.serviceConfig.ExecStartPre = [
+    "+${pkgs.coreutils}/bin/rm -f /run/avahi-daemon/pid"
+  ];
+
   services.caddy = {
     enable = true;
     package = pkgs.caddy.withPlugins {

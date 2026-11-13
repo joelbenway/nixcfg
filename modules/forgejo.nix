@@ -121,12 +121,40 @@ in {
       };
     };
 
-    # 2. Forgejo Actions Runner Daemon
+    # 2. Forgejo systemd service ordering and namespace hardening
+    systemd.services.forgejo-secrets = {
+      after = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      wants = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      serviceConfig = {
+        StateDirectory = "forgejo forgejo/custom forgejo/custom/conf forgejo/data";
+        StateDirectoryMode = "0750";
+        ReadWritePaths = lib.mkForce [cfg.dataDir];
+        ExecStartPre = [
+          "+${pkgs.coreutils}/bin/mkdir -p ${cfg.dataDir}/custom/conf ${cfg.dataDir}/data"
+          "+${pkgs.coreutils}/bin/chown -R forgejo:forgejo ${cfg.dataDir}"
+          "+${pkgs.coreutils}/bin/chmod -R 0750 ${cfg.dataDir}"
+        ];
+      };
+    };
+
+    systemd.services.forgejo = {
+      after = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      wants = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+    };
+
+    # 3. Forgejo Actions Runner Daemon
     systemd.services.forgejo-runner = lib.mkIf cfg.runner.enable {
       description = "Forgejo Actions Runner";
       wantedBy = ["multi-user.target"];
-      after = ["network.target" "forgejo.service" "podman.socket"];
-      wants = ["forgejo.service"];
+      after =
+        ["network.target" "forgejo.service" "podman.socket"]
+        ++ lib.optionals (config.impermanence.enable or false) [
+          "var-lib-forgejo-runner.mount"
+          "var-lib-forgejo.mount"
+        ];
+      wants =
+        ["forgejo.service"]
+        ++ lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo-runner.mount"];
       path = with pkgs; [
         bash
         coreutils
@@ -215,6 +243,11 @@ in {
 
     # Ensure backup directory and state directory permissions exist
     systemd.tmpfiles.rules = [
+      "d ${cfg.dataDir} 0750 forgejo forgejo -"
+      "d ${cfg.dataDir}/custom 0750 forgejo forgejo -"
+      "d ${cfg.dataDir}/custom/conf 0750 forgejo forgejo -"
+      "d ${cfg.dataDir}/data 0750 forgejo forgejo -"
+      "z ${cfg.dataDir} 0750 forgejo forgejo -"
       "d ${cfg.backupDir} 0750 forgejo forgejo -"
       "d /var/lib/forgejo-runner 0750 root root -"
     ];
