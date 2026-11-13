@@ -19,6 +19,11 @@ let
       internal = 8096;
       tailscale = 8097;
     };
+    forgejo = {
+      internal = 3001;
+      tailscale = 3002;
+      ssh = 2220;
+    };
 
     # Fleet & Infrastructure Services
     binaryCache = {

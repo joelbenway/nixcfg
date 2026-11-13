@@ -172,6 +172,8 @@ in {
     };
   }; # jellyfin
 
+  forgejo.enable = true;
+
   networking = {
     nameservers = ["192.168.77.1"];
     firewall.allowedTCPPorts = [
@@ -181,6 +183,7 @@ in {
       ports.actual.tailscale
       ports.plaid.tailscale
       ports.jellyfin.tailscale
+      ports.forgejo.tailscale
     ];
   };
 
@@ -227,6 +230,13 @@ in {
         reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
 
+      git.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
+      }
+
       ${hostname}.${config.tailscale.tailnet} {
         redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
       }
@@ -246,6 +256,10 @@ in {
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {
         reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.forgejo.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
       }
     '';
   };
@@ -329,6 +343,8 @@ in {
       "samba-smbd"
       "container@copyparty"
       "hermes-agent"
+      "smartd"
+      "forgejo"
     ];
     # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots
     reboot = {

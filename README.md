@@ -7,7 +7,7 @@ You may notice all the hosts in this flake are named after Catholic Saints. You 
 Agnes is a Dell E7270 laptop. Per Dell's naming scheme the E indicates that this is model has an E-port for old fashioned docking stations. The 7 indicates that this is more premium than a 5 or heaven forbid a 3. The 2 indicates this is the 12" model, and the 70 means that the 60 came out the year before and the 80 will come out next year. I am a big fan of this vintage of Latitude. This uses a magnesium and aluminum chassis Dell dubbed it’s “Tri-metal chassis” which passed MIL-STD 810G while being nice and thin. This era was the first to have features like 14nm silicon, a NVME drive, and TPM 2.0 but the last to have the underrated E-port. Agnes has the i7-6600U offering from Dell, but has been upgraded beyond what was available from the factory. It has a much nicer FHD IPS panel, 32GB of ram despite only officially supporting 16GB, and a 1TB Hynix P30 Gold. St. Agnes was martyred at age 12 or 13.
 
 ### francis
-Francis is an HP ProDesk 600 G4 desktop with an i5-8500T, 32GB of ram, and a 1TB NVMe drive. Another corporate relic saved from the trash, this one serves as a workstation. St. Francis of Assisi is famous for his radical solidarity with the poor. He begged for stones and used them to restore ruined chapels.
+Francis is an HP ProDesk 600 G4 desktop with an i5-8500T, 32GB of ram, and a 1TB NVMe drive. This one came from Mike of [computer upcycle project](https://computerupcycleproject.org/), a great organization that gives computers to people in need and installs nixos on computers in need. Francis is the star of my primary battlestation driving a HP Z32x DreamColor monitor and audioengine n22 amp with vintage Koss speakers. St. Francis of Assisi is famous for his radical solidarity with the poor. He begged for stones and used them to restore ruined chapels.
 
 ### jerome
 Jerome is a Dell E7470 laptop, pretty much the 14" version of agnes with similar upgrades to ram, nvme, lcd panel, and has been [me cleaned](https://github.com/corna/me_cleaner). One uncommon option jerome has is the i7-6650U processor featuring Intel's Iris iGPU rather than the vanilla Intel HD graphics. Jerome has been my daily driver these past few years and still feels as modern as the machines I use at work thanks to nixos. St. Jerome is a doctor of the Church and is most famous for translating the early bible into Latin.
@@ -19,7 +19,7 @@ Therese is a customized, zero-trust NixOS bootstrap installer ISO. The [build_is
 Michael is a HP Slim desktop with an i3-12100 and a dual 2.5GBE nic. It serves as a home firewall.  St. Michael the Archangel is the prince of the heavenly host and patron saint of soldiers, police, and the sick. Who better to guard the gate?
 
 ### zita
-Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 GB of ram. It was quite the prize when it was new in 2012 or so. It's secureboot is all old and quirky and it's TPM is 1.2, but otherwise it's aged well. This one was used as a controller for a video wall in Chicago. After selling it's expensive capture cards the machine was better than free. Now it heats my basement while serving files over Samba and [copyparty](https://github.com/9001/copyparty). St. Zita is the patron saint of domestic servants and is often depicted holding keys.
+Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 GB of ram. It was quite the prize when it was new in 2012 or so. It's secureboot is all old and quirky and it's TPM is 1.2, but otherwise it's aged well. This one was used as a controller for a video wall in Chicago. After selling it's expensive capture cards the machine was better than free. Now it heats my basement while serving files. St. Zita is the patron saint of domestic servants and is often depicted holding keys.
 
 ## Features
 * Multi-Host
@@ -29,17 +29,33 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * impermanence on root
 * secureboot using [lanzaboote](https://github.com/nix-community/lanzaboote)
 * declarative disk layout using [disko](https://github.com/nix-community/disko)
+* tpm-enabled unlocking of LUKS volumes
 * declarative firewall with VLAN routing and NAT
 * Zero-trust remote installer ISO with Tailscale and nixos-anywhere
-* Declarative AI agent environments with [Antigravity](./modules/antigravity.nix) (`agy` CLI + IDE) and [opencode](./modules/opencode.nix)
+* Distributed builds
+* Automated updates via github actions
 
 ## Areas of Note
 * My [firefox](./modules/firefox.nix) is quite nice with a hardened profile and all my extensions included.
 * [Brave](./modules/brave.nix) is similar to my firefox module, but maybe not as optimized.
-* [Tailscale](./modules/tailscale.nix) My tailscale module uses an oauth token that doesn't have to be rotated as often as an API key.
+* [Tailscale](./modules/tailscale.nix) My tailscale module uses an oauth token that doesn't have to be rotated for a fully declarative tailscale.
+* [SyncThing](./modules/syncthing.nix) My syncthing module is fully declarative with secrets in a agenix store.
 * [AI](./modules/llm.nix) I have a local ai module with llama-cpp and llama-swap others might find interesting.
-* [Antigravity](./modules/antigravity.nix) Configures Google's agentic development platform with separate options for the `agy` CLI and the Antigravity IDE, shared [MCP](./modules/mcp.nix) servers, and language tooling.
-* [Loadkeys](./modules/loadkeys.nix) A systemd user service that imports API keys into the session environment for tools like [opencode](./modules/opencode.nix) and [antigravity](./modules/antigravity.nix) as well as a shared [mcp](./modules/mcp.nix) server setup.
+* [Drive Health](./modules/smartd.nix) Fleet-wide S.M.A.R.T. monitoring daemon with automated daily short and weekly long self-tests, temperature alerting, and a unified `disk-health` CLI utility.
+* [Forgejo](./modules/forgejo.nix) Self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port 2220, featuring built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores.
+* [Hermes](./modules/hermes.nix) My Hermes module features a unique architecture: on an otherwise immutable NixOS system, Hermes can provision its own tools from nixpkgs and adjust runtime settings via a sandboxed leaf module (`agent-env.nix`) and a privilege-separated `rebuild-agent-env` script.
+
+## Documentation
+In-depth technical architecture, hardware specifications, operational runbooks, and Architectural Decision Records (ADRs) are maintained in the [`docs/`](./docs/index.md) directory formatted in the [Open Knowledge Format (OKF v0.2)](./docs/index.md):
+* [Fleet Overview & Ethos](./docs/architecture/fleet-overview.md)
+* [Storage Architecture & Tiering](./docs/architecture/storage-tiering.md)
+* [Network Routing & Perimeter Defense](./docs/architecture/network-routing.md)
+* [Security, Cryptography & Bootstrapping](./docs/architecture/security-model.md)
+* [Agentic AI Development](./docs/architecture/ai-development.md)
+* [Hermes Autonomous Agent Architecture](./docs/architecture/hermes-agent.md)
+* [Host Hardware Profiles](./docs/index.md#host-concepts--hardware-profiles) (`francis`, `zita`, `michael`, `agnes`, `jerome`, `therese`)
+* [Operational How-To Guides](./docs/index.md#operational-how-to-guides) (Bootstrapping, TPM2, Remote LUKS Unlock)
+* [Architectural Decision Records](./docs/index.md#architectural-decision-records-adrs)
 
 ## Get Started
 1. **Build the Installer ISO**:
@@ -56,21 +72,26 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
    ```
    This detects the online bootstrap node, verifies UEFI Setup Mode if Lanzaboote is enabled, stages LUKS passphrases and host keys in RAM, and installs the target configuration over SSH via `nixos-anywhere`.
 
-## Chicken-Egg
-To install one of the profiles that utilizes secrets, you'll first need a secret. The [therese](#therese) install ISO solves this bootstrap problem without storing master keys or full secrets repositories on the flash drive. The ISO only contains guest Wi-Fi credentials and a scoped, ephemeral Tailscale OAuth bootstrap key tagged `tag:bootstrap`. This provides network connectivity and isolated remote SSH access so that the target host's actual LUKS encryption keys and SSH host credentials can be safely deployed from the operator's machine during installation via [install_host](./scripts/install_host).
+### TPM2 Re-Enrollment & Status
+Check or re-seal LUKS encryption against hardware PCRs:
+```bash
+sudo tpm-reenroll --status   # Inspect keyslots and active PCR measurements
+sudo tpm-reenroll            # Re-enroll against current system PCRs
+sudo tpm-reenroll --force    # Wipe old tokens and generate fresh sealed keys
+```
 
-## Lanzaboote
-The [secureboot module](./modules/secureboot.nix) automates most of this process. When `secureboot.enable = true`, lanzaboote is configured with auto key generation and auto enrollment (including reboot). You just need to enable secureboot in your UEFI first — the module handles the rest on first boot.
+### Remote Headless LUKS Unlock
+When `zita` reboots, `michael` automatically detects and unlocks it over the network. To trigger manually:
+```bash
+zita-unlock                  # Transmits passphrase over initrd SSH
+```
+To unlock `michael` during boot:
+```bash
+ssh -p 2222 root@192.168.77.1
+```
 
-For reference, the manual steps are: generate keys using the ```sbctl``` package with ```sudo sbctl create-keys``` or ```sudo nix run nixpkgs#sbctl create-keys```. This will generate keys in /var/lib/sbctl. After this the platform keys can be deleted or reset from the system UEFI interface, secureboot enabled, and the bios password locked. The final step is to enroll the new keys with the command ```sudo sbctl enroll-keys --microsoft``` or ```sudo nix run nixpkgs#sbctl enroll-keys -- --microsoft```. The command ```bootctl status``` should confirm secure boot is enabled.
+---
 
-## TPM Unlock
-The [tpm module](./modules/tpm.nix) automates TPM enrollment. When `tpm.enable = true`, a oneshot systemd service checks each configured LUKS device and enrolls it with TPM2 if not already enrolled, using the passphrase from your agenix secrets. No manual steps required.
+## 📜 License
 
-A companion CLI utility `tpm-reenroll` (also aliased as `tpm-enroll`) is available system-wide:
-- `sudo tpm-reenroll` — Automatically re-enrolls configured LUKS devices against current system PCRs (using agenix secret or prompting interactively).
-- `sudo tpm-reenroll --status` — Displays current keyslots, TPM token bindings, and live system PCR measurements.
-- `sudo tpm-reenroll --force` — Forces wiping existing TPM tokens and generating fresh sealed keys.
-
-## License
 This project is licensed under the [MIT License](LICENSE).
