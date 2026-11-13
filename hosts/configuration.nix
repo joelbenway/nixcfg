@@ -90,4 +90,6 @@
     libinput.enable = true;
     pcscd.enable = true;
   }; # services
+
+  smartd.enable = true;
 }
