@@ -3,7 +3,6 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");

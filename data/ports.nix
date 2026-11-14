@@ -56,7 +56,7 @@ let
   # Flatten attributes to collect all assigned ports
   collectPorts = attrs:
     builtins.concatLists (
-      builtins.map (
+      map (
         val:
           if builtins.isInt val
           then [val]
