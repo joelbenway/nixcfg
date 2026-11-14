@@ -50,6 +50,26 @@ in {
       description = "Directory for automated daily compressed dumps";
     };
 
+    pam = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Enable Linux PAM host authentication for Forgejo";
+      };
+
+      emailDomain = lib.mkOption {
+        type = lib.types.str;
+        default = "benway.me";
+        description = "Default email domain for PAM auto-registered users";
+      };
+
+      adminUser = lib.mkOption {
+        type = lib.types.str;
+        default = "joel";
+        description = "Linux username to automatically grant site administrator privileges";
+      };
+    };
+
     runner = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -107,7 +127,9 @@ in {
         };
 
         service = {
-          DISABLE_REGISTRATION = true;
+          DISABLE_REGISTRATION = lib.mkDefault false;
+          ALLOW_ONLY_EXTERNAL_REGISTRATION = true;
+          SHOW_REGISTRATION_BUTTON = false;
           REQUIRE_SIGNIN_VIEW = false;
         };
 
@@ -140,7 +162,47 @@ in {
     systemd.services.forgejo = {
       after = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
       wants = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      preStart = lib.mkIf cfg.pam.enable (let
+        exe = "${cfg.package}/bin/forgejo";
+      in
+        lib.mkAfter ''
+          config='${cfg.dataDir}/custom/conf/app.ini'
+
+          # Ensure Linux PAM authentication source exists
+          if ! ${exe} admin auth list --config "$config" --work-path '${cfg.dataDir}' 2>/dev/null | grep -q "Linux PAM"; then
+            ${exe} admin auth add-pam \
+              --config "$config" \
+              --work-path '${cfg.dataDir}' \
+              --name "Linux PAM" \
+              --service-name "forgejo" \
+              --email-domain "${cfg.pam.emailDomain}" \
+              --active
+          fi
+
+          # Ensure admin user exists and is linked to PAM
+          if ! ${exe} admin user list --config "$config" --work-path '${cfg.dataDir}' 2>/dev/null | grep -q "${cfg.pam.adminUser}"; then
+            ${exe} admin user create \
+              --config "$config" \
+              --work-path '${cfg.dataDir}' \
+              --username "${cfg.pam.adminUser}" \
+              --email "${cfg.pam.adminUser}@${cfg.pam.emailDomain}" \
+              --admin \
+              --random-password
+          fi
+
+          PAM_ID=$(${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' "SELECT id FROM login_source WHERE type = 4 LIMIT 1;" 2>/dev/null || true)
+          if [ -n "$PAM_ID" ]; then
+            ${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' \
+              "UPDATE user SET login_type = 4, login_source = $PAM_ID, login_name = '${cfg.pam.adminUser}', is_admin = 1 WHERE name = '${cfg.pam.adminUser}';" 2>/dev/null || true
+          fi
+        '');
     };
+
+    # Enable Linux PAM service for Forgejo
+    security.pam.services.forgejo = lib.mkIf cfg.pam.enable {};
+
+    # Grant forgejo user membership in shadow group so PAM can verify /etc/shadow
+    users.users.forgejo.extraGroups = lib.mkIf cfg.pam.enable ["shadow"];
 
     # 3. Forgejo Actions Runner Daemon
     systemd.services.forgejo-runner = lib.mkIf cfg.runner.enable {
