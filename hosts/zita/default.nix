@@ -172,7 +172,10 @@ in {
     };
   }; # jellyfin
 
-  forgejo.enable = true;
+  forgejo = {
+    enable = true;
+    admin.passwordFile = config.age.secrets.joel-passphrase.path;
+  };
 
   networking = {
     nameservers = ["192.168.77.1"];
