@@ -24,6 +24,10 @@ let
       tailscale = 3002;
       ssh = 2220;
     };
+    vaultwarden = {
+      internal = 8222;
+      tailscale = 8223;
+    };
 
     # Fleet & Infrastructure Services
     binaryCache = {

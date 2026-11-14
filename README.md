@@ -43,6 +43,7 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * [AI](./modules/llm.nix) I have a local ai module with llama-cpp and llama-swap others might find interesting.
 * [Drive Health](./modules/smartd.nix) Fleet-wide S.M.A.R.T. monitoring daemon with automated daily short and weekly long self-tests, temperature alerting, and a unified `disk-health` CLI utility.
 * [Forgejo](./modules/forgejo.nix) Self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port 2220, featuring built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores.
+* [Vaultwarden](./modules/vaultwarden.nix) Self-hosted Bitwarden-compatible password manager (`vault.benway.me`) backed by SQLite with automated daily persistent backups, WebSocket sync, and Caddy reverse proxy.
 * [Hermes](./modules/hermes.nix) My Hermes module features a unique architecture: on an otherwise immutable NixOS system, Hermes can provision its own tools from nixpkgs and adjust runtime settings via a sandboxed leaf module (`agent-env.nix`) and a privilege-separated `rebuild-agent-env` script.
 
 ## Documentation

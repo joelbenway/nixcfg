@@ -76,6 +76,7 @@ Today, `zita` lives in the basement where it acts as the central storage applian
 * **[Nix Binary Cache (`nix-serve`)](../../modules/binary-cache.nix)**: Caches compiled Nix store paths locally and cryptographically signs them with a private key, dramatically accelerating rebuilds across all laptops and workstations.
 * **[Hermes Signal Bot](../../modules/hermes.nix)**: Automated alerting agent routing homelab notifications and backup reports securely over Signal messaging.
 * **[Forgejo Git Forge & Actions Runner](../../modules/forgejo.nix)**: Private, self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port `2220`. Features built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores for native Nix builds and Podman container workflows.
+* **[Vaultwarden Password Manager](../../modules/vaultwarden.nix)**: Private, Bitwarden-compatible password manager (`vault.benway.me`) backed by SQLite with automated daily persistent backups, WebSocket sync across clients, and Caddy reverse proxy.
 * **Distributed Nix Builder**: With 32 logical threads and 128GB of RAM, `zita` acts as the primary compilation beast for `agnes`, `jerome`, and `francis`.
 
 ---

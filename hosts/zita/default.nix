@@ -77,6 +77,13 @@ in {
         owner = "root";
         group = "root";
       };
+      vaultwarden-env = {
+        file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
+        name = "vaultwarden.env";
+        mode = "400";
+        owner = "vaultwarden";
+        group = "vaultwarden";
+      };
     }; # secrets
   }; # age
 
@@ -177,6 +184,11 @@ in {
     admin.passwordFile = config.age.secrets.joel-passphrase.path;
   };
 
+  vaultwarden = {
+    enable = true;
+    environmentFile = config.age.secrets.vaultwarden-env.path;
+  };
+
   networking = {
     nameservers = ["192.168.77.1"];
     firewall.allowedTCPPorts = [
@@ -187,6 +199,7 @@ in {
       ports.plaid.tailscale
       ports.jellyfin.tailscale
       ports.forgejo.tailscale
+      ports.vaultwarden.tailscale
     ];
   };
 
@@ -244,6 +257,13 @@ in {
         reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
       }
 
+      vault.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
+      }
+
       ${hostname}.${config.tailscale.tailnet} {
         redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
       }
@@ -267,6 +287,10 @@ in {
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.forgejo.tailscale} {
         reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.vaultwarden.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
       }
     '';
   };
@@ -352,6 +376,7 @@ in {
       "hermes-agent"
       "smartd"
       "forgejo"
+      "vaultwarden"
     ];
     # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots
     reboot = {

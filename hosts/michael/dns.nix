@@ -96,6 +96,7 @@ in {
               "cname=plaid.benway.me,zita.skylab.home"
               "cname=jellyfin.benway.me,zita.skylab.home"
               "cname=git.benway.me,zita.skylab.home"
+              "cname=vault.benway.me,zita.skylab.home"
             ];
         };
       };
