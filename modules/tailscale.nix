@@ -77,6 +77,11 @@
       extraDaemonFlags = lib.mkDefault [];
     }; # services.tailscale
 
+    boot.kernel.sysctl = lib.mkIf (config.tailscale.advertiseRoutes != [] || config.tailscale.advertiseExitNode) {
+      "net.ipv4.ip_forward" = true;
+      "net.ipv6.conf.all.forwarding" = true;
+    };
+
     systemd.services = {
       tailscaled-authenticate = lib.mkIf (config.tailscale.envFile != null) (let
         cfg = config.services.tailscale;
