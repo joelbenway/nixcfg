@@ -55,6 +55,12 @@
       default = [];
       description = "List of subnet routes (CIDR) to advertise via Tailscale";
     };
+
+    acceptRoutes = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether to accept subnet routes advertised by other Tailscale nodes";
+    };
   }; # options.tailscale
 
   config = lib.mkIf config.tailscale.enable {
@@ -62,7 +68,15 @@
       enable = true;
       openFirewall = true;
       extraUpFlags =
-        ["--reset" "--accept-routes" "--accept-dns=false"]
+        [
+          "--reset"
+          (
+            if config.tailscale.acceptRoutes
+            then "--accept-routes"
+            else "--accept-routes=false"
+          )
+          "--accept-dns=false"
+        ]
         ++ [
           (
             if config.tailscale.ssh
