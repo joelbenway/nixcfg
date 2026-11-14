@@ -135,6 +135,11 @@ in {
           ENABLED = true;
         };
 
+        security = {
+          MIN_PASSWORD_LENGTH = 4;
+          PASSWORD_COMPLEXITY = "off";
+        };
+
         session = {
           COOKIE_SECURE = true;
         };
@@ -201,6 +206,14 @@ in {
             --random-password
         fi
 
+        # Ensure user is site admin with native internal authentication before setting password
+        ${pkgs.util-linux}/bin/runuser -u forgejo -- ${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' \
+          "UPDATE user SET login_type = 0, login_source = 0, is_admin = 1 WHERE name = '${cfg.admin.username}';" 2>/dev/null || true
+
+        # Clean up obsolete PAM login source if present
+        ${pkgs.util-linux}/bin/runuser -u forgejo -- ${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' \
+          "DELETE FROM login_source WHERE type = 4;" 2>/dev/null || true
+
         if [ -s '${cfg.admin.passwordFile}' ]; then
           PASS="$(tr -d '\r\n' < '${cfg.admin.passwordFile}')"
           ${pkgs.util-linux}/bin/runuser -u forgejo -- ${cfg.package}/bin/forgejo admin user change-password \
@@ -211,10 +224,7 @@ in {
         fi
 
         ${pkgs.util-linux}/bin/runuser -u forgejo -- ${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' \
-          "UPDATE user SET login_type = 0, login_source = 0, is_admin = 1, must_change_password = 0 WHERE name = '${cfg.admin.username}';" 2>/dev/null || true
-
-        ${pkgs.util-linux}/bin/runuser -u forgejo -- ${pkgs.sqlite}/bin/sqlite3 '${cfg.dataDir}/data/forgejo.db' \
-          "DELETE FROM login_source WHERE type = 4;" 2>/dev/null || true
+          "UPDATE user SET must_change_password = 0 WHERE name = '${cfg.admin.username}';" 2>/dev/null || true
       '';
     };
 
