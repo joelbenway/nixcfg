@@ -122,6 +122,9 @@ in {
           type nat hook postrouting priority srcnat; policy accept;
           # Masquerade traffic from trusted internal zones forwarded to Tailscale so devices without Tailscale can reach Tailscale nodes
           oifname "tailscale0" ip saddr 192.168.0.0/16 masquerade;
+
+          # Masquerade traffic from Tailscale to internal networks so LAN devices (especially those also running Tailscale like Zita) reply back through Michael
+          iifname "tailscale0" oifname != "tailscale0" masquerade;
         }
       '';
     };
