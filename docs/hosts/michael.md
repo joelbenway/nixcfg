@@ -82,6 +82,8 @@ tags:
 ---
 
 ## Related Documents
+* [Home Network Topology & Infrastructure](../architecture/network-architecture.md)
+* [Interactive Network Explorer (HTML)](../architecture/network-diagram.html)
 * [Network Routing & Perimeter Defense](../architecture/network-routing.md)
 * [Remote LUKS Unlocking over SSH](../howto/remote-luks-unlock.md)
 * [Fleet Overview & Ethos](../architecture/fleet-overview.md)

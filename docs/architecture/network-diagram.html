@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NixCFG Homelab • Interactive Network Architecture Explorer</title>
+  <meta name="description" content="Interactive topology diagram and technical specifications for Joel's NixOS homelab network: 2.5GbE core routing, KeepLINK switch, Zyxel WiFi 7 AP, 802.1Q VLANs, and Tailscale mesh.">
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-surface: #111827;
+      --bg-card: #1e293b;
+      --bg-card-hover: #283548;
+      --border-subtle: #334155;
+      --border-glow: #38bdf8;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      
+      --vlan-skylab: #0284c7;
+      --vlan-skylab-glow: #38bdf8;
+      --vlan-skynet: #d97706;
+      --vlan-skynet-glow: #fbbf24;
+      --vlan-iot: #e11d48;
+      --vlan-iot-glow: #f43f5e;
+      --vlan-mgmt: #6366f1;
+      --vlan-mgmt-glow: #818cf8;
+      --vlan-oob: #eab308;
+      --vlan-tailscale: #8b5cf6;
+      --vlan-wan: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      background: rgba(17, 24, 39, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 20;
+      gap: 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #2563eb, #38bdf8);
+      color: white;
+      font-weight: 800;
+      font-size: 13px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .brand-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .view-controls {
+      display: flex;
+      align-items: center;
+      background: #0f172a;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .view-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .view-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .view-btn.active {
+      background: #1e293b;
+      color: var(--border-glow);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-btn {
+      background: #1e293b;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      text-decoration: none;
+    }
+
+    .action-btn:hover {
+      background: #334155;
+      color: var(--text-main);
+      border-color: #475569;
+    }
+
+    /* Main Layout */
+    .app-container {
+      display: flex;
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Diagram Canvas */
+    .canvas-container {
+      flex: 1;
+      height: 100%;
+      position: relative;
+      background: radial-gradient(circle at 50% 50%, #111827 0%, #070a12 100%);
+      overflow: hidden;
+      cursor: grab;
+    }
+
+    .canvas-container:active {
+      cursor: grabbing;
+    }
+
+    .svg-wrapper {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform-origin: 50% 50%;
+      transition: transform 0.1s ease-out;
+    }
+
+    .svg-wrapper svg {
+      width: 95%;
+      max-height: 95%;
+      user-select: none;
+    }
+
+    /* Interactive Node States in SVG */
+    .interactive-node {
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .interactive-node:hover rect {
+      filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.6));
+      stroke: #38bdf8 !important;
+      stroke-width: 2px !important;
+    }
+
+    .interactive-node.selected rect {
+      filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.9));
+      stroke: #38bdf8 !important;
+      stroke-width: 2.5px !important;
+    }
+
+    /* Dimming inactive classes during filters */
+    .dimmed {
+      opacity: 0.15 !important;
+      transition: opacity 0.3s ease;
+    }
+
+    .highlighted {
+      opacity: 1 !important;
+      filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.5));
+      transition: all 0.3s ease;
+    }
+
+    /* Zoom / Overlay Controls */
+    .canvas-tools {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 6px;
+      z-index: 10;
+    }
+
+    .tool-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tool-btn:hover {
+      background: #334155;
+      color: var(--text-main);
+    }
+
+    /* Inspector Sidebar */
+    .sidebar {
+      width: 380px;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(16px);
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      z-index: 15;
+      transition: transform 0.3s ease;
+    }
+
+    .sidebar.closed {
+      transform: translateX(100%);
+      margin-left: -380px;
+    }
+
+    .sidebar-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sidebar-title-group h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .sidebar-title-group p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .close-btn:hover {
+      background: #334155;
+      color: var(--text-main);
+    }
+
+    .sidebar-body {
+      padding: 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .detail-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .detail-card h4 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .prop-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .prop-row:last-child {
+      border-bottom: none;
+    }
+
+    .prop-label {
+      color: var(--text-muted);
+    }
+
+    .prop-value {
+      font-weight: 600;
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-skylab { background: rgba(2, 132, 199, 0.2); color: #38bdf8; border: 1px solid #0284c7; }
+    .badge-skynet { background: rgba(217, 119, 6, 0.2); color: #fbbf24; border: 1px solid #d97706; }
+    .badge-iot { background: rgba(225, 29, 72, 0.2); color: #f43f5e; border: 1px solid #e11d48; }
+    .badge-mgmt { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid #6366f1; }
+    .badge-tailscale { background: rgba(139, 92, 246, 0.2); color: #c084fc; border: 1px solid #8b5cf6; }
+
+    .service-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .service-pill {
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .service-pill span {
+      color: #38bdf8;
+      font-family: monospace;
+    }
+
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border-subtle);
+      background: #0b0f19;
+      font-size: 12px;
+    }
+
+    .sidebar-footer a {
+      color: #38bdf8;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sidebar-footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Modal / Bottom Sheet Quick Reference */
+    .quick-specs-toggle {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 10;
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .sidebar {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+        max-width: 360px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== HEADER ==================== -->
+  <header>
+    <div class="header-left">
+      <div class="brand-badge">OKF v0.2</div>
+      <div>
+        <div class="brand-title">Home Network Topology &amp; Architecture Explorer</div>
+        <div class="brand-sub">Joel's NixOS Homelab Fleet • HP Slim Core Router, KeepLINK 2.5G Switch &amp; Zyxel WiFi 7 AP</div>
+      </div>
+    </div>
+
+    <!-- Interactive Layer & Filter Controls -->
+    <div class="view-controls">
+      <button class="view-btn active" onclick="setViewMode('all')">Complete Topology</button>
+      <button class="view-btn" onclick="setViewMode('physical')">Physical Ports</button>
+      <button class="view-btn" onclick="setViewMode('vlan')">VLAN Zones</button>
+      <button class="view-btn" onclick="setViewMode('security')">Firewall &amp; Egress</button>
+      <button class="view-btn" onclick="setViewMode('tailscale')">Tailscale Mesh</button>
+    </div>
+
+    <div class="header-actions">
+      <button class="action-btn" onclick="toggleSidebar()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        Inspector
+      </button>
+      <a href="./network-diagram.svg" download="network-diagram.svg" class="action-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Save SVG
+      </a>
+      <a href="./network-architecture.md" class="action-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        Docs (MD)
+      </a>
+    </div>
+  </header>
+
+  <!-- ==================== APP BODY ==================== -->
+  <div class="app-container">
+    
+    <!-- Canvas with Pan & Zoom -->
+    <div class="canvas-container" id="canvasContainer">
+      <div class="svg-wrapper" id="svgWrapper">
+        <!-- Embed SVG directly for fine-grained DOM interactivity -->
+        <svg id="networkSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 980" width="100%" height="100%">
+          <defs>
+            <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#0b0f19"/>
+              <stop offset="50%" stop-color="#111827"/>
+              <stop offset="100%" stop-color="#070a12"/>
+            </linearGradient>
+            <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+              <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+            </linearGradient>
+            <linearGradient id="routerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.8"/>
+              <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+            </linearGradient>
+            <linearGradient id="switchGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+              <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+            </linearGradient>
+
+            <linearGradient id="wanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#059669" stop-opacity="0.15"/>
+              <stop offset="100%" stop-color="#10b981" stop-opacity="0.05"/>
+            </linearGradient>
+            <linearGradient id="skylabGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#0284c7" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#0369a1" stop-opacity="0.03"/>
+            </linearGradient>
+            <linearGradient id="skynetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#d97706" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#b45309" stop-opacity="0.03"/>
+            </linearGradient>
+            <linearGradient id="iotGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#e11d48" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#be123c" stop-opacity="0.03"/>
+            </linearGradient>
+            <linearGradient id="tailscaleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.15"/>
+              <stop offset="100%" stop-color="#6d28d9" stop-opacity="0.05"/>
+            </linearGradient>
+
+            <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.5"/>
+            </filter>
+
+            <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 8 5 L 0 9 z" fill="#64748b" />
+            </marker>
+            <marker id="arrowCyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
+            </marker>
+            <marker id="arrowEmerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+            </marker>
+            <marker id="arrowPurple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 8 5 L 0 9 z" fill="#a855f7" />
+            </marker>
+          </defs>
+
+          <!-- Background Base -->
+          <rect width="1440" height="980" fill="url(#bgGrad)"/>
+          
+          <!-- Subtle Grid Pattern -->
+          <g opacity="0.04" stroke="#94a3b8" stroke-width="1">
+            <path d="M 0,0 L 1440,0 M 0,100 L 1440,100 M 0,200 L 1440,200 M 0,300 L 1440,300 M 0,400 L 1440,400 M 0,500 L 1440,500 M 0,600 L 1440,600 M 0,700 L 1440,700 M 0,800 L 1440,800 M 0,900 L 1440,900" />
+            <path d="M 0,0 L 0,980 M 100,0 L 100,980 M 200,0 L 200,980 M 300,0 L 300,980 M 400,0 L 400,980 M 500,0 L 500,980 M 600,0 L 600,980 M 700,0 L 700,980 M 800,0 L 800,980 M 900,0 L 900,980 M 1000,0 L 1000,980 M 1100,0 L 1100,980 M 1200,0 L 1200,980 M 1300,0 L 1300,980 M 1400,0 L 1400,980" />
+          </g>
+
+          <!-- ==================== WAN ZONE ==================== -->
+          <g id="zone-wan" class="interactive-node" data-node="wan" onclick="inspectNode('wan')" transform="translate(40, 90)">
+            <rect x="0" y="0" width="360" height="225" rx="12" fill="url(#wanGrad)" stroke="#10b981" stroke-opacity="0.4" stroke-width="1" filter="url(#shadow)"/>
+            <rect x="16" y="14" width="8" height="8" rx="2" fill="#10b981"/>
+            <text x="32" y="22" font-size="13" font-weight="700" fill="#6ee7b7" letter-spacing="0.5">EXTERNAL WAN &amp; ISP</text>
+
+            <rect x="20" y="42" width="320" height="68" rx="8" fill="url(#cardGrad)" stroke="#334155" stroke-width="1"/>
+            <text x="36" y="66" font-size="14" font-weight="700" fill="#f8fafc">Upstream ISP Modem / ONT</text>
+            <text x="36" y="85" font-size="11" fill="#94a3b8">Public IPv4 Dynamic DHCP • High-Speed Fiber</text>
+            <rect x="250" y="54" width="75" height="20" rx="4" fill="#10b981" fill-opacity="0.15" stroke="#10b981" stroke-width="1"/>
+            <text x="261" y="68" font-size="10" font-weight="700" fill="#34d495">2.5 Gbps</text>
+
+            <g transform="translate(20, 122)">
+              <rect x="0" y="0" width="155" height="85" rx="8" fill="#0f172a" stroke="#059669" stroke-width="1"/>
+              <text x="12" y="22" font-size="12" font-weight="700" fill="#34d495">CAKE SQM</text>
+              <text x="12" y="38" font-size="10" fill="#94a3b8">Bufferbloat Killer</text>
+              <text x="12" y="54" font-size="10" fill="#cbd5e1">• Down: 275 Mbps</text>
+              <text x="12" y="68" font-size="10" fill="#cbd5e1">• Up: 45 Mbps (diffserv4)</text>
+
+              <rect x="165" y="0" width="155" height="85" rx="8" fill="#0f172a" stroke="#8b5cf6" stroke-width="1"/>
+              <text x="177" y="22" font-size="12" font-weight="700" fill="#c084fc">PIA VPN Gateway</text>
+              <text x="177" y="38" font-size="10" fill="#94a3b8">WireGuard us_chicago</text>
+              <text x="177" y="54" font-size="10" fill="#cbd5e1">• Routed: IoT (VLAN 69)</text>
+              <text x="177" y="68" font-size="10" fill="#cbd5e1">• KillSwitch: Active</text>
+            </g>
+          </g>
+
+          <!-- ==================== MICHAEL ROUTER ==================== -->
+          <g id="node-michael" class="interactive-node" data-node="michael" onclick="inspectNode('michael')" transform="translate(440, 90)">
+            <rect x="0" y="0" width="560" height="225" rx="12" fill="url(#routerGrad)" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+            
+            <g transform="translate(24, 20)">
+              <rect x="0" y="0" width="10" height="10" rx="2" fill="#60a5fa"/>
+              <text x="18" y="10" font-size="16" font-weight="800" fill="#ffffff" letter-spacing="0.5">michael • Core Perimeter Router &amp; Gateway</text>
+              <text x="18" y="28" font-size="12" fill="#93c5fd">HP Slim S01 • Intel i3-12100 (4C/8T) • 16GB DDR4 • NixOS Impermanence</text>
+            </g>
+
+            <g transform="translate(24, 64)">
+              <!-- WAN Port -->
+              <rect x="0" y="0" width="155" height="64" rx="6" fill="#0f172a" stroke="#10b981" stroke-width="1.5"/>
+              <text x="12" y="20" font-size="11" font-weight="700" fill="#6ee7b7">enp3s0 (WAN)</text>
+              <text x="12" y="36" font-size="10" fill="#cbd5e1">2.5GbE PCIe Port 1</text>
+              <text x="12" y="50" font-size="10" fill="#94a3b8">DHCP Client • CAKE SQM</text>
+
+              <!-- LAN Trunk Port -->
+              <rect x="175" y="0" width="175" height="64" rx="6" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="12" y="20" font-size="11" font-weight="700" fill="#38bdf8">enp4s0 (LAN Trunk)</text>
+              <text x="12" y="36" font-size="10" fill="#cbd5e1">2.5GbE PCIe Port 2</text>
+              <text x="12" y="50" font-size="10" fill="#94a3b8">802.1Q (VLAN 1,62,69,77)</text>
+
+              <!-- OOB Rescue Port -->
+              <rect x="370" y="0" width="142" height="64" rx="6" fill="#0f172a" stroke="#eab308" stroke-width="1.5"/>
+              <text x="12" y="20" font-size="11" font-weight="700" fill="#facc15">enp5s0 (OOB Rescue)</text>
+              <text x="12" y="36" font-size="10" fill="#cbd5e1">1GbE Onboard NIC</text>
+              <text x="12" y="50" font-size="10" fill="#eab308">192.168.99.1/24</text>
+            </g>
+
+            <!-- Services Strip -->
+            <g transform="translate(24, 140)">
+              <rect x="0" y="0" width="512" height="70" rx="8" fill="#090d16" stroke="#1e293b" stroke-width="1"/>
+              
+              <g transform="translate(16, 14)">
+                <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">Pi-hole FTL</text>
+                <text x="0" y="30" font-size="10" fill="#94a3b8">Port 53 • Groups</text>
+                <text x="0" y="44" font-size="9" fill="#64748b">VLAN Ad Filtering</text>
+              </g>
+              <line x1="135" y1="10" x2="135" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+              <g transform="translate(150, 14)">
+                <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">Unbound Resolver</text>
+                <text x="0" y="30" font-size="10" fill="#94a3b8">Port 5353 • Root</text>
+                <text x="0" y="44" font-size="9" fill="#64748b">DNSSEC Recursive</text>
+              </g>
+              <line x1="275" y1="10" x2="275" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+              <g transform="translate(290, 14)">
+                <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">hnsd Handshake</text>
+                <text x="0" y="30" font-size="10" fill="#94a3b8">Port 5350 • Root</text>
+                <text x="0" y="44" font-size="9" fill="#64748b">Decentralized TLD</text>
+              </g>
+              <line x1="400" y1="10" x2="400" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+              <g transform="translate(415, 14)">
+                <text x="0" y="14" font-size="12" font-weight="700" fill="#facc15">Initrd SSH</text>
+                <text x="0" y="30" font-size="10" fill="#94a3b8">Port 2222 • Remote</text>
+                <text x="0" y="44" font-size="9" fill="#eab308">LUKS Unlocking</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- ==================== TAILSCALE OVERLAY ==================== -->
+          <g id="node-tailscale" class="interactive-node" data-node="tailscale" onclick="inspectNode('tailscale')" transform="translate(1040, 90)">
+            <rect x="0" y="0" width="360" height="225" rx="12" fill="url(#tailscaleGrad)" stroke="#a855f7" stroke-opacity="0.4" stroke-width="1" filter="url(#shadow)"/>
+            <rect x="16" y="14" width="8" height="8" rx="2" fill="#c084fc"/>
+            <text x="32" y="22" font-size="13" font-weight="700" fill="#e9d5ff" letter-spacing="0.5">TAILSCALE MESH OVERLAY</text>
+
+            <g transform="translate(20, 42)">
+              <rect x="0" y="0" width="320" height="165" rx="8" fill="url(#cardGrad)" stroke="#334155" stroke-width="1"/>
+              <text x="16" y="24" font-size="13" font-weight="700" fill="#f8fafc">Tailnet Mesh (100.64.0.0/10)</text>
+              
+              <g transform="translate(16, 40)">
+                <circle cx="4" cy="6" r="3" fill="#c084fc"/>
+                <text x="14" y="10" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Exit Node:</tspan> michael routes outbound traffic</text>
+
+                <circle cx="4" cy="28" r="3" fill="#c084fc"/>
+                <text x="14" y="32" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Subnet Router:</tspan> Advertises 192.168.77.0/24</text>
+
+                <circle cx="4" cy="50" r="3" fill="#c084fc"/>
+                <text x="14" y="54" font-size="11" fill="#cbd5e1"><tspan font-weight="700">MagicDNS:</tspan> 100.100.100.100 forwarding</text>
+
+                <circle cx="4" cy="72" r="3" fill="#c084fc"/>
+                <text x="14" y="76" font-size="11" fill="#cbd5e1"><tspan font-weight="700">MSS Clamped:</tspan> 1220 bytes (no black holes)</text>
+
+                <circle cx="4" cy="94" r="3" fill="#c084fc"/>
+                <text x="14" y="98" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Fleet Nodes:</tspan> michael, zita, francis, laptops</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- Interconnect Cables -->
+          <path id="cable-wan" d="M 360,140 L 440,140" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowEmerald)"/>
+          <path id="cable-tailscale" d="M 1000,160 L 1040,160" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-dasharray="4,4" marker-end="url(#arrowPurple)"/>
+          <path id="cable-trunk" d="M 720,315 L 720,375" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrowCyan)"/>
+
+          <!-- Emergency OOB Path -->
+          <path id="cable-oob" d="M 880,315 L 880,350 L 1260,350 L 1260,650" fill="none" stroke="#eab308" stroke-width="2" stroke-dasharray="6,4"/>
+
+          <!-- ==================== KEEPLINK SMART SWITCH ==================== -->
+          <g id="node-switch" class="interactive-node" data-node="switch" onclick="inspectNode('switch')" transform="translate(180, 375)">
+            <rect x="0" y="0" width="1080" height="135" rx="12" fill="url(#switchGrad)" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+            
+            <g transform="translate(24, 16)">
+              <text x="0" y="14" font-size="15" font-weight="800" fill="#f8fafc">KeepLINK KP-9000-9XHPML-X • 8-Port 2.5GbE PoE+ &amp; 1-Port 10G SFP+ Smart Managed Switch</text>
+              <text x="0" y="32" font-size="11" fill="#94a3b8">IP: 192.168.1.2 • Subnet: 255.255.255.0 • Gateway: 192.168.1.1 • Automated via 'netprov switch apply'</text>
+            </g>
+
+            <!-- Ports 1-9 -->
+            <g transform="translate(24, 56)">
+              <!-- P1 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port1')" transform="translate(0, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#0284c7"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P1</text>
+                <text x="38" y="20" font-size="10" font-weight="700" fill="#38bdf8">2.5G Trunk</text>
+                <text x="8" y="38" font-size="9" fill="#cbd5e1">Uplink: Michael</text>
+                <text x="8" y="52" font-size="8" fill="#94a3b8">Untag:1 • Tag:62,69,77</text>
+              </g>
+
+              <!-- P2 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port2')" transform="translate(115, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#4f46e5"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P2</text>
+                <text x="38" y="20" font-size="10" font-weight="700" fill="#a5b4fc">2.5G PoE+</text>
+                <text x="8" y="38" font-size="9" fill="#cbd5e1">Uplink: Zyxel AP</text>
+                <text x="8" y="52" font-size="8" fill="#94a3b8">Untag:1 • Tag:62,69,77</text>
+              </g>
+
+              <!-- P3 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port3')" transform="translate(230, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.5"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#0369a1"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P3</text>
+                <text x="38" y="20" font-size="10" font-weight="700" fill="#7dd3fc">2.5G Access</text>
+                <text x="8" y="38" font-size="9" fill="#cbd5e1">Host: zita (Server)</text>
+                <text x="8" y="52" font-size="8" fill="#38bdf8">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P4 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port4')" transform="translate(345, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.5"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#0369a1"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P4</text>
+                <text x="38" y="20" font-size="10" font-weight="700" fill="#7dd3fc">2.5G Access</text>
+                <text x="8" y="38" font-size="9" fill="#cbd5e1">Host: francis (PC)</text>
+                <text x="8" y="52" font-size="8" fill="#38bdf8">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P5 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port5')" transform="translate(460, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P5</text>
+                <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+                <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+                <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P6 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port6')" transform="translate(575, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P6</text>
+                <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+                <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+                <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P7 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port7')" transform="translate(690, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P7</text>
+                <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+                <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+                <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P8 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port8')" transform="translate(805, 0)">
+                <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P8</text>
+                <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+                <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+                <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+              </g>
+
+              <!-- P9 -->
+              <g class="interactive-node" onclick="event.stopPropagation(); inspectNode('port9')" transform="translate(920, 0)">
+                <rect x="0" y="0" width="112" height="64" rx="6" fill="#0f172a" stroke="#eab308" stroke-width="1.5"/>
+                <rect x="8" y="8" width="24" height="16" rx="3" fill="#a16207"/>
+                <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P9</text>
+                <text x="38" y="20" font-size="10" font-weight="700" fill="#facc15">10G SFP+</text>
+                <text x="8" y="38" font-size="9" fill="#cbd5e1">High-Speed Trunk</text>
+                <text x="8" y="52" font-size="8" fill="#facc15">VLAN 77 Expansion</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- ==================== ZYXEL WIFI 7 ACCESS POINT ==================== -->
+          <g id="node-ap" class="interactive-node" data-node="ap" onclick="inspectNode('ap')" transform="translate(40, 545)">
+            <rect x="0" y="0" width="360" height="400" rx="12" fill="url(#cardGrad)" stroke="#6366f1" stroke-width="1.5" filter="url(#shadow)"/>
+            
+            <g transform="translate(20, 16)">
+              <rect x="0" y="0" width="8" height="8" rx="2" fill="#818cf8"/>
+              <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">Zyxel NWA130BE / WBE530</text>
+              <text x="16" y="24" font-size="11" fill="#c7d2fe">Tri-Band WiFi 7 AP • PoE+ Powered (Switch P2)</text>
+              <text x="16" y="38" font-size="10" fill="#94a3b8">Mgmt IP: 192.168.1.3 • Automated via 'netprov ap'</text>
+            </g>
+
+            <!-- Secondary LAN 2 Port -->
+            <g transform="translate(20, 72)">
+              <rect x="0" y="0" width="320" height="52" rx="6" fill="#0f172a" stroke="#d97706" stroke-width="1.2"/>
+              <text x="12" y="20" font-size="11" font-weight="700" fill="#fbbf24">Secondary Port: LAN 2 (Apartment Wall Plate)</text>
+              <text x="12" y="36" font-size="10" fill="#fef3c7">PVID: 62 (Skynet Guest Network) • Direct Bridged</text>
+            </g>
+
+            <!-- SSIDs -->
+            <g transform="translate(20, 136)">
+              <text x="0" y="12" font-size="12" font-weight="700" fill="#e2e8f0">Broadcast Multi-SSID Matrix</text>
+
+              <!-- SSID 1 -->
+              <g transform="translate(0, 24)">
+                <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.2"/>
+                <text x="12" y="20" font-size="12" font-weight="700" fill="#38bdf8">SSID: skylab</text>
+                <text x="210" y="20" font-size="10" font-weight="600" fill="#38bdf8">VLAN 77 (Trusted)</text>
+                <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz + 5 GHz + 6 GHz (WiFi 7)</text>
+                <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA3-SAE / WPA2-PSK • No Isolation</text>
+              </g>
+
+              <!-- SSID 2 -->
+              <g transform="translate(0, 98)">
+                <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#d97706" stroke-width="1.2"/>
+                <text x="12" y="20" font-size="12" font-weight="700" fill="#fbbf24">SSID: skynet</text>
+                <text x="210" y="20" font-size="10" font-weight="600" fill="#fbbf24">VLAN 62 (Guests)</text>
+                <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz + 5 GHz + 6 GHz</text>
+                <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA3-SAE / WPA2-PSK • Isolated</text>
+              </g>
+
+              <!-- SSID 3 -->
+              <g transform="translate(0, 172)">
+                <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#e11d48" stroke-width="1.2"/>
+                <text x="12" y="20" font-size="12" font-weight="700" fill="#f43f5e">SSID: iot</text>
+                <text x="210" y="20" font-size="10" font-weight="600" fill="#f43f5e">VLAN 69 (Smart Home)</text>
+                <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz Only (Maximum Compatibility)</text>
+                <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA2-PSK • Isolated</text>
+              </g>
+            </g>
+          </g>
+
+          <!-- ==================== SKYLAB (VLAN 77) ==================== -->
+          <g id="zone-skylab" class="interactive-node" data-node="skylab" onclick="inspectNode('skylab')" transform="translate(430, 545)">
+            <rect x="0" y="0" width="530" height="400" rx="12" fill="url(#skylabGrad)" stroke="#0284c7" stroke-width="1.5" filter="url(#shadow)"/>
+            
+            <g transform="translate(20, 16)">
+              <rect x="0" y="0" width="8" height="8" rx="2" fill="#38bdf8"/>
+              <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 77: Skylab (Trusted Core Network)</text>
+              <text x="16" y="24" font-size="11" fill="#7dd3fc">Subnet: 192.168.77.0/24 • Gateway: 192.168.77.1 • Full LAN &amp; WAN Access</text>
+            </g>
+
+            <!-- Zita -->
+            <g id="node-zita" class="interactive-node" data-node="zita" onclick="event.stopPropagation(); inspectNode('zita')" transform="translate(20, 52)">
+              <rect x="0" y="0" width="490" height="110" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1.2"/>
+              <g transform="translate(16, 16)">
+                <text x="0" y="14" font-size="13" font-weight="700" fill="#ffffff">zita • HP z620 Workstation (Storage &amp; Homelab Server)</text>
+                <text x="0" y="32" font-size="11" fill="#94a3b8">IP: 192.168.77.20 • Switch P3 (2.5GbE) • Dual Xeon E5-2667v2 (32T) • 128GB ECC</text>
+                <text x="0" y="50" font-size="10" fill="#38bdf8">Storage: 24TB Seagate HDD + Btrfs RAID-1 SSD Cache (MergerFS Pool)</text>
+                
+                <g transform="translate(0, 62)">
+                  <rect x="0" y="0" width="60" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="6" y="12" font-size="9" font-weight="600" fill="#bae6fd">Jellyfin 8096</text>
+                  <rect x="68" y="0" width="60" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="74" y="12" font-size="9" font-weight="600" fill="#bae6fd">Samba CIFS</text>
+                  <rect x="136" y="0" width="65" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="142" y="12" font-size="9" font-weight="600" fill="#bae6fd">Copyparty 3920</text>
+                  <rect x="209" y="0" width="58" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="215" y="12" font-size="9" font-weight="600" fill="#bae6fd">Actual 5005</text>
+                  <rect x="275" y="0" width="64" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="281" y="12" font-size="9" font-weight="600" fill="#bae6fd">Forgejo 3001</text>
+                  <rect x="347" y="0" width="70" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+                  <text x="353" y="12" font-size="9" font-weight="600" fill="#bae6fd">Nix Cache 5000</text>
+                </g>
+              </g>
+            </g>
+
+            <!-- Francis -->
+            <g id="node-francis" class="interactive-node" data-node="francis" onclick="event.stopPropagation(); inspectNode('francis')" transform="translate(20, 172)">
+              <rect x="0" y="0" width="490" height="68" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1.2"/>
+              <g transform="translate(16, 16)">
+                <text x="0" y="14" font-size="13" font-weight="700" fill="#ffffff">francis • HP ProDesk 600 G4 Mini (Primary Desktop)</text>
+                <text x="0" y="32" font-size="11" fill="#94a3b8">Switch Port 4 (2.5GbE) • Intel i5-8500T (6C/6T) • 32GB RAM • 1TB NVMe</text>
+                <text x="0" y="46" font-size="10" fill="#38bdf8">Gifted by LINUX Unplugged Listener • KDE Plasma • Agenix • Distributed Builds Client</text>
+              </g>
+            </g>
+
+            <!-- Laptops Jerome & Agnes -->
+            <g transform="translate(20, 250)">
+              <g id="node-jerome" class="interactive-node" data-node="jerome" onclick="event.stopPropagation(); inspectNode('jerome')" transform="translate(0, 0)">
+                <rect x="0" y="0" width="235" height="135" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1"/>
+                <g transform="translate(14, 16)">
+                  <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">jerome • Dell E7470</text>
+                  <text x="0" y="30" font-size="10" fill="#94a3b8">Daily Ultraportable</text>
+                  <text x="0" y="46" font-size="10" fill="#cbd5e1">• i7-6650U Iris • 32GB RAM</text>
+                  <text x="0" y="60" font-size="10" fill="#cbd5e1">• ME-cleaned firmware</text>
+                  <text x="0" y="74" font-size="10" fill="#cbd5e1">• WiFi 7 'skylab' / Dock</text>
+                  <text x="0" y="90" font-size="9" fill="#38bdf8">Dropbear initrd unlock client</text>
+                </g>
+              </g>
+
+              <g id="node-agnes" class="interactive-node" data-node="agnes" onclick="event.stopPropagation(); inspectNode('agnes')" transform="translate(255, 0)">
+                <rect x="0" y="0" width="235" height="135" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1"/>
+                <g transform="translate(14, 16)">
+                  <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">agnes • Dell E7270</text>
+                  <text x="0" y="30" font-size="10" fill="#94a3b8">Compact 12.5" Field Unit</text>
+                  <text x="0" y="46" font-size="10" fill="#cbd5e1">• i7-6600U • 32GB RAM</text>
+                  <text x="0" y="60" font-size="10" fill="#cbd5e1">• MIL-STD 810G Tri-metal</text>
+                  <text x="0" y="74" font-size="10" fill="#cbd5e1">• WiFi 7 'skylab' / Dock</text>
+                  <text x="0" y="90" font-size="9" fill="#38bdf8">Dropbear initrd unlock client</text>
+                </g>
+              </g>
+            </g>
+          </g>
+
+          <!-- ==================== SKYNET & IOT ==================== -->
+          <g transform="translate(990, 545)">
+            <!-- Skynet -->
+            <g id="zone-skynet" class="interactive-node" data-node="skynet" onclick="inspectNode('skynet')" transform="translate(0, 0)">
+              <rect x="0" y="0" width="410" height="185" rx="12" fill="url(#skynetGrad)" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+              <g transform="translate(20, 16)">
+                <rect x="0" y="0" width="8" height="8" rx="2" fill="#fbbf24"/>
+                <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 62: Skynet (Guest &amp; Friends)</text>
+                <text x="16" y="24" font-size="11" fill="#fde68a">Subnet: 192.168.62.0/24 • Gateway: 192.168.62.1</text>
+              </g>
+              <g transform="translate(20, 50)">
+                <rect x="0" y="0" width="370" height="115" rx="8" fill="url(#cardGrad)" stroke="#b45309" stroke-width="1"/>
+                <g transform="translate(14, 16)">
+                  <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">Guest Devices &amp; Wall Plate Port</text>
+                  <text x="0" y="32" font-size="10" fill="#cbd5e1">• Access via SSID 'skynet' or AP LAN 2 Port</text>
+                  <text x="0" y="48" font-size="10" fill="#cbd5e1">• Strict isolation from Skylab (VLAN 77) &amp; Mgmt (VLAN 1)</text>
+                  <text x="0" y="64" font-size="10" fill="#cbd5e1">• Client-to-client isolation prevents peer snooping</text>
+                  <text x="0" y="80" font-size="10" fill="#fbbf24">• Allowed: Outbound WAN NAT + mDNS/Casting to IoT</text>
+                </g>
+              </g>
+            </g>
+
+            <!-- IoT -->
+            <g id="zone-iot" class="interactive-node" data-node="iot" onclick="inspectNode('iot')" transform="translate(0, 205)">
+              <rect x="0" y="0" width="410" height="195" rx="12" fill="url(#iotGrad)" stroke="#e11d48" stroke-width="1.5" filter="url(#shadow)"/>
+              <g transform="translate(20, 16)">
+                <rect x="0" y="0" width="8" height="8" rx="2" fill="#f43f5e"/>
+                <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 69: IoT (Smart Home Quarantine)</text>
+                <text x="16" y="24" font-size="11" fill="#fecdd3">Subnet: 192.168.69.0/24 • Gateway: 192.168.69.1 • MTU 1420</text>
+              </g>
+              <g transform="translate(20, 50)">
+                <rect x="0" y="0" width="370" height="125" rx="8" fill="url(#cardGrad)" stroke="#be123c" stroke-width="1"/>
+                <g transform="translate(14, 16)">
+                  <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">Smart Home &amp; Automation Devices</text>
+                  <text x="0" y="32" font-size="10" fill="#cbd5e1">• Smart TVs, Media Streamers, Thermostats, Cameras</text>
+                  <text x="0" y="48" font-size="10" fill="#cbd5e1">• Quarantined: Zero access to router management or LAN</text>
+                  <text x="0" y="64" font-size="10" fill="#cbd5e1">• WAN Egress forced through PIA VPN WireGuard Gateway</text>
+                  <text x="0" y="80" font-size="10" fill="#f43f5e">• Pi-hole IoT Group: Telemetry &amp; beacon domain blocking</text>
+                  <text x="0" y="94" font-size="10" fill="#38bdf8">• Avahi mDNS reflection allows Skylab to cast media</text>
+                </g>
+              </g>
+            </g>
+          </g>
+
+          <!-- Switch to Endpoints Cables -->
+          <path d="M 350,495 L 350,545" fill="none" stroke="#818cf8" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+          <path d="M 460,495 L 460,545" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+          <path d="M 575,495 L 575,545" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+        </svg>
+      </div>
+
+      <!-- Zoom / Pan Controls -->
+      <div class="canvas-tools">
+        <button class="tool-btn" onclick="zoomIn()" title="Zoom In">+</button>
+        <button class="tool-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+        <button class="tool-btn" onclick="resetZoom()" title="Reset View">↺</button>
+      </div>
+    </div>
+
+    <!-- ==================== SIDEBAR INSPECTOR ==================== -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title-group">
+          <h3 id="sidebarTitle">Device Inspector</h3>
+          <p id="sidebarSubtitle">Click any component to inspect details</p>
+        </div>
+        <button class="close-btn" onclick="toggleSidebar()">✕</button>
+      </div>
+
+      <div class="sidebar-body" id="sidebarContent">
+        <!-- Default Content -->
+        <div class="detail-card">
+          <h4>💡 How to use the Explorer</h4>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
+            This interactive canvas models the physical and logical architecture of Joel's home network.
+          </p>
+          <ul style="font-size: 13px; color: var(--text-muted); padding-left: 18px; display: flex; flex-direction: column; gap: 6px;">
+            <li>Click on <strong>michael</strong>, <strong>KeepLINK Switch</strong>, or <strong>Zita</strong> to inspect interfaces and firewall rules.</li>
+            <li>Use the view buttons in the top header to isolate <strong>Physical Ports</strong>, <strong>VLANs</strong>, or <strong>Firewall Flows</strong>.</li>
+            <li>Drag the diagram canvas to pan, and use the zoom buttons or mouse scroll to zoom.</li>
+          </ul>
+        </div>
+
+        <div class="detail-card">
+          <h4>🌐 Quick Subnet Reference</h4>
+          <div class="prop-row">
+            <span class="prop-label">VLAN 1 (Mgmt)</span>
+            <span class="prop-value">192.168.1.0/24</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">VLAN 77 (Skylab)</span>
+            <span class="prop-value">192.168.77.0/24</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">VLAN 62 (Skynet)</span>
+            <span class="prop-value">192.168.62.0/24</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">VLAN 69 (IoT)</span>
+            <span class="prop-value">192.168.69.0/24</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">OOB Rescue</span>
+            <span class="prop-value">192.168.99.0/24</span>
+          </div>
+          <div class="prop-row">
+            <span class="prop-label">Tailscale Mesh</span>
+            <span class="prop-value">100.64.0.0/10</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <a href="./network-architecture.md">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+          Open Full Technical Architecture Documentation
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==================== JAVASCRIPT ==================== -->
+  <script>
+    // Detailed node database
+    const NODE_DATA = {
+      michael: {
+        title: "michael (Core Perimeter Router)",
+        subtitle: "HP Slim Desktop S01 • Intel Core i3-12100",
+        badge: { text: "Perimeter Gatekeeper", class: "badge-mgmt" },
+        sections: [
+          {
+            title: "Hardware & Operating System",
+            props: [
+              { label: "Hardware", value: "HP Slim Desktop S01 Form Factor" },
+              { label: "Processor", value: "Intel Core i3-12100 (4P / 8T up to 4.3 GHz)" },
+              { label: "Memory", value: "16 GB DDR4-3200" },
+              { label: "OS / Architecture", value: "NixOS (Impermanence, Root-on-Tmpfs)" },
+              { label: "Security", value: "Lanzaboote Secure Boot & TPM2 LUKS2" }
+            ]
+          },
+          {
+            title: "Network Interfaces & Roles",
+            props: [
+              { label: "enp3s0 (WAN)", value: "2.5GbE PCIe Port 1 -> Upstream Modem" },
+              { label: "enp4s0 (LAN Trunk)", value: "2.5GbE PCIe Port 2 -> KeepLINK Port 1" },
+              { label: "enp5s0 (OOB Rescue)", value: "1.0GbE Onboard -> 192.168.99.1/24" },
+              { label: "tailscale0", value: "Overlay Mesh Subnet Router & Exit Node" }
+            ]
+          },
+          {
+            title: "Perimeter Defense & Services",
+            props: [
+              { label: "CAKE SQM", value: "275M down / 45M up (diffserv4, ackFilter)" },
+              { label: "DNS Filtration", value: "Pi-hole FTL (:53) + VLAN Group Policies" },
+              { label: "Recursive Resolver", value: "Unbound Root DNSSEC (:5353)" },
+              { label: "Decentralized DNS", value: "hnsd Handshake Root TLD Resolver (:5350)" },
+              { label: "VPN Gateway", value: "PIA WireGuard Gateway for IoT (Killswitch)" },
+              { label: "Initrd Unlock", value: "Dropbear SSH (:2222) on enp4s0.77 & enp5s0" }
+            ]
+          }
+        ]
+      },
+      switch: {
+        title: "KeepLINK Smart Managed Switch",
+        subtitle: "KP-9000-9XHPML-X • 8x 2.5GbE PoE+ & 1x 10G SFP+",
+        badge: { text: "Core Switch", class: "badge-mgmt" },
+        sections: [
+          {
+            title: "Switch Specifications",
+            props: [
+              { label: "Model", value: "KeepLINK KP-9000-9XHPML-X" },
+              { label: "Management IP", value: "192.168.1.2 (VLAN 1 Management)" },
+              { label: "Netmask / Gateway", value: "255.255.255.0 / 192.168.1.1" },
+              { label: "PoE Budget", value: "PoE+ 802.3at on Ports 2, 5, 6, 7, 8" },
+              { label: "Automation", value: "Declared in Nix / 'netprov switch apply'" }
+            ]
+          },
+          {
+            title: "802.1Q Port Mapping Matrix",
+            props: [
+              { label: "Port 1 (2.5G)", value: "Trunk to Michael (Untag 1, Tag 62,69,77)" },
+              { label: "Port 2 (2.5G PoE+)", value: "Trunk to Zyxel AP (Untag 1, Tag 62,69,77)" },
+              { label: "Port 3 (2.5G)", value: "Access to zita (VLAN 77 Skylab)" },
+              { label: "Port 4 (2.5G)", value: "Access to francis (VLAN 77 Skylab)" },
+              { label: "Ports 5-8 (2.5G PoE+)", value: "Access Spares (VLAN 77 Skylab)" },
+              { label: "Port 9 (10G SFP+)", value: "Trunk Uplink / Storage Expansion (VLAN 77)" }
+            ]
+          }
+        ]
+      },
+      port1: {
+        title: "Switch Port 1 (Router Uplink)",
+        subtitle: "KeepLINK KP-9000-9XHPML-X • Port 1",
+        badge: { text: "802.1Q Trunk", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Port Profile",
+            props: [
+              { label: "Speed / Duplex", value: "2.5 Gbps Full Duplex" },
+              { label: "Connected To", value: "michael (enp4s0 - PCIe Port 2)" },
+              { label: "Mode", value: "Trunk" },
+              { label: "Native PVID", value: "1 (Management)" },
+              { label: "Tagged VLANs", value: "62 (Skynet), 69 (IoT), 77 (Skylab)" },
+              { label: "PoE Output", value: "Disabled (False)" }
+            ]
+          }
+        ]
+      },
+      port2: {
+        title: "Switch Port 2 (AP Uplink)",
+        subtitle: "KeepLINK KP-9000-9XHPML-X • Port 2",
+        badge: { text: "PoE+ Trunk", class: "badge-mgmt" },
+        sections: [
+          {
+            title: "Port Profile",
+            props: [
+              { label: "Speed / Duplex", value: "2.5 Gbps Full Duplex" },
+              { label: "Connected To", value: "Zyxel NWA130BE AP (LAN 1 PoE IN)" },
+              { label: "Mode", value: "Trunk" },
+              { label: "Native PVID", value: "1 (Management)" },
+              { label: "Tagged VLANs", value: "62 (Skynet), 69 (IoT), 77 (Skylab)" },
+              { label: "PoE Power", value: "Enabled (PoE+ 802.3at ~25W)" },
+              { label: "Power Cycle", value: "netprov switch cycle-poe --port 2" }
+            ]
+          }
+        ]
+      },
+      port3: {
+        title: "Switch Port 3 (Zita Server)",
+        subtitle: "KeepLINK KP-9000-9XHPML-X • Port 3",
+        badge: { text: "Access VLAN 77", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Port Profile",
+            props: [
+              { label: "Speed / Duplex", value: "2.5 Gbps Full Duplex" },
+              { label: "Connected To", value: "zita (HP z620 Server Storage)" },
+              { label: "Mode", value: "Access" },
+              { label: "Native PVID", value: "77 (Skylab Trusted)" },
+              { label: "Tagged VLANs", value: "None" },
+              { label: "PoE Output", value: "Disabled" }
+            ]
+          }
+        ]
+      },
+      port4: {
+        title: "Switch Port 4 (Francis Workstation)",
+        subtitle: "KeepLINK KP-9000-9XHPML-X • Port 4",
+        badge: { text: "Access VLAN 77", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Port Profile",
+            props: [
+              { label: "Speed / Duplex", value: "2.5 Gbps Full Duplex" },
+              { label: "Connected To", value: "francis (HP ProDesk 600 G4 Mini)" },
+              { label: "Mode", value: "Access" },
+              { label: "Native PVID", value: "77 (Skylab Trusted)" },
+              { label: "Tagged VLANs", value: "None" },
+              { label: "PoE Output", value: "Disabled" }
+            ]
+          }
+        ]
+      },
+      ap: {
+        title: "Zyxel NWA130BE / WBE530 AP",
+        subtitle: "Tri-Band WiFi 7 Access Point • 2.5GbE PoE+",
+        badge: { text: "Wireless Infrastructure", class: "badge-mgmt" },
+        sections: [
+          {
+            title: "AP Specifications",
+            props: [
+              { label: "Model", value: "Zyxel NWA130BE / WBE530 Family" },
+              { label: "Management IP", value: "192.168.1.3 (DHCP Static Lease)" },
+              { label: "MAC Address", value: "80:ea:0b:4b:b2:bb" },
+              { label: "Power Source", value: "PoE+ 802.3at via KeepLINK Switch P2" },
+              { label: "Automation", value: "Declared in Nix / 'netprov ap apply'" }
+            ]
+          },
+          {
+            title: "Secondary LAN 2 Port (Apartment Wall Plate)",
+            props: [
+              { label: "Physical Port", value: "AP LAN 2 RJ-45 Jack" },
+              { label: "Bridged VLAN", value: "VLAN 62 (Skynet Guest Network)" },
+              { label: "Use Case", value: "Direct ethernet for guests or isolated testing" }
+            ]
+          },
+          {
+            title: "Broadcast SSIDs & Radio Slots",
+            props: [
+              { label: "SSID 'skylab'", value: "VLAN 77 • WPA3-SAE/WPA2 • Tri-Band (2.4/5/6G)" },
+              { label: "SSID 'skynet'", value: "VLAN 62 • WPA3-SAE/WPA2 • Isolated • Tri-Band" },
+              { label: "SSID 'iot'", value: "VLAN 69 • WPA2-PSK • Isolated • 2.4 GHz Only" }
+            ]
+          }
+        ]
+      },
+      zita: {
+        title: "zita (Storage & Homelab Server)",
+        subtitle: "HP z620 Workstation • Dual Xeon E5-2667v2 (32 Threads)",
+        badge: { text: "Storage Heavy Lifter", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Hardware Specifications",
+            props: [
+              { label: "Chassis / Board", value: "HP z620 Dual-Socket Workstation" },
+              { label: "Processors", value: "2x Intel Xeon E5-2667v2 (16C / 32T @ 4.0 GHz)" },
+              { label: "Memory", value: "128 GB ECC DDR3 Reg" },
+              { label: "GPU Accel", value: "NVIDIA Quadro M2000 (NVENC Transcoding)" },
+              { label: "Static IP", value: "192.168.77.20 (zita.skylab.home)" }
+            ]
+          },
+          {
+            title: "Storage Tiering Architecture",
+            props: [
+              { label: "Capacity Drive", value: "24 TB Seagate Enterprise SATA HDD" },
+              { label: "Cache Pool", value: "Btrfs RAID-1 Dual SSD Fast Tier" },
+              { label: "Storage Engine", value: "MergerFS Tiered Pool + mergerfs-mover" }
+            ]
+          },
+          {
+            title: "Hosted Core Services",
+            services: [
+              { name: "Jellyfin", port: 8096 },
+              { name: "Samba CIFS", port: 445 },
+              { name: "Copyparty", port: 3920 },
+              { name: "Actual Budget", port: 5005 },
+              { name: "Forgejo Git", port: 3001 },
+              { name: "Vaultwarden", port: 8222 },
+              { name: "Nix Binary Cache", port: 5000 },
+              { name: "Hermes Signal Bot", port: "Systemd" }
+            ]
+          }
+        ]
+      },
+      francis: {
+        title: "francis (Primary Workstation)",
+        subtitle: "HP ProDesk 600 G4 Desktop Mini • Intel i5-8500T",
+        badge: { text: "Listener-Gifted Daily PC", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Hardware Specifications",
+            props: [
+              { label: "Form Factor", value: "1-Liter Ultra Small Desktop Mini" },
+              { label: "Processor", value: "Intel Core i5-8500T (6 Cores / 6 Threads)" },
+              { label: "Memory", value: "32 GB DDR4-2666" },
+              { label: "Storage", value: "1 TB NVMe SSD (Encrypted LUKS2)" },
+              { label: "Network", value: "Switch Port 4 (2.5GbE) • VLAN 77 Skylab" },
+              { label: "Special Origin", value: "Gifted by a LINUX Unplugged listener!" }
+            ]
+          }
+        ]
+      },
+      skylab: {
+        title: "VLAN 77: Skylab (Trusted)",
+        subtitle: "192.168.77.0/24 • Gateway: 192.168.77.1",
+        badge: { text: "Trusted LAN", class: "badge-skylab" },
+        sections: [
+          {
+            title: "Network Policy & Routing",
+            props: [
+              { label: "Subnet", value: "192.168.77.0/24" },
+              { label: "DHCP Pool", value: "192.168.77.100 - 192.168.77.250" },
+              { label: "DNS Domain", value: "skylab.home / .home" },
+              { label: "Inter-VLAN Access", value: "Unrestricted into Skynet, IoT, and Mgmt" },
+              { label: "Outbound WAN", value: "Direct NAT through CAKE SQM" },
+              { label: "Tailscale Routing", value: "Bidirectional routing with Tailnet" }
+            ]
+          }
+        ]
+      },
+      skynet: {
+        title: "VLAN 62: Skynet (Guests)",
+        subtitle: "192.168.62.0/24 • Gateway: 192.168.62.1",
+        badge: { text: "Guest Network", class: "badge-skynet" },
+        sections: [
+          {
+            title: "Network Policy & Isolation",
+            props: [
+              { label: "Subnet", value: "192.168.62.0/24" },
+              { label: "DHCP Pool", value: "192.168.62.100 - 192.168.62.250" },
+              { label: "Client Isolation", value: "Strictly enabled (no peer snooping)" },
+              { label: "Skylab Access", value: "STRICTLY BLOCKED by nftables firewall" },
+              { label: "Allowed Egress", value: "Direct Internet NAT + mDNS media casting" }
+            ]
+          }
+        ]
+      },
+      iot: {
+        title: "VLAN 69: IoT (Quarantine)",
+        subtitle: "192.168.69.0/24 • Gateway: 192.168.69.1",
+        badge: { text: "Quarantine Zone", class: "badge-iot" },
+        sections: [
+          {
+            title: "Network Policy & Security",
+            props: [
+              { label: "Subnet", value: "192.168.69.0/24" },
+              { label: "MTU", value: "1420 bytes (tuned for WireGuard)" },
+              { label: "WAN Egress", value: "Forced through PIA WireGuard VPN Tunnel" },
+              { label: "VPN Killswitch", value: "Active (drops traffic if VPN disconnects)" },
+              { label: "DNS Policy", value: "Pi-hole IoT Group (aggressive telemetry block)" },
+              { label: "Internal Access", value: "Strictly quarantined from LAN/Router" }
+            ]
+          }
+        ]
+      },
+      tailscale: {
+        title: "Tailscale Mesh Overlay",
+        subtitle: "100.64.0.0/10 • WireGuard Overlay Network",
+        badge: { text: "Zero-Trust VPN", class: "badge-tailscale" },
+        sections: [
+          {
+            title: "Overlay Topology",
+            props: [
+              { label: "Subnet", value: "100.64.0.0/10 (CGNAT Range)" },
+              { label: "Exit Node", value: "michael (advertises full egress)" },
+              { label: "Subnet Router", value: "michael advertises 192.168.77.0/24" },
+              { label: "MagicDNS", value: "Pi-hole forwards to 100.100.100.100" },
+              { label: "TCP MSS Clamping", value: "1220 bytes (prevents fragmentation drops)" },
+              { label: "Enrolled Fleet", value: "michael, zita, francis, jerome, agnes, therese" }
+            ]
+          }
+        ]
+      },
+      wan: {
+        title: "External WAN & Internet Egress",
+        subtitle: "Upstream ISP Gateway • 2.5 Gbps Symmetrical Fiber",
+        badge: { text: "Perimeter", class: "badge-mgmt" },
+        sections: [
+          {
+            title: "WAN & Egress Policy",
+            props: [
+              { label: "Connection Speed", value: "2.5 Gbps Line Rate" },
+              { label: "Ingress Firewall", value: "nftables drop all unsolicited inbound" },
+              { label: "CAKE SQM", value: "275 Mbps down / 45 Mbps up bandwidth cap" },
+              { label: "DiffServ QoS", value: "VoIP, DNS, SSH given realtime priority" }
+            ]
+          }
+        ]
+      }
+    };
+
+    // Zoom and Pan State
+    let currentZoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let isDragging = false;
+    let startX, startY;
+
+    const canvasContainer = document.getElementById('canvasContainer');
+    const svgWrapper = document.getElementById('svgWrapper');
+
+    function updateTransform() {
+      svgWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+    }
+
+    function zoomIn() {
+      currentZoom = Math.min(currentZoom * 1.2, 3);
+      updateTransform();
+    }
+
+    function zoomOut() {
+      currentZoom = Math.max(currentZoom / 1.2, 0.5);
+      updateTransform();
+    }
+
+    function resetZoom() {
+      currentZoom = 1;
+      panX = 0;
+      panY = 0;
+      updateTransform();
+    }
+
+    // Pan Event Listeners
+    canvasContainer.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.interactive-node')) return;
+      isDragging = true;
+      startX = e.clientX - panX;
+      startY = e.clientY - panY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      panX = e.clientX - startX;
+      panY = e.clientY - startY;
+      updateTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    canvasContainer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      currentZoom = Math.max(0.5, Math.min(3, currentZoom * zoomFactor));
+      updateTransform();
+    }, { passive: false });
+
+    // Inspect Node
+    function inspectNode(nodeKey) {
+      const data = NODE_DATA[nodeKey];
+      if (!data) return;
+
+      // Mark selected in SVG
+      document.querySelectorAll('.interactive-node').forEach(el => el.classList.remove('selected'));
+      const activeEl = document.querySelector(`[data-node="${nodeKey}"]`);
+      if (activeEl) activeEl.classList.add('selected');
+
+      // Populate sidebar
+      document.getElementById('sidebarTitle').innerText = data.title;
+      document.getElementById('sidebarSubtitle').innerText = data.subtitle;
+
+      let html = '';
+      if (data.badge) {
+        html += `<div style="margin-bottom: 12px;"><span class="badge ${data.badge.class}">${data.badge.text}</span></div>`;
+      }
+
+      data.sections.forEach(sec => {
+        html += `<div class="detail-card">`;
+        html += `<h4>${sec.title}</h4>`;
+        if (sec.props) {
+          sec.props.forEach(p => {
+            html += `<div class="prop-row"><span class="prop-label">${p.label}</span><span class="prop-value">${p.value}</span></div>`;
+          });
+        }
+        if (sec.services) {
+          html += `<div class="service-tags">`;
+          sec.services.forEach(s => {
+            html += `<div class="service-pill">${s.name} <span>:${s.port}</span></div>`;
+          });
+          html += `</div>`;
+        }
+        html += `</div>`;
+      });
+
+      document.getElementById('sidebarContent').innerHTML = html;
+
+      // Ensure sidebar is open
+      const sb = document.getElementById('sidebar');
+      if (sb.classList.contains('closed')) {
+        sb.classList.remove('closed');
+      }
+    }
+
+    // Toggle Sidebar
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('closed');
+    }
+
+    // View Mode Filters
+    function setViewMode(mode) {
+      document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+
+      const allNodes = document.querySelectorAll('.interactive-node, path');
+      allNodes.forEach(el => {
+        el.classList.remove('dimmed');
+        el.classList.remove('highlighted');
+      });
+
+      if (mode === 'all') return;
+
+      if (mode === 'physical') {
+        // Highlight router, switch, AP, ports, and physical lines
+        document.querySelectorAll('.interactive-node').forEach(el => {
+          const key = el.getAttribute('data-node');
+          if (['michael', 'switch', 'ap', 'zita', 'francis', 'wan'].includes(key) || el.id.startsWith('node-')) {
+            el.classList.add('highlighted');
+          } else {
+            el.classList.add('dimmed');
+          }
+        });
+      } else if (mode === 'vlan') {
+        // Highlight VLAN zones
+        document.querySelectorAll('.interactive-node').forEach(el => {
+          const key = el.getAttribute('data-node');
+          if (['skylab', 'skynet', 'iot', 'switch', 'ap'].includes(key)) {
+            el.classList.add('highlighted');
+          } else {
+            el.classList.add('dimmed');
+          }
+        });
+      } else if (mode === 'security') {
+        // Highlight WAN, CAKE SQM, PIA VPN, Michael, IoT
+        document.querySelectorAll('.interactive-node').forEach(el => {
+          const key = el.getAttribute('data-node');
+          if (['wan', 'michael', 'iot', 'skynet'].includes(key)) {
+            el.classList.add('highlighted');
+          } else {
+            el.classList.add('dimmed');
+          }
+        });
+      } else if (mode === 'tailscale') {
+        // Highlight Tailscale mesh & connected hosts
+        document.querySelectorAll('.interactive-node').forEach(el => {
+          const key = el.getAttribute('data-node');
+          if (['tailscale', 'michael', 'zita', 'francis'].includes(key)) {
+            el.classList.add('highlighted');
+          } else {
+            el.classList.add('dimmed');
+          }
+        });
+      }
+    }
+  </script>
+</body>
+</html>

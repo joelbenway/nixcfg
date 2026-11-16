@@ -19,6 +19,8 @@ tags:
 
 The homelab’s network infrastructure is anchored by `michael`, an HP Slim desktop running NixOS configured as a dedicated high-throughput multi-gigabit router, stateful firewall, and DNS filtration gateway.
 
+> 📊 **Topology Diagram & Explorer**: For the complete homelab network topology, switch port matrix, WiFi 7 AP provisioning, and interactive layer explorer, see **[Home Network Topology & Infrastructure](./network-architecture.md)** and the standalone **[Interactive Explorer (HTML)](./network-diagram.html)** / **[Vector Diagram (SVG)](./network-diagram.svg)**.
+
 ---
 
 ## Physical Interface Layout
@@ -92,6 +94,9 @@ DNS resolution on `michael` is handled through a layered approach ([`hosts/micha
 ---
 
 ## Related Documents
+* [Home Network Topology & Infrastructure](./network-architecture.md)
+* [Interactive Network Explorer (HTML)](./network-diagram.html)
+* [Vector Network Diagram (SVG)](./network-diagram.svg)
 * [Host Profile: michael](../hosts/michael.md)
 * [Remote LUKS Unlocking over SSH](../howto/remote-luks-unlock.md)
 * [Security, Cryptography & Bootstrapping](./security-model.md)

@@ -1,0 +1,554 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 980" width="100%" height="100%" style="background:#0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19"/>
+      <stop offset="50%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#070a12"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="routerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="switchGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Zone Fills -->
+    <linearGradient id="wanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="skylabGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#0369a1" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="skynetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d97706" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#b45309" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="iotGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e11d48" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#be123c" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="mgmtGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#4f46e5" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="tailscaleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#6d28d9" stop-opacity="0.05"/>
+    </linearGradient>
+
+    <!-- Drop Shadows & Filters -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glowCyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Markers -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#64748b" />
+    </marker>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arrowEmerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#a855f7" />
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#f59e0b" />
+    </marker>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="1440" height="980" fill="url(#bgGrad)"/>
+  
+  <!-- Subtle Grid Pattern Overlay -->
+  <g opacity="0.05">
+    <path d="M 0,0 L 1440,0 M 0,50 L 1440,50 M 0,100 L 1440,100 M 0,150 L 1440,150 M 0,200 L 1440,200 M 0,250 L 1440,250 M 0,300 L 1440,300 M 0,350 L 1440,350 M 0,400 L 1440,400 M 0,450 L 1440,450 M 0,500 L 1440,500 M 0,550 L 1440,550 M 0,600 L 1440,600 M 0,650 L 1440,650 M 0,700 L 1440,700 M 0,750 L 1440,750 M 0,800 L 1440,800 M 0,850 L 1440,850 M 0,900 L 1440,900 M 0,950 L 1440,950" stroke="#94a3b8" stroke-width="1"/>
+    <path d="M 0,0 L 0,980 M 50,0 L 50,980 M 100,0 L 100,980 M 150,0 L 150,980 M 200,0 L 200,980 M 250,0 L 250,980 M 300,0 L 300,980 M 350,0 L 350,980 M 400,0 L 400,980 M 450,0 L 450,980 M 500,0 L 500,980 M 550,0 L 550,980 M 600,0 L 600,980 M 650,0 L 650,980 M 700,0 L 700,980 M 750,0 L 750,980 M 800,0 L 800,980 M 850,0 L 850,980 M 900,0 L 900,980 M 950,0 L 950,980 M 1000,0 L 1000,980 M 1050,0 L 1050,980 M 1100,0 L 1100,980 M 1150,0 L 1150,980 M 1200,0 L 1200,980 M 1250,0 L 1250,980 M 1300,0 L 1300,980 M 1350,0 L 1350,980 M 1400,0 L 1400,980" stroke="#94a3b8" stroke-width="1"/>
+  </g>
+
+  <!-- ==================== HEADER BAR ==================== -->
+  <g transform="translate(40, 24)">
+    <text x="0" y="24" font-size="22" font-weight="700" fill="#f8fafc" letter-spacing="0.5">NixCFG Homelab • Physical &amp; Logical Network Architecture</text>
+    <text x="0" y="44" font-size="13" font-weight="400" fill="#94a3b8">Multi-Gigabit Perimeter Router (michael), 802.1Q 2.5GbE Switching, WiFi 7 AP, VLAN Segmentation, &amp; Tailscale Overlay</text>
+    
+    <!-- Legend Badges -->
+    <g transform="translate(780, 8)">
+      <rect x="0" y="0" width="105" height="26" rx="6" fill="#0284c7" fill-opacity="0.2" stroke="#38bdf8" stroke-width="1"/>
+      <circle cx="12" cy="13" r="4" fill="#38bdf8"/>
+      <text x="24" y="17" font-size="11" font-weight="600" fill="#bae6fd">VLAN 77 Skylab</text>
+
+      <rect x="115" y="0" width="105" height="26" rx="6" fill="#d97706" fill-opacity="0.2" stroke="#fbbf24" stroke-width="1"/>
+      <circle cx="127" cy="13" r="4" fill="#fbbf24"/>
+      <text x="139" y="17" font-size="11" font-weight="600" fill="#fef3c7">VLAN 62 Skynet</text>
+
+      <rect x="230" y="0" width="95" height="26" rx="6" fill="#e11d48" fill-opacity="0.2" stroke="#f43f5e" stroke-width="1"/>
+      <circle cx="242" cy="13" r="4" fill="#f43f5e"/>
+      <text x="254" y="17" font-size="11" font-weight="600" fill="#ffe4e6">VLAN 69 IoT</text>
+
+      <rect x="335" y="0" width="110" height="26" rx="6" fill="#6366f1" fill-opacity="0.2" stroke="#818cf8" stroke-width="1"/>
+      <circle cx="347" cy="13" r="4" fill="#818cf8"/>
+      <text x="359" y="17" font-size="11" font-weight="600" fill="#e0e7ff">VLAN 1 Mgmt</text>
+
+      <rect x="455" y="0" width="125" height="26" rx="6" fill="#8b5cf6" fill-opacity="0.2" stroke="#c084fc" stroke-width="1"/>
+      <circle cx="467" cy="13" r="4" fill="#c084fc"/>
+      <text x="479" y="17" font-size="11" font-weight="600" fill="#f3e8ff">Tailscale Overlay</text>
+    </g>
+  </g>
+
+  <!-- ==================== WAN & ISP SECTION (TOP LEFT) ==================== -->
+  <g transform="translate(40, 90)">
+    <!-- Zone Box -->
+    <rect x="0" y="0" width="360" height="225" rx="12" fill="url(#wanGrad)" stroke="#10b981" stroke-opacity="0.4" stroke-width="1" filter="url(#shadow)"/>
+    <rect x="16" y="14" width="8" height="8" rx="2" fill="#10b981"/>
+    <text x="32" y="22" font-size="13" font-weight="700" fill="#6ee7b7" letter-spacing="0.5">EXTERNAL WAN &amp; EGRESS</text>
+
+    <!-- Upstream ONT / Fiber -->
+    <rect x="20" y="42" width="320" height="68" rx="8" fill="url(#cardGrad)" stroke="#334155" stroke-width="1"/>
+    <text x="36" y="66" font-size="14" font-weight="700" fill="#f8fafc">Upstream ISP Gateway / ONT</text>
+    <text x="36" y="85" font-size="11" fill="#94a3b8">Public IPv4 Dynamic DHCP • High-Speed Fiber</text>
+    <rect x="250" y="54" width="75" height="20" rx="4" fill="#10b981" fill-opacity="0.15" stroke="#10b981" stroke-width="1"/>
+    <text x="261" y="68" font-size="10" font-weight="700" fill="#34d495">2.5 Gbps</text>
+
+    <!-- Traffic Shaping & VPN Gateway Badges -->
+    <g transform="translate(20, 122)">
+      <rect x="0" y="0" width="155" height="85" rx="8" fill="#0f172a" stroke="#059669" stroke-width="1"/>
+      <text x="12" y="22" font-size="12" font-weight="700" fill="#34d495">CAKE SQM</text>
+      <text x="12" y="38" font-size="10" fill="#94a3b8">Bufferbloat Killer</text>
+      <text x="12" y="54" font-size="10" fill="#cbd5e1">• Down: 275 Mbps</text>
+      <text x="12" y="68" font-size="10" fill="#cbd5e1">• Up: 45 Mbps (diffserv4)</text>
+
+      <rect x="165" y="0" width="155" height="85" rx="8" fill="#0f172a" stroke="#8b5cf6" stroke-width="1"/>
+      <text x="177" y="22" font-size="12" font-weight="700" fill="#c084fc">PIA VPN Gateway</text>
+      <text x="177" y="38" font-size="10" fill="#94a3b8">WireGuard us_chicago</text>
+      <text x="177" y="54" font-size="10" fill="#cbd5e1">• Routed: IoT (VLAN 69)</text>
+      <text x="177" y="68" font-size="10" fill="#cbd5e1">• KillSwitch: Active</text>
+    </g>
+  </g>
+
+  <!-- ==================== MICHAEL (CORE ROUTER & GATEWAY) ==================== -->
+  <g transform="translate(440, 90)">
+    <!-- Router Container Box -->
+    <rect x="0" y="0" width="560" height="225" rx="12" fill="url(#routerGrad)" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+    
+    <!-- Title & Specs -->
+    <g transform="translate(24, 20)">
+      <rect x="0" y="0" width="10" height="10" rx="2" fill="#60a5fa"/>
+      <text x="18" y="10" font-size="16" font-weight="800" fill="#ffffff" letter-spacing="0.5">michael • Core Perimeter Router &amp; Gateway</text>
+      <text x="18" y="28" font-size="12" fill="#93c5fd">HP Slim Desktop S01 • Intel Core i3-12100 (4C/8T) • 16GB DDR4 • NixOS Impermanence</text>
+    </g>
+
+    <!-- Interfaces Row -->
+    <g transform="translate(24, 64)">
+      <!-- WAN Interface -->
+      <rect x="0" y="0" width="155" height="64" rx="6" fill="#0f172a" stroke="#10b981" stroke-width="1.5"/>
+      <text x="12" y="20" font-size="11" font-weight="700" fill="#6ee7b7">enp3s0 (WAN)</text>
+      <text x="12" y="36" font-size="10" fill="#cbd5e1">2.5GbE PCIe Port 1</text>
+      <text x="12" y="50" font-size="10" fill="#94a3b8">DHCP Client • CAKE SQM</text>
+
+      <!-- LAN Trunk Interface -->
+      <rect x="175" y="0" width="175" height="64" rx="6" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="12" y="20" font-size="11" font-weight="700" fill="#38bdf8">enp4s0 (LAN Trunk)</text>
+      <text x="12" y="36" font-size="10" fill="#cbd5e1">2.5GbE PCIe Port 2</text>
+      <text x="12" y="50" font-size="10" fill="#94a3b8">802.1Q Trunk (1, 62, 69, 77)</text>
+
+      <!-- OOB Rescue Interface -->
+      <rect x="370" y="0" width="142" height="64" rx="6" fill="#0f172a" stroke="#eab308" stroke-width="1.5"/>
+      <text x="12" y="20" font-size="11" font-weight="700" fill="#facc15">enp5s0 (OOB Rescue)</text>
+      <text x="12" y="36" font-size="10" fill="#cbd5e1">1GbE Onboard NIC</text>
+      <text x="12" y="50" font-size="10" fill="#eab308">192.168.99.1/24</text>
+    </g>
+
+    <!-- Core Services Strip -->
+    <g transform="translate(24, 140)">
+      <rect x="0" y="0" width="512" height="70" rx="8" fill="#090d16" stroke="#1e293b" stroke-width="1"/>
+      
+      <!-- Pi-hole -->
+      <g transform="translate(16, 14)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">Pi-hole FTL</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Port 53 • VLAN Groups</text>
+        <text x="0" y="44" font-size="9" fill="#64748b">Ad/Telemetry Blocking</text>
+      </g>
+      <line x1="135" y1="10" x2="135" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+      <!-- Unbound -->
+      <g transform="translate(150, 14)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">Unbound Resolver</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Port 5353 • Root DNSSEC</text>
+        <text x="0" y="44" font-size="9" fill="#64748b">Recursive Validation</text>
+      </g>
+      <line x1="275" y1="10" x2="275" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+      <!-- HNSD -->
+      <g transform="translate(290, 14)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#f8fafc">hnsd Handshake</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Port 5350 • TLD Root</text>
+        <text x="0" y="44" font-size="9" fill="#64748b">Decentralized Web</text>
+      </g>
+      <line x1="400" y1="10" x2="400" y2="60" stroke="#1e293b" stroke-width="1"/>
+
+      <!-- Dropbear Initrd -->
+      <g transform="translate(415, 14)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#facc15">Initrd SSH</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Port 2222 • Remote</text>
+        <text x="0" y="44" font-size="9" fill="#eab308">LUKS Unlocking</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== TAILSCALE MESH OVERLAY (TOP RIGHT) ==================== -->
+  <g transform="translate(1040, 90)">
+    <rect x="0" y="0" width="360" height="225" rx="12" fill="url(#tailscaleGrad)" stroke="#a855f7" stroke-opacity="0.4" stroke-width="1" filter="url(#shadow)"/>
+    <rect x="16" y="14" width="8" height="8" rx="2" fill="#c084fc"/>
+    <text x="32" y="22" font-size="13" font-weight="700" fill="#e9d5ff" letter-spacing="0.5">TAILSCALE MESH OVERLAY</text>
+
+    <g transform="translate(20, 42)">
+      <rect x="0" y="0" width="320" height="165" rx="8" fill="url(#cardGrad)" stroke="#334155" stroke-width="1"/>
+      <text x="16" y="24" font-size="13" font-weight="700" fill="#f8fafc">Tailnet Mesh (100.64.0.0/10)</text>
+      
+      <!-- Key Features -->
+      <g transform="translate(16, 40)">
+        <circle cx="4" cy="6" r="3" fill="#c084fc"/>
+        <text x="14" y="10" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Exit Node:</tspan> michael routes full outbound traffic</text>
+
+        <circle cx="4" cy="28" r="3" fill="#c084fc"/>
+        <text x="14" y="32" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Subnet Router:</tspan> Advertises 192.168.77.0/24 (Skylab)</text>
+
+        <circle cx="4" cy="50" r="3" fill="#c084fc"/>
+        <text x="14" y="54" font-size="11" fill="#cbd5e1"><tspan font-weight="700">MagicDNS + Pi-hole:</tspan> 100.100.100.100 integration</text>
+
+        <circle cx="4" cy="72" r="3" fill="#c084fc"/>
+        <text x="14" y="76" font-size="11" fill="#cbd5e1"><tspan font-weight="700">TCP MSS Clamped:</tspan> 1220 bytes (prevents MTU drops)</text>
+
+        <circle cx="4" cy="94" r="3" fill="#c084fc"/>
+        <text x="14" y="98" font-size="11" fill="#cbd5e1"><tspan font-weight="700">Fleet Nodes:</tspan> michael, zita, francis, jerome, agnes</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== CABLES / CONNECTIVITY BETWEEN WAN, ROUTER, TAILSCALE ==================== -->
+  <!-- WAN to Router -->
+  <path d="M 360,140 L 440,140" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowEmerald)"/>
+  <text x="400" y="132" font-size="10" font-weight="700" fill="#34d495" text-anchor="middle">2.5 Gbps</text>
+
+  <!-- Router to Tailscale -->
+  <path d="M 1000,160 L 1040,160" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-dasharray="4,4" marker-end="url(#arrowPurple)"/>
+  <text x="1020" y="152" font-size="10" font-weight="700" fill="#c084fc" text-anchor="middle">WireGuard</text>
+
+  <!-- 802.1Q Trunk from michael to KeepLINK Switch -->
+  <path d="M 720,315 L 720,375" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" marker-end="url(#arrowCyan)"/>
+  <g transform="translate(735, 335)">
+    <rect x="0" y="0" width="195" height="24" rx="4" fill="#0f172a" stroke="#0284c7" stroke-width="1"/>
+    <text x="8" y="16" font-size="11" font-weight="700" fill="#7dd3fc">802.1Q 2.5GbE Trunk (enp4s0)</text>
+  </g>
+
+  <!-- Emergency OOB Direct Path -->
+  <path d="M 880,315 L 880,350 L 1260,350 L 1260,650" fill="none" stroke="#eab308" stroke-width="2" stroke-dasharray="6,4"/>
+  <g transform="translate(930, 340)">
+    <rect x="0" y="0" width="220" height="20" rx="4" fill="#0f172a" stroke="#ca8a04" stroke-width="1"/>
+    <text x="8" y="14" font-size="10" font-weight="700" fill="#facc15">Emergency Rescue Port (192.168.99.1)</text>
+  </g>
+
+  <!-- ==================== MANAGED SWITCH (KEEPLINK 9-PORT) ==================== -->
+  <g transform="translate(180, 375)">
+    <!-- Main Switch Box -->
+    <rect x="0" y="0" width="1080" height="135" rx="12" fill="url(#switchGrad)" stroke="#475569" stroke-width="1.5" filter="url(#shadow)"/>
+    
+    <!-- Switch Label & Status -->
+    <g transform="translate(24, 16)">
+      <text x="0" y="14" font-size="15" font-weight="800" fill="#f8fafc">KeepLINK KP-9000-9XHPML-X • 8-Port 2.5GbE PoE+ &amp; 1-Port 10G SFP+ Smart Managed Switch</text>
+      <text x="0" y="32" font-size="11" fill="#94a3b8">IP: 192.168.1.2 • Subnet: 255.255.255.0 • Gateway: 192.168.1.1 • Automated via 'netprov switch apply'</text>
+    </g>
+
+    <!-- Switch Ports (1 through 9) -->
+    <g transform="translate(24, 56)">
+      <!-- Port 1: Trunk to Michael -->
+      <g transform="translate(0, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#0284c7"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P1</text>
+        <text x="38" y="20" font-size="10" font-weight="700" fill="#38bdf8">2.5G Trunk</text>
+        <text x="8" y="38" font-size="9" fill="#cbd5e1">Uplink: Michael</text>
+        <text x="8" y="52" font-size="8" fill="#94a3b8">Untag: 1 • Tag: 62,69,77</text>
+      </g>
+
+      <!-- Port 2: PoE+ to Zyxel AP -->
+      <g transform="translate(115, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#818cf8" stroke-width="1.5"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#4f46e5"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P2</text>
+        <text x="38" y="20" font-size="10" font-weight="700" fill="#a5b4fc">2.5G PoE+</text>
+        <text x="8" y="38" font-size="9" fill="#cbd5e1">Uplink: Zyxel AP</text>
+        <text x="8" y="52" font-size="8" fill="#94a3b8">Untag: 1 • Tag: 62,69,77</text>
+      </g>
+
+      <!-- Port 3: Zita Storage -->
+      <g transform="translate(230, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.5"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#0369a1"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P3</text>
+        <text x="38" y="20" font-size="10" font-weight="700" fill="#7dd3fc">2.5G Access</text>
+        <text x="8" y="38" font-size="9" fill="#cbd5e1">Host: zita (Server)</text>
+        <text x="8" y="52" font-size="8" fill="#38bdf8">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 4: Francis Workstation -->
+      <g transform="translate(345, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.5"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#0369a1"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P4</text>
+        <text x="38" y="20" font-size="10" font-weight="700" fill="#7dd3fc">2.5G Access</text>
+        <text x="8" y="38" font-size="9" fill="#cbd5e1">Host: francis (PC)</text>
+        <text x="8" y="52" font-size="8" fill="#38bdf8">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 5: Spare PoE+ -->
+      <g transform="translate(460, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P5</text>
+        <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+        <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+        <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 6: Spare PoE+ -->
+      <g transform="translate(575, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P6</text>
+        <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+        <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+        <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 7: Spare PoE+ -->
+      <g transform="translate(690, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P7</text>
+        <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+        <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+        <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 8: Spare PoE+ -->
+      <g transform="translate(805, 0)">
+        <rect x="0" y="0" width="105" height="64" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#334155"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">P8</text>
+        <text x="38" y="20" font-size="10" font-weight="600" fill="#64748b">2.5G PoE+</text>
+        <text x="8" y="38" font-size="9" fill="#94a3b8">Spare Port</text>
+        <text x="8" y="52" font-size="8" fill="#64748b">VLAN 77 (Skylab)</text>
+      </g>
+
+      <!-- Port 9: 10G SFP+ Trunk -->
+      <g transform="translate(920, 0)">
+        <rect x="0" y="0" width="112" height="64" rx="6" fill="#0f172a" stroke="#eab308" stroke-width="1.5"/>
+        <rect x="8" y="8" width="24" height="16" rx="3" fill="#a16207"/>
+        <text x="20" y="20" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">P9</text>
+        <text x="38" y="20" font-size="10" font-weight="700" fill="#facc15">10G SFP+</text>
+        <text x="8" y="38" font-size="9" fill="#cbd5e1">High-Speed Trunk</text>
+        <text x="8" y="52" font-size="8" fill="#facc15">VLAN 77 Expansion</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== WIRELESS AP & EXPANSION (LEFT SIDE) ==================== -->
+  <g transform="translate(40, 545)">
+    <!-- AP Container -->
+    <rect x="0" y="0" width="360" height="400" rx="12" fill="url(#cardGrad)" stroke="#6366f1" stroke-width="1.5" filter="url(#shadow)"/>
+    
+    <!-- AP Header -->
+    <g transform="translate(20, 16)">
+      <rect x="0" y="0" width="8" height="8" rx="2" fill="#818cf8"/>
+      <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">Zyxel NWA130BE / WBE530</text>
+      <text x="16" y="24" font-size="11" fill="#c7d2fe">Tri-Band WiFi 7 AP • PoE+ Powered (Switch P2)</text>
+      <text x="16" y="38" font-size="10" fill="#94a3b8">Mgmt IP: 192.168.1.3 • Automated via 'netprov ap'</text>
+    </g>
+
+    <!-- Secondary LAN2 Wall Plate Port -->
+    <g transform="translate(20, 72)">
+      <rect x="0" y="0" width="320" height="52" rx="6" fill="#0f172a" stroke="#d97706" stroke-width="1.2"/>
+      <text x="12" y="20" font-size="11" font-weight="700" fill="#fbbf24">Secondary Port: LAN 2 (Apartment Wall Plate)</text>
+      <text x="12" y="36" font-size="10" fill="#fef3c7">Hardware PVID: 62 (Skynet Guest Network) • Direct Bridged</text>
+    </g>
+
+    <!-- Wireless SSIDs Breakdown -->
+    <g transform="translate(20, 136)">
+      <text x="0" y="12" font-size="12" font-weight="700" fill="#e2e8f0">Broadcast Multi-SSID Matrix</text>
+
+      <!-- SSID 1: Skylab -->
+      <g transform="translate(0, 24)">
+        <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="1.2"/>
+        <text x="12" y="20" font-size="12" font-weight="700" fill="#38bdf8">SSID: skylab</text>
+        <text x="210" y="20" font-size="10" font-weight="600" fill="#38bdf8">VLAN 77 (Trusted)</text>
+        <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz + 5 GHz + 6 GHz (Tri-Band WiFi 7)</text>
+        <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA3-SAE / WPA2-PSK • No Client Isolation</text>
+      </g>
+
+      <!-- SSID 2: Skynet -->
+      <g transform="translate(0, 98)">
+        <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#d97706" stroke-width="1.2"/>
+        <text x="12" y="20" font-size="12" font-weight="700" fill="#fbbf24">SSID: skynet</text>
+        <text x="210" y="20" font-size="10" font-weight="600" fill="#fbbf24">VLAN 62 (Guests)</text>
+        <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz + 5 GHz + 6 GHz</text>
+        <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA3-SAE / WPA2-PSK • Client Isolation: Active</text>
+      </g>
+
+      <!-- SSID 3: IoT -->
+      <g transform="translate(0, 172)">
+        <rect x="0" y="0" width="320" height="64" rx="6" fill="#0f172a" stroke="#e11d48" stroke-width="1.2"/>
+        <text x="12" y="20" font-size="12" font-weight="700" fill="#f43f5e">SSID: iot</text>
+        <text x="210" y="20" font-size="10" font-weight="600" fill="#f43f5e">VLAN 69 (Smart Home)</text>
+        <text x="12" y="36" font-size="10" fill="#cbd5e1">Bands: 2.4 GHz Only (Maximum Compatibility)</text>
+        <text x="12" y="50" font-size="10" fill="#94a3b8">Security: WPA2-PSK • Client Isolation: Active</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Trunk Link: Switch Port 2 to Zyxel AP -->
+  <path d="M 350,495 L 350,545" fill="none" stroke="#818cf8" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="355" y="525" font-size="10" font-weight="700" fill="#c7d2fe">PoE+ Trunk</text>
+
+  <!-- ==================== SKYLAB (VLAN 77 - TRUSTED CLIENTS) ==================== -->
+  <g transform="translate(430, 545)">
+    <!-- Skylab Zone Container -->
+    <rect x="0" y="0" width="530" height="400" rx="12" fill="url(#skylabGrad)" stroke="#0284c7" stroke-width="1.5" filter="url(#shadow)"/>
+    
+    <g transform="translate(20, 16)">
+      <rect x="0" y="0" width="8" height="8" rx="2" fill="#38bdf8"/>
+      <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 77: Skylab (Trusted Core Network)</text>
+      <text x="16" y="24" font-size="11" fill="#7dd3fc">Subnet: 192.168.77.0/24 • Gateway: 192.168.77.1 • Full LAN &amp; WAN Access</text>
+    </g>
+
+    <!-- Host: Zita (Storage & Services) -->
+    <g transform="translate(20, 52)">
+      <rect x="0" y="0" width="490" height="110" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1.2"/>
+      <g transform="translate(16, 16)">
+        <text x="0" y="14" font-size="13" font-weight="700" fill="#ffffff">zita • HP z620 Workstation (Storage &amp; Homelab Server)</text>
+        <text x="0" y="32" font-size="11" fill="#94a3b8">IP: 192.168.77.20 • Switch Port 3 (2.5GbE) • Dual Xeon E5-2667v2 (32T) • 128GB ECC</text>
+        <text x="0" y="50" font-size="10" fill="#38bdf8">Storage: 24TB Seagate HDD + Btrfs RAID-1 SSD Cache (MergerFS Tiered Pool)</text>
+        
+        <!-- Service Pills -->
+        <g transform="translate(0, 62)">
+          <rect x="0" y="0" width="60" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="6" y="12" font-size="9" font-weight="600" fill="#bae6fd">Jellyfin 8096</text>
+
+          <rect x="68" y="0" width="60" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="74" y="12" font-size="9" font-weight="600" fill="#bae6fd">Samba CIFS</text>
+
+          <rect x="136" y="0" width="65" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="142" y="12" font-size="9" font-weight="600" fill="#bae6fd">Copyparty 3920</text>
+
+          <rect x="209" y="0" width="58" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="215" y="12" font-size="9" font-weight="600" fill="#bae6fd">Actual 5005</text>
+
+          <rect x="275" y="0" width="64" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="281" y="12" font-size="9" font-weight="600" fill="#bae6fd">Forgejo 3001</text>
+
+          <rect x="347" y="0" width="70" height="18" rx="4" fill="#0284c7" fill-opacity="0.3"/>
+          <text x="353" y="12" font-size="9" font-weight="600" fill="#bae6fd">Nix Cache 5000</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- Host: Francis (Workstation) -->
+    <g transform="translate(20, 172)">
+      <rect x="0" y="0" width="490" height="68" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1.2"/>
+      <g transform="translate(16, 16)">
+        <text x="0" y="14" font-size="13" font-weight="700" fill="#ffffff">francis • HP ProDesk 600 G4 Mini (Primary Desktop)</text>
+        <text x="0" y="32" font-size="11" fill="#94a3b8">Switch Port 4 (2.5GbE) • Intel i5-8500T (6C/6T) • 32GB RAM • 1TB NVMe</text>
+        <text x="0" y="46" font-size="10" fill="#38bdf8">Gifted by LINUX Unplugged Listener • KDE Plasma • Agenix • Distributed Builds Client</text>
+      </g>
+    </g>
+
+    <!-- Mobile Laptops: Jerome & Agnes -->
+    <g transform="translate(20, 250)">
+      <rect x="0" y="0" width="235" height="135" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1"/>
+      <g transform="translate(14, 16)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">jerome • Dell E7470</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Daily Ultraportable</text>
+        <text x="0" y="46" font-size="10" fill="#cbd5e1">• i7-6650U Iris • 32GB RAM</text>
+        <text x="0" y="60" font-size="10" fill="#cbd5e1">• ME-cleaned firmware</text>
+        <text x="0" y="74" font-size="10" fill="#cbd5e1">• WiFi 7 'skylab' / Dock</text>
+        <text x="0" y="90" font-size="9" fill="#38bdf8">Dropbear initrd unlock client</text>
+      </g>
+
+      <rect x="255" y="0" width="235" height="135" rx="8" fill="url(#cardGrad)" stroke="#0369a1" stroke-width="1"/>
+      <g transform="translate(269, 16)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">agnes • Dell E7270</text>
+        <text x="0" y="30" font-size="10" fill="#94a3b8">Compact 12.5" Field Unit</text>
+        <text x="0" y="46" font-size="10" fill="#cbd5e1">• i7-6600U • 32GB RAM</text>
+        <text x="0" y="60" font-size="10" fill="#cbd5e1">• MIL-STD 810G Tri-metal</text>
+        <text x="0" y="74" font-size="10" fill="#cbd5e1">• WiFi 7 'skylab' / Dock</text>
+        <text x="0" y="90" font-size="9" fill="#38bdf8">Dropbear initrd unlock client</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Switch Port 3 to Zita Cable -->
+  <path d="M 460,495 L 460,545" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+
+  <!-- Switch Port 4 to Francis Cable -->
+  <path d="M 575,495 L 575,545" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+
+  <!-- ==================== SKYNET & IOT ZONES (RIGHT SIDE) ==================== -->
+  <g transform="translate(990, 545)">
+    <!-- Skynet Box -->
+    <rect x="0" y="0" width="410" height="185" rx="12" fill="url(#skynetGrad)" stroke="#d97706" stroke-width="1.5" filter="url(#shadow)"/>
+    <g transform="translate(20, 16)">
+      <rect x="0" y="0" width="8" height="8" rx="2" fill="#fbbf24"/>
+      <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 62: Skynet (Guest &amp; Friends)</text>
+      <text x="16" y="24" font-size="11" fill="#fde68a">Subnet: 192.168.62.0/24 • Gateway: 192.168.62.1</text>
+    </g>
+    <g transform="translate(20, 50)">
+      <rect x="0" y="0" width="370" height="115" rx="8" fill="url(#cardGrad)" stroke="#b45309" stroke-width="1"/>
+      <g transform="translate(14, 16)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">Guest Devices &amp; Wall Plate Port</text>
+        <text x="0" y="32" font-size="10" fill="#cbd5e1">• Access via SSID 'skynet' or AP LAN 2 Port</text>
+        <text x="0" y="48" font-size="10" fill="#cbd5e1">• Strict isolation from Skylab (VLAN 77) &amp; Mgmt (VLAN 1)</text>
+        <text x="0" y="64" font-size="10" fill="#cbd5e1">• Client-to-client isolation prevents peer snooping</text>
+        <text x="0" y="80" font-size="10" fill="#fbbf24">• Allowed: Outbound WAN NAT + mDNS/Casting to IoT</text>
+      </g>
+    </g>
+
+    <!-- IoT Box -->
+    <rect x="0" y="205" width="410" height="195" rx="12" fill="url(#iotGrad)" stroke="#e11d48" stroke-width="1.5" filter="url(#shadow)"/>
+    <g transform="translate(20, 221)">
+      <rect x="0" y="0" width="8" height="8" rx="2" fill="#f43f5e"/>
+      <text x="16" y="8" font-size="14" font-weight="800" fill="#f8fafc">VLAN 69: IoT (Smart Home Quarantine)</text>
+      <text x="16" y="24" font-size="11" fill="#fecdd3">Subnet: 192.168.69.0/24 • Gateway: 192.168.69.1 • MTU 1420</text>
+    </g>
+    <g transform="translate(20, 255)">
+      <rect x="0" y="0" width="370" height="125" rx="8" fill="url(#cardGrad)" stroke="#be123c" stroke-width="1"/>
+      <g transform="translate(14, 16)">
+        <text x="0" y="14" font-size="12" font-weight="700" fill="#ffffff">Smart Home &amp; Automation Devices</text>
+        <text x="0" y="32" font-size="10" fill="#cbd5e1">• Smart TVs, Media Streamers, Thermostats, Cameras</text>
+        <text x="0" y="48" font-size="10" fill="#cbd5e1">• Quarantined: Zero access to router management or LAN</text>
+        <text x="0" y="64" font-size="10" fill="#cbd5e1">• WAN Egress forced through PIA VPN WireGuard Gateway</text>
+        <text x="0" y="80" font-size="10" fill="#f43f5e">• Pi-hole IoT Group: Telemetry &amp; beacon domain blocking</text>
+        <text x="0" y="94" font-size="10" fill="#38bdf8">• Avahi mDNS reflection allows Skylab to cast media</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== FOOTER SPECIFICATION BANNER ==================== -->
+  <g transform="translate(40, 955)">
+    <text x="0" y="12" font-size="11" font-weight="500" fill="#64748b">NixCFG OKF Documentation • Declarative Network Spec • Updated 2026-11 • Hardware: HP Slim, KeepLINK KP-9000-9XHPML-X, Zyxel NWA130BE, HP z620</text>
+  </g>
+</svg>

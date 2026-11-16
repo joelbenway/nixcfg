@@ -49,6 +49,7 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 ## Documentation
 In-depth technical architecture, hardware specifications, operational runbooks, and Architectural Decision Records (ADRs) are maintained in the [`docs/`](./docs/index.md) directory formatted in the [Open Knowledge Format (OKF v0.2)](./docs/index.md):
 * [Fleet Overview & Ethos](./docs/architecture/fleet-overview.md)
+* [Home Network Topology & Infrastructure](./docs/architecture/network-architecture.md) ([Interactive Explorer](./docs/architecture/network-diagram.html) • [SVG](./docs/architecture/network-diagram.svg))
 * [Storage Architecture & Tiering](./docs/architecture/storage-tiering.md)
 * [Network Routing & Perimeter Defense](./docs/architecture/network-routing.md)
 * [Security, Cryptography & Bootstrapping](./docs/architecture/security-model.md)
