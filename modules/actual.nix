@@ -2,20 +2,13 @@
 # SPDX-License-Identifier: MIT
 {
   config,
-  inputs,
   lib,
   pkgs,
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
   cfg = config.actual;
-  plaidCfg = cfg.plaid;
 in {
-  imports = [
-    inputs.gone-to-plaid.nixosModules.default
-    (lib.mkAliasOptionModule ["actual" "gone-to-plaid"] ["actual" "plaid"])
-  ];
-
   options.actual = {
     enable = lib.mkEnableOption "Actual Budget";
 
@@ -36,135 +29,39 @@ in {
       default = "/var/lib/actual";
       description = "Directory for Actual Budget data";
     };
-
-    plaid = {
-      enable = lib.mkEnableOption "gone-to-plaid Actual Budget sync bridge";
-
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = ports.plaid.internal;
-        description = "Port for the gone-to-plaid web dashboard and API";
-      };
-
-      dataDir = lib.mkOption {
-        type = lib.types.path;
-        default = "/var/lib/gone-to-plaid";
-        description = "Directory for gone-to-plaid SQLite database and sync state";
-      };
-
-      syncInterval = lib.mkOption {
-        type = lib.types.str;
-        default = "4h";
-        description = "Interval or systemd calendar expression for automatic ledger sync passes";
-      };
-
-      environmentFile = lib.mkOption {
-        type = lib.types.nullOr (lib.types.either lib.types.path lib.types.str);
-        default = null;
-        description = ''
-          Optional path to an EnvironmentFile containing secrets:
-          - PLAID_CLIENT_ID
-          - PLAID_ENV (sandbox, production, or development)
-          - PLAID_SANDBOX_SECRET (used when PLAID_ENV=sandbox)
-          - PLAID_PRODUCTION_SECRET (used when PLAID_ENV=production)
-          - PLAID_SECRET (fallback / single secret)
-          - ACTUAL_SERVER_URL
-          - ACTUAL_PASSWORD
-          - ACTUAL_SYNC_ID
-          - ACTUAL_ENCRYPTION_PASSWORD
-        '';
-      };
-
-      openFirewall = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether to open the web dashboard port in the firewall";
-      };
-    };
   };
 
-  config = lib.mkMerge [
-    (lib.mkIf cfg.enable {
-      services.actual = {
-        enable = true;
-        openFirewall = false;
-        settings = {
-          port = cfg.port;
-          hostname = cfg.hostname;
-          dataDir = cfg.dataDir;
-          loginMethod = "password";
-          allowedLoginMethods = ["password"];
-          trustedProxies = ["127.0.0.1" "::1"];
-        };
+  config = lib.mkIf cfg.enable {
+    services.actual = {
+      enable = true;
+      openFirewall = false;
+      settings = {
+        port = cfg.port;
+        hostname = cfg.hostname;
+        dataDir = cfg.dataDir;
+        loginMethod = "password";
+        allowedLoginMethods = ["password"];
+        trustedProxies = ["127.0.0.1" "::1"];
       };
+    };
 
-      systemd.services.actual = {
-        preStart = lib.mkAfter ''
-                    DB_FILE="${cfg.dataDir}/server-files/account.sqlite"
-                    if [[ -f "$DB_FILE" ]]; then
-                      HAS_AUTH=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='auth';" 2>/dev/null || echo 0)
-                      if [[ "$HAS_AUTH" -eq 1 ]]; then
-                        ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" <<'EOF'
-          INSERT INTO auth (method, display_name, active)
-          VALUES ('password', 'Password', 1)
-          ON CONFLICT (method) DO UPDATE SET active = 1;
+    systemd.services.actual = {
+      preStart = lib.mkAfter ''
+                  DB_FILE="${cfg.dataDir}/server-files/account.sqlite"
+                  if [[ -f "$DB_FILE" ]]; then
+                    HAS_AUTH=$(${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='auth';" 2>/dev/null || echo 0)
+                    if [[ "$HAS_AUTH" -eq 1 ]]; then
+                      ${pkgs.sqlite}/bin/sqlite3 "$DB_FILE" <<'EOF'
+        INSERT INTO auth (method, display_name, active)
+        VALUES ('password', 'Password', 1)
+        ON CONFLICT (method) DO UPDATE SET active = 1;
 
-          UPDATE auth SET active = 0
-          WHERE method = 'header';
-          EOF
-                      fi
+        UPDATE auth SET active = 0
+        WHERE method = 'header';
+        EOF
                     fi
-        '';
-      };
-    })
-
-    (lib.mkIf plaidCfg.enable {
-      assertions = [
-        {
-          assertion = cfg.enable;
-          message = "actual.plaid requires actual.enable = true";
-        }
-      ];
-
-      services.gone-to-plaid = {
-        enable = true;
-        package = inputs.gone-to-plaid.packages.${pkgs.stdenv.hostPlatform.system}.default;
-        port = plaidCfg.port;
-        dataDir = plaidCfg.dataDir;
-        syncInterval = plaidCfg.syncInterval;
-        environmentFile = plaidCfg.environmentFile;
-      };
-
-      networking.firewall.allowedTCPPorts = lib.mkIf plaidCfg.openFirewall [
-        plaidCfg.port
-      ];
-
-      # Persist data directory across reboots when impermanence is enabled
-      impermanence.directories = lib.mkIf config.impermanence.enable [
-        {
-          directory = plaidCfg.dataDir;
-          user = "plaid-sync";
-          group = "plaid-sync";
-          mode = "0750";
-        }
-      ];
-
-      # Ensure dataDir exists with correct ownership and permissions
-      systemd.tmpfiles.rules = [
-        "d ${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
-        "Z ${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
-        "d /persist${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
-        "Z /persist${plaidCfg.dataDir} 0750 plaid-sync plaid-sync -"
-      ];
-
-      # Order background sync pass after daemon is up, with retry logic on curl
-      systemd.services.gone-to-plaid-run = {
-        after = ["gone-to-plaid.service"];
-        wants = ["gone-to-plaid.service"];
-        serviceConfig = {
-          ExecStart = lib.mkForce "${pkgs.curl}/bin/curl -s --retry 5 --retry-connrefused --retry-delay 2 -X POST http://127.0.0.1:${toString plaidCfg.port}/api/sync";
-        };
-      };
-    })
-  ];
+                  fi
+      '';
+    };
+  };
 }

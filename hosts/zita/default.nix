@@ -64,13 +64,6 @@ in {
         owner = "root";
         group = "root";
       };
-      plaid-env = {
-        file = lib.custom.relativeToRoot "secrets/plaid.env.age";
-        name = "plaid.env";
-        mode = "440";
-        owner = "plaid-sync";
-        group = "plaid-sync";
-      };
       zita-cache-priv-key = {
         file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
         mode = "400";
@@ -163,10 +156,6 @@ in {
   actual = {
     enable = true;
     hostname = "127.0.0.1";
-    plaid = {
-      enable = true;
-      environmentFile = config.age.secrets.plaid-env.path;
-    };
   }; # actual
 
   jellyfin = {
@@ -196,7 +185,6 @@ in {
       443
       ports.copyparty.tailscale
       ports.actual.tailscale
-      ports.plaid.tailscale
       ports.jellyfin.tailscale
       ports.forgejo.tailscale
       ports.vaultwarden.tailscale
@@ -236,13 +224,6 @@ in {
         reverse_proxy 127.0.0.1:${toString ports.actual.internal}
       }
 
-      plaid.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
-        reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
-      }
-
       jellyfin.benway.me {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
@@ -275,10 +256,6 @@ in {
       ${hostname}.${config.tailscale.tailnet}:${toString ports.actual.tailscale} {
         header Cross-Origin-Resource-Policy cross-origin
         reverse_proxy 127.0.0.1:${toString ports.actual.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.plaid.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.plaid.internal}
       }
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {

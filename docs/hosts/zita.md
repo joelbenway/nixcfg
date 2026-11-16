@@ -69,7 +69,7 @@ Today, `zita` lives in the basement where it acts as the central storage applian
 `zita` runs a comprehensive suite of declarative homelab services:
 
 * **[Jellyfin Media Server](../../modules/jellyfin.nix)**: Delivers 4K HDR and 1080p media streaming to televisions and mobile devices. Leverages the NVIDIA Quadro M2000 for hardware-accelerated NVENC video transcoding.
-* **[Actual Budget + Plaid Sync](../../modules/actual.nix)**: Self-hosted zero-knowledge privacy-focused envelope budgeting server. Automatically syncs live banking transactions via Plaid using Joel's custom [`gone-to-plaid`](https://github.com/joelbenway/gone-to-plaid) bridge.
+* **[Actual Budget](../../modules/actual.nix)**: Self-hosted zero-knowledge privacy-focused envelope budgeting server.
 * **[Samba (SMB/CIFS)](../../modules/samba.nix)**: Declarative, multi-user local network file shares for Windows, Linux, and macOS clients with guest and authenticated access.
 * **[Copyparty](../../modules/copyparty.nix)**: Blazing-fast HTTP/WebDAV file server allowing instant upload, streaming, audio player, and file management via any browser without accounts or heavy client software.
 * **[Caddy Reverse Proxy](../../hosts/zita/default.nix)**: Handles automated TLS certificate acquisition via Cloudflare DNS-01 API challenges, exposing services securely over local DNS and Tailscale.

@@ -93,7 +93,6 @@ in {
               # Service CNAMEs pointing to Zita on local LAN (reachable with or without Tailscale)
               "cname=files.benway.me,zita.skylab.home"
               "cname=budget.benway.me,zita.skylab.home"
-              "cname=plaid.benway.me,zita.skylab.home"
               "cname=jellyfin.benway.me,zita.skylab.home"
               "cname=git.benway.me,zita.skylab.home"
               "cname=vault.benway.me,zita.skylab.home"

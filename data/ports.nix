@@ -11,10 +11,6 @@ let
       internal = 5005;
       tailscale = 5006;
     };
-    plaid = {
-      internal = 8084;
-      tailscale = 8086;
-    };
     jellyfin = {
       internal = 8096;
       tailscale = 8097;

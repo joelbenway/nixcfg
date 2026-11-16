@@ -49,10 +49,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
     };
-    gone-to-plaid = {
-      url = "github:joelbenway/gone-to-plaid";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     hex = {
       url = "github:anomalyco/hex";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -145,7 +141,6 @@
         hmModules = [inputs.agenix.homeManagerModules.default];
         overlays = [
           inputs.copyparty.overlays.default
-          inputs.gone-to-plaid.overlays.default
         ];
       }; # zita
     }; # nixosConfigurations
