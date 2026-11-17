@@ -168,6 +168,8 @@ in
           enable = true;
           autostart = true;
           installModel = true;
+          # Plasma keeps Alt+Space for KRunner; Hex's KDE default is Ctrl+Alt+Space.
+          shortcut = "control+alt+space";
         };
       };
 
