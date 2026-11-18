@@ -61,6 +61,12 @@
       default = false;
       description = "Whether to accept subnet routes advertised by other Tailscale nodes";
     };
+
+    acceptDns = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether to accept DNS configuration advertised by Tailscale";
+    };
   }; # options.tailscale
 
   config = lib.mkIf config.tailscale.enable {
@@ -75,7 +81,11 @@
             then "--accept-routes"
             else "--accept-routes=false"
           )
-          "--accept-dns=false"
+          (
+            if config.tailscale.acceptDns
+            then "--accept-dns"
+            else "--accept-dns=false"
+          )
         ]
         ++ [
           (

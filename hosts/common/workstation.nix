@@ -85,6 +85,7 @@ in {
 
   tailscale = {
     enable = true;
+    acceptDns = true;
     envFile = config.age.secrets.tailscale-oauth-env.path;
   };
 
