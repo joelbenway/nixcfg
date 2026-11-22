@@ -196,14 +196,18 @@ def test_systemd_failed_and_logs_escape_special_chars(monkeypatch, capsys):
         if parsed.path == "/api/collections/systemd_services/records":
             return _json_resp(
                 {
+                    "page": 1,
+                    "perPage": 500,
+                    "totalPages": 1,
+                    "totalItems": 1,
                     "items": [
                         {
                             "system": "sys_zita",
                             "name": "container@copyparty.service",
-                            "state": "failed",
-                            "sub": "failed",
+                            "state": bq.SERVICE_STATE_FAILED,
+                            "sub": bq.SERVICE_SUBSTATE_FAILED,
                         }
-                    ]
+                    ],
                 }
             )
         if parsed.path == "/api/beszel/systemd/logs":
@@ -215,6 +219,19 @@ def test_systemd_failed_and_logs_escape_special_chars(monkeypatch, capsys):
     assert rc1 == 0
     svc_data = json.loads(capsys.readouterr().out)
     assert svc_data["services"][0]["name"] == "container@copyparty.service"
+    assert svc_data["services"][0]["state"] == 2
+    assert svc_data["services"][0]["sub"] == 3
+
+    svc_reqs = [r for r in opener.requests if "/api/collections/systemd_services/records" in r[1]]
+    assert len(svc_reqs) == 1
+    svc_qs = parse_qs(urlparse(svc_reqs[0][1]).query)
+    assert svc_qs["filter"] == ["system='sys_zita' && (state=2 || sub=3)"]
+
+    rc_text = bq.main(["systemd", "--host", "zita", "--failed"], opener=opener)
+    assert rc_text == 0
+    svc_text = capsys.readouterr().out
+    assert "container@copyparty.service" in svc_text
+    assert "state=failed sub=failed" in svc_text
 
     rc2 = bq.main(
         ["systemd", "--host", "zita", "--logs", "container@copyparty.service", "--json"],
@@ -402,4 +419,72 @@ def test_null_fields_in_records_render_cleanly_without_typeerror(monkeypatch, ca
         out = capsys.readouterr().out
         assert out.strip() != ""
         assert "None" not in out
+
+
+def test_collection_pagination_fetches_all_pages_and_preserves_single_page(monkeypatch, capsys):
+    monkeypatch.setenv("BESZEL_URL", "http://127.0.0.1:8090")
+    monkeypatch.setenv("BESZEL_API_EMAIL", "hermes@benway.me")
+    monkeypatch.setenv("BESZEL_API_PASSWORD", "pw")
+
+    stats_pages = {
+        "1": [{"id": "s1", "created": "2026-11-20 12:02:00Z"}, {"id": "s2", "created": "2026-11-20 12:01:00Z"}],
+        "2": [{"id": "s3", "created": "2026-11-20 12:00:00Z"}],
+        "3": [{"id": "s4", "created": "2026-11-20 11:59:00Z"}],
+    }
+    alert_pages = {
+        "1": [{"id": "a1", "system": "sys_zita", "name": "Disk", "value": 88}],
+        "2": [{"id": "a2", "system": "sys_zita", "name": "CPU", "value": 95}],
+    }
+
+    def extra(req, parsed):
+        qs = parse_qs(parsed.query)
+        page = qs.get("page", ["1"])[0]
+        if parsed.path == "/api/collections/system_stats/records":
+            return _json_resp(
+                {
+                    "page": int(page),
+                    "perPage": 200,
+                    "totalPages": 3,
+                    "totalItems": 4,
+                    "items": stats_pages[page],
+                }
+            )
+        if parsed.path == "/api/collections/alert_history/records":
+            return _json_resp(
+                {
+                    "page": int(page),
+                    "perPage": 200,
+                    "totalPages": 2,
+                    "totalItems": 2,
+                    "items": alert_pages[page],
+                }
+            )
+        return None
+
+    opener = FakeOpener(_base_handler(extra))
+    rc_host = bq.main(["host", "zita", "--hours", "24", "--json"], opener=opener)
+    assert rc_host == 0
+    host_data = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in host_data["stats"]] == ["s1", "s2", "s3", "s4"]
+
+    stats_reqs = [r for r in opener.requests if "/api/collections/system_stats/records" in r[1]]
+    assert len(stats_reqs) == 3
+    qs1 = parse_qs(urlparse(stats_reqs[0][1]).query)
+    qs2 = parse_qs(urlparse(stats_reqs[1][1]).query)
+    qs3 = parse_qs(urlparse(stats_reqs[2][1]).query)
+    assert "page" not in qs1
+    assert qs2["page"] == ["2"]
+    assert qs3["page"] == ["3"]
+    assert qs1["filter"] == qs2["filter"] == qs3["filter"]
+    assert qs1["sort"] == qs2["sort"] == qs3["sort"] == ["-created"]
+
+    # systems collection returned no totalPages -> exactly 1 request
+    sys_reqs = [r for r in opener.requests if "/api/collections/systems/records" in r[1]]
+    assert len(sys_reqs) == 1
+
+    rc_alerts = bq.main(["alerts", "--history", "--json"], opener=opener)
+    assert rc_alerts == 0
+    alert_data = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in alert_data["history"]] == ["a1", "a2"]
+
 

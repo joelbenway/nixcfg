@@ -21,6 +21,28 @@ from urllib.request import Request, build_opener
 DEFAULT_URL = "http://127.0.0.1:8090"
 DEFAULT_ENV_FILE = "/run/agenix/beszel-hermes.env"
 
+# Beszel v0.21.0 systemd_services numeric enum values
+# (internal/entities/systemd/systemd.go & internal/site/src/lib/enums.ts)
+SERVICE_STATE_FAILED = 2
+SERVICE_SUBSTATE_FAILED = 3
+
+SERVICE_STATE_LABELS: dict[int, str] = {
+    0: "active",
+    1: "inactive",
+    2: "failed",
+    3: "activating",
+    4: "deactivating",
+    5: "reloading",
+}
+
+SERVICE_SUBSTATE_LABELS: dict[int, str] = {
+    0: "dead",
+    1: "running",
+    2: "exited",
+    3: "failed",
+    4: "unknown",
+}
+
 
 class BeszelError(Exception):
     """Sanitized, user-facing error from beszel-query."""
@@ -166,9 +188,32 @@ class BeszelClient:
             raise BeszelError("unexpected non-list 'items' field from Beszel Hub")
         return [item for item in items if isinstance(item, dict)]
 
+    def _list_records(
+        self, path: str, params: dict[str, str] | None = None
+    ) -> list[dict[str, Any]]:
+        base_params = dict(params) if params else {}
+        data = self.get_json(path, base_params or None)
+        records = self._items(data)
+
+        total_pages = data.get("totalPages")
+        if not isinstance(total_pages, int) or isinstance(total_pages, bool) or total_pages <= 1:
+            return records
+
+        for page in range(2, total_pages + 1):
+            page_params = dict(base_params)
+            page_params["page"] = str(page)
+            next_data = self.get_json(path, page_params)
+            page_items = self._items(next_data)
+            if not page_items:
+                break
+            records.extend(page_items)
+            next_total = next_data.get("totalPages")
+            if isinstance(next_total, int) and not isinstance(next_total, bool) and page >= next_total:
+                break
+        return records
+
     def list_systems(self) -> list[dict[str, Any]]:
-        data = self.get_json("/api/collections/systems/records", {"perPage": "200", "sort": "name"})
-        return self._items(data)
+        return self._list_records("/api/collections/systems/records", {"perPage": "200", "sort": "name"})
 
     def resolve_system(self, name: str) -> dict[str, Any]:
         systems = self.list_systems()
@@ -188,11 +233,10 @@ class BeszelClient:
         except (ValueError, OverflowError) as exc:
             raise BeszelError(f"invalid --hours value '{hours}': {exc}") from None
         flt = f"system='{escape_pb_filter(system_id)}' && created>='{cutoff}'"
-        data = self.get_json(
+        return self._list_records(
             "/api/collections/system_stats/records",
             {"filter": flt, "sort": "-created", "perPage": "200"},
         )
-        return self._items(data)
 
     def list_systemd(
         self, system_id: str | None = None, failed_only: bool = False
@@ -201,12 +245,11 @@ class BeszelClient:
         if system_id:
             filters.append(f"system='{escape_pb_filter(system_id)}'")
         if failed_only:
-            filters.append("(state='failed' || sub='failed')")
+            filters.append(f"(state={SERVICE_STATE_FAILED} || sub={SERVICE_SUBSTATE_FAILED})")
         params: dict[str, str] = {"perPage": "500", "sort": "name"}
         if filters:
             params["filter"] = " && ".join(filters)
-        data = self.get_json("/api/collections/systemd_services/records", params)
-        return self._items(data)
+        return self._list_records("/api/collections/systemd_services/records", params)
 
     def get_systemd_logs(self, system_id: str, service: str) -> str:
         data = self.get_json(
@@ -220,8 +263,7 @@ class BeszelClient:
         params: dict[str, str] = {"perPage": "200", "sort": "name"}
         if system_id:
             params["filter"] = f"system='{escape_pb_filter(system_id)}'"
-        data = self.get_json("/api/collections/smart_devices/records", params)
-        return self._items(data)
+        return self._list_records("/api/collections/smart_devices/records", params)
 
     def list_alerts(
         self, system_id: str | None = None, history: bool = False
@@ -230,8 +272,7 @@ class BeszelClient:
         params: dict[str, str] = {"perPage": "200", "sort": "-created"}
         if system_id:
             params["filter"] = f"system='{escape_pb_filter(system_id)}'"
-        data = self.get_json(f"/api/collections/{collection}/records", params)
-        return self._items(data)
+        return self._list_records(f"/api/collections/{collection}/records", params)
 
 
 def _format_system_row(item: dict[str, Any]) -> dict[str, Any]:
@@ -252,6 +293,12 @@ def _format_system_row(item: dict[str, Any]) -> dict[str, Any]:
 
 def _fmt_text(val: Any, default: str = "?") -> str:
     return default if val is None else str(val)
+
+
+def _fmt_enum(val: Any, labels: dict[int, str], default: str = "?") -> str:
+    if isinstance(val, int) and not isinstance(val, bool) and val in labels:
+        return labels[val]
+    return _fmt_text(val, default)
 
 
 def _fmt_opt(val: Any, suffix: str = "") -> str:
@@ -348,7 +395,8 @@ def _run(args: argparse.Namespace, client: BeszelClient) -> None:
         for svc in services:
             print(
                 f"{_fmt_text(svc.get('name')):<40} "
-                f"state={_fmt_text(svc.get('state'))} sub={_fmt_text(svc.get('sub'))}"
+                f"state={_fmt_enum(svc.get('state'), SERVICE_STATE_LABELS)} "
+                f"sub={_fmt_enum(svc.get('sub'), SERVICE_SUBSTATE_LABELS)}"
             )
         return
 

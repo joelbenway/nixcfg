@@ -4,6 +4,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
@@ -22,7 +23,7 @@
       cfgHub.systems;
   };
 
-  dataDirMountUnit = "${lib.replaceStrings ["/"] ["-"] (lib.removePrefix "/" cfgHub.dataDir)}.mount";
+  dataDirMountUnit = "${utils.escapeSystemdPath cfgHub.dataDir}.mount";
 
   seedHubDataScript = pkgs.writeShellScript "beszel-hub-seed" ''
     set -euo pipefail
