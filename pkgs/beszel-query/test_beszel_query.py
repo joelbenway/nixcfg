@@ -337,3 +337,69 @@ def test_http_errors_and_unreachable_never_leak_password(mode, monkeypatch, caps
     assert secret not in captured.out
     assert secret not in captured.err
     assert captured.err.strip().startswith("error:")
+
+
+def test_http_exception_and_invalid_url_and_hours_never_traceback(monkeypatch, capsys):
+    from http.client import RemoteDisconnected
+
+    secret = "super-secret-password-999"
+    monkeypatch.setenv("BESZEL_URL", "http://127.0.0.1:8090")
+    monkeypatch.setenv("BESZEL_API_EMAIL", "hermes@benway.me")
+    monkeypatch.setenv("BESZEL_API_PASSWORD", secret)
+
+    # 1. http.client.RemoteDisconnected (inherits Exception, not OSError)
+    def disconnect_handler(req):
+        raise RemoteDisconnected(f"Remote end closed connection ({secret})")
+
+    rc = bq.main(["summary"], opener=FakeOpener(disconnect_handler))
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert secret not in err
+    assert err.strip().startswith("error:")
+
+    # 2. Invalid BESZEL_URL missing scheme
+    monkeypatch.setenv("BESZEL_URL", "127.0.0.1:8090")
+    rc_url = bq.main(["summary"], opener=FakeOpener(_base_handler()))
+    assert rc_url != 0
+    err_url = capsys.readouterr().err
+    assert "Traceback" not in err_url
+    assert err_url.strip().startswith("error:")
+
+    # 3. Invalid --hours values (<= 0, nan, inf, overflow)
+    monkeypatch.setenv("BESZEL_URL", "http://127.0.0.1:8090")
+    for bad_hours in ["0", "-2", "nan", "inf", "1e9"]:
+        rc_h = bq.main(["host", "zita", "--hours", bad_hours], opener=FakeOpener(_base_handler()))
+        assert rc_h != 0, f"expected non-zero exit for --hours {bad_hours}"
+        err_h = capsys.readouterr().err
+        assert "Traceback" not in err_h
+        assert err_h.strip().startswith("error:")
+
+
+def test_null_fields_in_records_render_cleanly_without_typeerror(monkeypatch, capsys):
+    monkeypatch.setenv("BESZEL_URL", "http://127.0.0.1:8090")
+    monkeypatch.setenv("BESZEL_API_EMAIL", "hermes@benway.me")
+    monkeypatch.setenv("BESZEL_API_PASSWORD", "pw")
+
+    def null_handler(req):
+        parsed = urlparse(req.full_url)
+        if parsed.path == "/api/collections/users/auth-with-password":
+            return _json_resp({"token": "tok"})
+        if parsed.path == "/api/collections/systems/records":
+            return _json_resp({"items": [{"id": "sys_1", "name": None, "status": None, "info": None}]})
+        if parsed.path == "/api/collections/systemd_services/records":
+            return _json_resp({"items": [{"system": "sys_1", "name": None, "state": None, "sub": None}]})
+        if parsed.path == "/api/collections/smart_devices/records":
+            return _json_resp({"items": [{"system": "sys_1", "name": None, "model": None, "state": None, "temp": None}]})
+        if parsed.path == "/api/collections/alerts/records":
+            return _json_resp({"items": [{"system": None, "name": None, "value": None, "triggered": None}]})
+        raise AssertionError(f"Unexpected {parsed.path}")
+
+    opener = FakeOpener(null_handler)
+    for argv in [["summary"], ["systemd"], ["smart"], ["alerts"]]:
+        rc = bq.main(argv, opener=opener)
+        assert rc == 0, f"failed on {argv}"
+        out = capsys.readouterr().out
+        assert out.strip() != ""
+        assert "None" not in out
+

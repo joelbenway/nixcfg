@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPException
 import json
+import math
 import os
 from pathlib import Path
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, build_opener
 
 DEFAULT_URL = "http://127.0.0.1:8090"
@@ -57,6 +59,9 @@ def load_config(env_file: str | None = None) -> tuple[str, str, str]:
     file_vals = _parse_env_file(Path(resolved_env_file))
 
     url = (os.environ.get("BESZEL_URL") or file_vals.get("BESZEL_URL") or DEFAULT_URL).rstrip("/")
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+        raise BeszelError(f"invalid BESZEL_URL '{url}': must include http:// or https:// scheme and host")
     email = os.environ.get("BESZEL_API_EMAIL") or file_vals.get("BESZEL_API_EMAIL") or ""
     password = os.environ.get("BESZEL_API_PASSWORD") or file_vals.get("BESZEL_API_PASSWORD") or ""
 
@@ -109,7 +114,7 @@ class BeszelClient:
             raise BeszelError(
                 _sanitize(f"cannot reach Beszel Hub at {self.base_url}: {exc.reason}", self.password)
             ) from None
-        except OSError as exc:
+        except (OSError, HTTPException, ValueError) as exc:
             raise BeszelError(
                 _sanitize(f"network error talking to {self.base_url}: {exc}", self.password)
             ) from None
@@ -153,26 +158,41 @@ class BeszelClient:
         )
         return self._open_json(req)
 
+    def _items(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        items = data.get("items")
+        if items is None:
+            return []
+        if not isinstance(items, list):
+            raise BeszelError("unexpected non-list 'items' field from Beszel Hub")
+        return [item for item in items if isinstance(item, dict)]
+
     def list_systems(self) -> list[dict[str, Any]]:
         data = self.get_json("/api/collections/systems/records", {"perPage": "200", "sort": "name"})
-        return list(data.get("items") or [])
+        return self._items(data)
 
     def resolve_system(self, name: str) -> dict[str, Any]:
         systems = self.list_systems()
         for item in systems:
             if item.get("name") == name or item.get("id") == name:
+                if not item.get("id"):
+                    raise BeszelError(f"matched host '{name}' has no record id")
                 return item
         available = ", ".join(sorted(str(s.get("name", "")) for s in systems if s.get("name")))
         raise BeszelError(f"unknown host '{name}' (available: {available or 'none'})")
 
     def get_host_stats(self, system_id: str, hours: float) -> list[dict[str, Any]]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        if not math.isfinite(hours) or hours <= 0 or hours > 87600:
+            raise BeszelError(f"invalid --hours value '{hours}': must be a finite number between 0 and 87600")
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, OverflowError) as exc:
+            raise BeszelError(f"invalid --hours value '{hours}': {exc}") from None
         flt = f"system='{escape_pb_filter(system_id)}' && created>='{cutoff}'"
         data = self.get_json(
             "/api/collections/system_stats/records",
             {"filter": flt, "sort": "-created", "perPage": "200"},
         )
-        return list(data.get("items") or [])
+        return self._items(data)
 
     def list_systemd(
         self, system_id: str | None = None, failed_only: bool = False
@@ -186,7 +206,7 @@ class BeszelClient:
         if filters:
             params["filter"] = " && ".join(filters)
         data = self.get_json("/api/collections/systemd_services/records", params)
-        return list(data.get("items") or [])
+        return self._items(data)
 
     def get_systemd_logs(self, system_id: str, service: str) -> str:
         data = self.get_json(
@@ -201,7 +221,7 @@ class BeszelClient:
         if system_id:
             params["filter"] = f"system='{escape_pb_filter(system_id)}'"
         data = self.get_json("/api/collections/smart_devices/records", params)
-        return list(data.get("items") or [])
+        return self._items(data)
 
     def list_alerts(
         self, system_id: str | None = None, history: bool = False
@@ -211,16 +231,16 @@ class BeszelClient:
         if system_id:
             params["filter"] = f"system='{escape_pb_filter(system_id)}'"
         data = self.get_json(f"/api/collections/{collection}/records", params)
-        return list(data.get("items") or [])
+        return self._items(data)
 
 
 def _format_system_row(item: dict[str, Any]) -> dict[str, Any]:
     info = item.get("info") if isinstance(item.get("info"), dict) else {}
     return {
         "id": item.get("id"),
-        "name": item.get("name"),
+        "name": item.get("name") or "?",
         "host": item.get("host"),
-        "status": item.get("status", "unknown"),
+        "status": item.get("status") or "unknown",
         "uptime_sec": info.get("u"),
         "cpu_pct": info.get("cpu"),
         "mem_pct": info.get("mp"),
@@ -228,6 +248,10 @@ def _format_system_row(item: dict[str, Any]) -> dict[str, Any]:
         "temp_c": info.get("t"),
         "gpu_pct": info.get("g"),
     }
+
+
+def _fmt_text(val: Any, default: str = "?") -> str:
+    return default if val is None else str(val)
 
 
 def _fmt_opt(val: Any, suffix: str = "") -> str:
@@ -322,7 +346,10 @@ def _run(args: argparse.Namespace, client: BeszelClient) -> None:
             print(json.dumps({"services": services}, indent=2))
             return
         for svc in services:
-            print(f"{svc.get('name', '?'):<40} state={svc.get('state', '?')} sub={svc.get('sub', '?')}")
+            print(
+                f"{_fmt_text(svc.get('name')):<40} "
+                f"state={_fmt_text(svc.get('state'))} sub={_fmt_text(svc.get('sub'))}"
+            )
         return
 
     if args.command == "smart":
@@ -333,8 +360,8 @@ def _run(args: argparse.Namespace, client: BeszelClient) -> None:
             return
         for dev in devices:
             print(
-                f"{dev.get('name', '?'):<16} model={dev.get('model', '?')} "
-                f"state={dev.get('state', '?')} temp={_fmt_opt(dev.get('temp'), 'C')}"
+                f"{_fmt_text(dev.get('name')):<16} model={_fmt_text(dev.get('model'))} "
+                f"state={_fmt_text(dev.get('state'))} temp={_fmt_opt(dev.get('temp'), 'C')}"
             )
         return
 
@@ -347,8 +374,8 @@ def _run(args: argparse.Namespace, client: BeszelClient) -> None:
             return
         for item in items:
             print(
-                f"{item.get('name', '?'):<16} system={item.get('system', '?')} "
-                f"value={item.get('value', '?')} triggered={item.get('triggered', '-')}"
+                f"{_fmt_text(item.get('name')):<16} system={_fmt_text(item.get('system'))} "
+                f"value={_fmt_text(item.get('value'))} triggered={_fmt_text(item.get('triggered'), '-')}"
             )
 
 

@@ -196,10 +196,19 @@ in {
           // cfgAgent.extraEnvironment;
       };
 
-      networking.firewall.extraInputRules = ''
-        iifname "tailscale0" tcp dport ${toString cfgAgent.port} accept
-        ip saddr 192.168.77.0/24 tcp dport ${toString cfgAgent.port} accept
-      '';
+      networking.firewall = {
+        interfaces."tailscale0".allowedTCPPorts = [cfgAgent.port];
+        extraInputRules = lib.mkIf config.networking.nftables.enable ''
+          iifname "tailscale0" tcp dport ${toString cfgAgent.port} accept
+          ip saddr 192.168.77.0/24 tcp dport ${toString cfgAgent.port} accept
+        '';
+        extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -A nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept
+        '';
+        extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -D nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept 2>/dev/null || true
+        '';
+      };
     })
 
     (lib.mkIf cfgHub.enable {
@@ -231,6 +240,7 @@ in {
         serviceConfig = {
           DynamicUser = lib.mkForce false;
           PrivateUsers = lib.mkForce false;
+          User = "beszel-hub";
           Group = "beszel-hub";
           ExecStartPre = lib.mkBefore ["+${seedHubDataScript}"];
         };

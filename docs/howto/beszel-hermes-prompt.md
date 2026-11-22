@@ -102,13 +102,14 @@ You now have read-only access to fleet telemetry from Beszel Hub on zita via the
    - `beszel-query systemd --failed`
    Report any missing credentials or errors immediately before continuing.
 
-2. Enable your built-in webhook adapter bound strictly to localhost (`127.0.0.1`, port `8644` — e.g., `WEBHOOK_ENABLED=true`, `WEBHOOK_PORT=8644`, `WEBHOOK_HOST=127.0.0.1` if supported) using your Agentic GitOps workflow (`agent-env.nix` / `~/.hermes/` config + detached reload if needed). Do NOT expose the webhook port beyond localhost.
+2. Enable your built-in webhook adapter bound strictly to localhost (`127.0.0.1`, port `8644`). Note that `WEBHOOK_ENABLED=true`, `WEBHOOK_PORT=8644`, and `WEBHOOK_HOST=127.0.0.1` belong in `~/.hermes/.env`, while webhook routes live under `platforms.webhook` in `config.yaml` (via `agent-env.nix` `extraSettings` or `hermes webhook subscribe`) followed by a detached reload if needed. Do NOT expose the webhook port beyond localhost.
 
 3. Create a webhook route/subscription named `beszel` (accepting Beszel Shoutrrr generic JSON `{ "title": "...", "message": "..." }`) that delivers to THIS Signal chat and runs a triage prompt with these rules:
+   - Because Beszel's Shoutrrr generic webhook sends unsigned JSON POSTs by default, either configure this loopback-only (`127.0.0.1`) route with `secret: INSECURE_NO_AUTH` (or equivalent unsigned loopback setting) OR configure header-based auth and include the matching Shoutrrr `@Header=Value` query parameter in the URL you return in step 4.
    - Inspect the alert payload (`title` and `message`).
    - Run targeted `beszel-query` checks for context (e.g., `beszel-query host <name> --hours 1`, `beszel-query systemd --host <name> --failed`, `beszel-query systemd --host <name> --logs <unit>`, or `beszel-query smart --host <name>`).
    - Send ONE concise, actionable Signal message summarizing: severity, affected host, what actually triggered, relevant context/logs, and suggested next check.
    - Remember: `zita` and `michael` are always-on servers; `francis`, `agnes`, and `jerome` are workstations/laptops that sleep normally. Stay quiet unless an alert fires or I ask you a question.
 
-4. Verify the webhook listener is healthy (`curl -sf http://127.0.0.1:8644/health`), test the `beszel` route end-to-end with a synthetic test payload (`{"title":"[TEST] Beszel -> Hermes","message":"Verify Signal triage pipeline"}`), and reply with the exact Shoutrrr URL for me to paste into Beszel Hub's Settings -> Notifications (e.g., `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`).
+4. Verify the webhook listener is healthy (`curl -sf http://127.0.0.1:8644/health`), test the `beszel` route end-to-end with a synthetic test payload (`{"title":"[TEST] Beszel -> Hermes","message":"Verify Signal triage pipeline"}`), and reply with the exact Shoutrrr URL for me to paste into Beszel Hub's Settings -> Notifications (e.g., `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`, plus any `@Header` parameter if you enabled header auth).
 ```
