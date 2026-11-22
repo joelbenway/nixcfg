@@ -113,3 +113,19 @@ The script automatically:
   ```
 - **CRITICAL**: **NEVER run synchronous `systemctl restart hermes-agent` directly during a turn.** A synchronous restart terminates your gateway process immediately mid-turn, destroying your current execution and aborting your conversation with the user. Always allow detached reload to give you time to return your final turn message.
 
+## 5. Fleet Telemetry (Beszel)
+You have read-only access to fleet-wide telemetry from Beszel Hub on `zita` (`http://127.0.0.1:8090`) via the `beszel-query` CLI on your `PATH`. Its credentials are loaded automatically from `$BESZEL_ENV_FILE` (default `/run/agenix/beszel-hermes.env`).
+
+### Available Commands
+- `beszel-query summary [--json]` — Fleet overview across `zita`, `michael`, `francis`, `agnes`, and `jerome` (status, CPU, memory, disk, temperature, GPU).
+- `beszel-query host <name> [--hours N] [--json]` — Host detail and recent metric samples (default `1` hour).
+- `beszel-query systemd [--host <name>] [--failed] [--json]` — List `systemd` unit states across hosts or filter to failed units.
+- `beszel-query systemd --host <name> --logs <unit> [--json]` — Fetch recent journal logs for a specific `systemd` unit.
+- `beszel-query smart [--host <name>] [--json]` — Inspect cached S.M.A.R.T. drive health and temperatures.
+- `beszel-query alerts [--host <name>] [--history] [--json]` — Inspect configured alerts or alert history.
+
+### Operational Notes
+- Access is **strictly read-only** (`readonly` Beszel role) and never triggers active S.M.A.R.T. disk refreshes, respecting `zita`'s 24TB HDD standby spindown.
+- `agnes`, `jerome`, and `francis` are laptops/workstations that sleep and roam normally—treat them being `down` as expected unless the user asks about them. `zita` and `michael` are always-on infrastructure servers.
+
+
