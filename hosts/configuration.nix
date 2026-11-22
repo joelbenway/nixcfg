@@ -92,4 +92,11 @@
   }; # services
 
   smartd.enable = true;
+
+  beszel.agent = {
+    enable = true;
+    smartmon = true;
+    smartInterval = "12h";
+    systemd = true;
+  };
 }
