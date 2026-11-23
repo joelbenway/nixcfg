@@ -132,6 +132,14 @@ in {
     "z /var/lib/private 0700 root root -"
   ];
 
+  # Impermanence creates parent dirs like /var/lib/private with 0755 when mounting
+  # /var/lib/private/actual; systemd requires /var/lib/private to be 0700 for DynamicUser services.
+  system.activationScripts.fixVarLibPrivate = lib.stringAfter ["persist-files"] ''
+    if [ -d /var/lib/private ]; then
+      chmod 0700 /var/lib/private
+    fi
+  '';
+
   openssh = {
     enable = true;
     inherit hostKeyPath;
@@ -294,7 +302,7 @@ in {
     enable = true;
     package = pkgs.caddy.withPlugins {
       plugins = ["github.com/caddy-dns/cloudflare@v0.2.4"];
-      hash = "sha256-5a5cpFl90pEWt0lUC4ZJQ7g+1//ZvsRhee64Dt9vh5o=";
+      hash = "sha256-QSiwKqKvSxhksWBF4/MlBOpyXba5xOQ2sRwA0R7399E=";
     };
     environmentFile = config.age.secrets.cloudflare-api-env.path;
     extraConfig = ''
