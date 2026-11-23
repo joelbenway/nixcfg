@@ -333,15 +333,28 @@ def _parse_imap(
     )
 
 
-def load_config(path: Path) -> ProvisionConfig:
-    """Load, validate, and expand presets from a declarative KMail JSON file."""
+def _load_config_with_digest(path: Path) -> tuple[ProvisionConfig, str]:
+    """Read, hash, validate, and expand presets from a declarative KMail JSON file."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw_bytes = path.read_bytes()
     except OSError as exc:
         raise ConfigError(f"cannot read config file {path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    try:
+        raw = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ConfigError(f"invalid JSON in {path}: {exc}") from exc
 
+    return _parse_config_dict(raw), digest
+
+
+def load_config(path: Path) -> ProvisionConfig:
+    """Load, validate, and expand presets from a declarative KMail JSON file."""
+    cfg, _digest = _load_config_with_digest(path)
+    return cfg
+
+
+def _parse_config_dict(raw: Any) -> ProvisionConfig:
     if not isinstance(raw, dict):
         raise ConfigError("config root must be a JSON object")
 
@@ -801,9 +814,11 @@ class StateStore:
 
 
 class AkonadiProtocol(Protocol):
+    def is_ready(self, timeout: int = 5) -> bool: ...
     def ensure_ready(self, wait_seconds: int) -> None: ...
     def list_imap_resources(self) -> list[str]: ...
     def get_imap_settings(self, resource_id: str) -> dict[str, Any]: ...
+    def wait_for_resource_settings(self, resource_id: str, wait_seconds: int) -> None: ...
     def create_imap_resource(
         self,
         wait_seconds: int,
@@ -972,6 +987,27 @@ class AkonadiClient:
             "accountIdentity": int(self._get_setting(resource_id, "accountIdentity") or "0"),
         }
 
+    def wait_for_resource_settings(self, resource_id: str, wait_seconds: int) -> None:
+        deadline = time.monotonic() + max(wait_seconds, 1)
+        while True:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
+            probe = _run_qdbus(
+                f"org.freedesktop.Akonadi.Resource.{resource_id}",
+                "/Settings",
+                f"{self._IMAP_IFACE}.imapServer",
+                timeout=max(1, min(10, int(rem) + 1)),
+            )
+            if probe.returncode == 0:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
+        raise SessionNotReadyError(
+            f"Akonadi resource {resource_id} /Settings unavailable after {wait_seconds}s"
+        )
+
     def create_imap_resource(
         self,
         wait_seconds: int,
@@ -982,25 +1018,8 @@ class AkonadiClient:
             raise ProvisionError("Akonadi createAgentInstance returned empty identifier")
         if on_created is not None:
             on_created(res_id)
-        deadline = time.monotonic() + max(wait_seconds, 1)
-        while True:
-            rem = deadline - time.monotonic()
-            if rem <= 0:
-                break
-            probe = _run_qdbus(
-                f"org.freedesktop.Akonadi.Resource.{res_id}",
-                "/Settings",
-                f"{self._IMAP_IFACE}.imapServer",
-                timeout=max(1, min(10, int(rem) + 1)),
-            )
-            if probe.returncode == 0:
-                return res_id
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
-        raise SessionNotReadyError(
-            f"Newly created Akonadi resource {res_id} /Settings unavailable after {wait_seconds}s"
-        )
+        self.wait_for_resource_settings(res_id, wait_seconds)
+        return res_id
 
     def apply_imap_settings(self, resource_id: str, settings: dict[str, Any]) -> None:
         setter_map: list[tuple[str, str]] = [
@@ -1311,10 +1330,11 @@ def reconcile_emailidentities(
     desired_identities = _iter_managed_identities(cfg)
     desired_uoids = {ident.uoid for ident in desired_identities}
 
-    # Remove only positively identified first-run placeholder identity
+    # Remove only when the file contains solely KDE's untouched first-run placeholder identity
     numeric_groups = _numeric_identity_groups(kc)
     default_uoid = (kc.get("General", "Default Identity") or "").strip() or None
-    for _idx, grp in list(numeric_groups):
+    if len(numeric_groups) == 1:
+        _idx, grp = numeric_groups[0]
         if _is_firstrun_placeholder_identity(kc, grp, default_uoid):
             kc.remove_group(grp)
             changed = True
@@ -1512,6 +1532,13 @@ def reconcile_imap_resources(
     ) -> None:
         if dry_run or state_file is None:
             return
+        # Transfer ownership atomically: remove res_id from any former owner entry
+        for other_slug, other_entry in prev_managed.items():
+            if other_slug != acc.id and isinstance(other_entry, dict):
+                if other_entry.get("resource_id") == res_id:
+                    other_entry.pop("resource_id", None)
+                    other_entry.pop("pending_save", None)
+                    other_entry.pop("pending_restart", None)
         entry = prev_managed.get(acc.id)
         if not isinstance(entry, dict):
             entry = {}
@@ -1605,6 +1632,11 @@ def reconcile_imap_resources(
             actions.append(f"keychain: ensure password for (imap, {res_id}rc) [redacted]")
             continue
 
+        if not created_new and prior_pending_save:
+            wait_fn = getattr(akonadi, "wait_for_resource_settings", None)
+            if callable(wait_fn):
+                wait_fn(res_id, wait_seconds)
+
         current = get_settings(res_id)
         diffs = {k: v for k, v in desired_settings.items() if current.get(k) != v}
         settings_changed = created_new or bool(diffs) or prior_pending_save
@@ -1665,6 +1697,60 @@ def _provision_lock(state_file: Path, *, enabled: bool) -> Iterator[None]:
             os.close(fd)
 
 
+def _config_digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _checkpoint_local_ids(
+    cfg: ProvisionConfig, state: dict[str, Any], state_file: Path, *, prune: bool
+) -> None:
+    """Persist applied transport/identity/alias IDs before IMAP reconciliation starts."""
+    prev_managed = state.setdefault("managed", {})
+    retired_tids: set[int] = {
+        t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
+    }
+    desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
+    for acc in cfg.accounts:
+        entry = prev_managed.get(acc.id)
+        if not isinstance(entry, dict):
+            entry = {}
+            prev_managed[acc.id] = entry
+        prev_aliases = entry.get("aliases") if isinstance(entry.get("aliases"), dict) else {}
+        alias_map: dict[str, Any] = {}
+        if not prune:
+            for prev_aid, prev_aentry in prev_aliases.items():
+                if isinstance(prev_aentry, dict):
+                    alias_map[prev_aid] = dict(prev_aentry)
+        for alias in acc.aliases:
+            prev_alias = prev_aliases.get(alias.id)
+            if (
+                not prune
+                and alias.smtp is None
+                and isinstance(prev_alias, dict)
+                and isinstance(prev_alias.get("transport_id"), int)
+            ):
+                retired_tids.add(prev_alias["transport_id"])
+            a_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
+            if alias.smtp is not None:
+                a_entry["transport_id"] = alias.transport_id
+            alias_map[alias.id] = a_entry
+        entry["transport_id"] = acc.transport_id
+        entry["identity_uoid"] = acc.identity.uoid
+        entry["aliases"] = alias_map
+    if prune:
+        state.pop("retired_transport_ids", None)
+    else:
+        retired_tids -= desired_tids
+        if retired_tids:
+            state["retired_transport_ids"] = sorted(retired_tids)
+        else:
+            state.pop("retired_transport_ids", None)
+    StateStore.save(state_file, state)
+
+
 def provision(
     config_path: Path,
     config_dir: Path,
@@ -1683,112 +1769,122 @@ def provision(
     akonadi_client: AkonadiProtocol = akonadi if akonadi is not None else AkonadiClient()
     keychain_client: KeychainProtocol = keychain if keychain is not None else KeychainClient()
 
-    akonadi_available = True
+    akonadi_available = False
     if not dry_run:
         keychain_client.ensure_ready(wait_seconds)
         akonadi_client.ensure_ready(wait_seconds)
+        akonadi_available = True
     else:
-        # Never start Akonadi or require an unlocked wallet during --dry-run
+        # Never call ensure_ready() during --dry-run; only use a read-only probe
         is_ready_fn = getattr(akonadi_client, "is_ready", None)
         if callable(is_ready_fn):
             akonadi_available = bool(is_ready_fn(timeout=min(5, max(1, wait_seconds))))
-        else:
-            akonadi_client.ensure_ready(wait_seconds)
 
+    all_actions: list[str] = []
     with _provision_lock(state_file, enabled=not dry_run):
-        if not dry_run:
-            # Reload under the lock so concurrent secret rotations are never reverted
-            cfg = load_config(config_path)
-        state = StateStore.load(state_file)
-        all_actions: list[str] = []
+        max_passes = 1 if dry_run else 5
+        for _pass_idx in range(max_passes):
+            digest_before: str | None = None
+            if not dry_run:
+                # Reload and hash exact parsed bytes under the lock
+                cfg, digest_before = _load_config_with_digest(config_path)
+            state = StateStore.load(state_file)
 
-        all_actions.extend(
-            reconcile_mailtransports(
-                cfg, config_dir, state, keychain_client, dry_run=dry_run, prune=prune
+            all_actions.extend(
+                reconcile_mailtransports(
+                    cfg, config_dir, state, keychain_client, dry_run=dry_run, prune=prune
+                )
             )
-        )
-        id_actions, _ = reconcile_emailidentities(
-            cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
-        )
-        all_actions.extend(id_actions)
+            id_actions, _ = reconcile_emailidentities(
+                cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
+            )
+            all_actions.extend(id_actions)
 
-        assigned_resources: dict[str, str] = {}
-        if akonadi_available:
-            imap_actions, assigned_resources = reconcile_imap_resources(
-                cfg,
-                state,
-                akonadi_client,
-                keychain_client,
-                dry_run=dry_run,
-                prune=prune,
-                wait_seconds=wait_seconds,
-                state_file=state_file,
-            )
-            all_actions.extend(imap_actions)
-        else:
-            all_actions.append(
-                "akonadi: Akonadi is not running; skipping live IMAP diff without starting it"
-            )
+            if not dry_run:
+                _checkpoint_local_ids(cfg, state, state_file, prune=prune)
 
-        prev_managed = state.get("managed", {})
-        retired_tids: set[int] = {
-            t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
-        }
-        desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
-        active_resource_ids = set(assigned_resources.values())
+            assigned_resources: dict[str, str] = {}
+            if akonadi_available:
+                imap_actions, assigned_resources = reconcile_imap_resources(
+                    cfg,
+                    state,
+                    akonadi_client,
+                    keychain_client,
+                    dry_run=dry_run,
+                    prune=prune,
+                    wait_seconds=wait_seconds,
+                    state_file=state_file,
+                )
+                all_actions.extend(imap_actions)
+            else:
+                all_actions.append(
+                    "akonadi: Akonadi is not running; skipping live IMAP diff without starting it"
+                )
 
-        new_managed: dict[str, Any] = {}
-        for acc in cfg.accounts:
-            alias_map: dict[str, Any] = {}
-            prev_acc = prev_managed.get(acc.id, {})
-            prev_aliases = (
-                prev_acc.get("aliases", {})
-                if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict)
-                else {}
-            )
+            prev_managed = state.get("managed", {})
+            retired_tids: set[int] = {
+                t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
+            }
+            desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
+            active_resource_ids = set(assigned_resources.values())
+
+            new_managed: dict[str, Any] = {}
+            for acc in cfg.accounts:
+                alias_map: dict[str, Any] = {}
+                prev_acc = prev_managed.get(acc.id, {})
+                prev_aliases = (
+                    prev_acc.get("aliases", {})
+                    if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict)
+                    else {}
+                )
+                if not prune:
+                    for prev_alias_id, prev_alias_entry in prev_aliases.items():
+                        if isinstance(prev_alias_entry, dict):
+                            alias_map[prev_alias_id] = dict(prev_alias_entry)
+                for alias in acc.aliases:
+                    prev_alias = prev_aliases.get(alias.id)
+                    if (
+                        not prune
+                        and alias.smtp is None
+                        and isinstance(prev_alias, dict)
+                        and isinstance(prev_alias.get("transport_id"), int)
+                    ):
+                        retired_tids.add(prev_alias["transport_id"])
+                    alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
+                    if alias.smtp is not None:
+                        alias_entry["transport_id"] = alias.transport_id
+                    alias_map[alias.id] = alias_entry
+                if acc.id in assigned_resources:
+                    new_managed[acc.id] = {
+                        "resource_id": assigned_resources[acc.id],
+                        "transport_id": acc.transport_id,
+                        "identity_uoid": acc.identity.uoid,
+                        "aliases": alias_map,
+                    }
+
             if not prune:
-                for prev_alias_id, prev_alias_entry in prev_aliases.items():
-                    if isinstance(prev_alias_entry, dict):
-                        alias_map[prev_alias_id] = dict(prev_alias_entry)
-            for alias in acc.aliases:
-                prev_alias = prev_aliases.get(alias.id)
-                if (
-                    not prune
-                    and alias.smtp is None
-                    and isinstance(prev_alias, dict)
-                    and isinstance(prev_alias.get("transport_id"), int)
-                ):
-                    retired_tids.add(prev_alias["transport_id"])
-                alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
-                if alias.smtp is not None:
-                    alias_entry["transport_id"] = alias.transport_id
-                alias_map[alias.id] = alias_entry
-            if acc.id in assigned_resources:
-                new_managed[acc.id] = {
-                    "resource_id": assigned_resources[acc.id],
-                    "transport_id": acc.transport_id,
-                    "identity_uoid": acc.identity.uoid,
-                    "aliases": alias_map,
-                }
+                for prev_slug, prev_entry in prev_managed.items():
+                    if prev_slug not in new_managed and isinstance(prev_entry, dict):
+                        copied = dict(prev_entry)
+                        if copied.get("resource_id") in active_resource_ids:
+                            copied.pop("resource_id", None)
+                            copied.pop("pending_save", None)
+                            copied.pop("pending_restart", None)
+                        new_managed[prev_slug] = copied
+                retired_tids -= desired_tids
+            else:
+                retired_tids.clear()
 
-        if not prune:
-            for prev_slug, prev_entry in prev_managed.items():
-                if prev_slug not in new_managed and isinstance(prev_entry, dict):
-                    copied = dict(prev_entry)
-                    if copied.get("resource_id") in active_resource_ids:
-                        copied.pop("resource_id", None)
-                        copied.pop("pending_save", None)
-                        copied.pop("pending_restart", None)
-                    new_managed[prev_slug] = copied
-            retired_tids -= desired_tids
-        else:
-            retired_tids.clear()
-
-        if not dry_run:
-            state_out: dict[str, Any] = {"version": 1, "managed": new_managed}
-            if retired_tids:
-                state_out["retired_transport_ids"] = sorted(retired_tids)
-            StateStore.save(state_file, state_out)
+            if not dry_run:
+                state_out: dict[str, Any] = {"version": 1, "managed": new_managed}
+                if retired_tids:
+                    state_out["retired_transport_ids"] = sorted(retired_tids)
+                StateStore.save(state_file, state_out)
+                digest_after = _config_digest(config_path)
+                if digest_after is None or digest_after == digest_before:
+                    break
+            else:
+                break
 
     if all_actions:
         prefix = "[dry-run] " if dry_run else ""

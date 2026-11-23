@@ -423,9 +423,16 @@ class FakeAkonadiClient:
         self.restarted: list[str] = []
         self.removed: list[str] = []
 
+    def is_ready(self, timeout: int = 5) -> bool:
+        return self.ready_error is None
+
     def ensure_ready(self, wait_seconds: int) -> None:
         if self.ready_error is not None:
             raise self.ready_error
+
+    def wait_for_resource_settings(self, resource_id: str, wait_seconds: int) -> None:
+        if resource_id not in self.resources:
+            raise kp.SessionNotReadyError(f"resource {resource_id} /Settings not ready")
 
     def list_imap_resources(self) -> list[str]:
         return list(self.resources.keys())
@@ -478,9 +485,16 @@ class FakeKeychainClient:
         self.secrets: dict[tuple[str, str], str] = {}
         self.writes: list[tuple[str, str, str]] = []
 
+    def is_ready(self, timeout: int = 5) -> bool:
+        return self.ready_error is None
+
     def ensure_ready(self, wait_seconds: int) -> None:
         if self.ready_error is not None:
             raise self.ready_error
+
+    def wait_for_resource_settings(self, resource_id: str, wait_seconds: int) -> None:
+        if resource_id not in self.resources:
+            raise kp.SessionNotReadyError(f"resource {resource_id} /Settings not ready")
 
     def set_password(self, service: str, key: str, password: str) -> bool:
         if self.secrets.get((service, key)) == password:
@@ -583,7 +597,7 @@ def test_provision_replaces_blank_firstrun_identity_and_preserves_unmanaged(
     cfg_dir.mkdir()
     state_file = tmp_path / "state" / "state.json"
 
-    # Seed francis-like blank first-run identity + a manual identity + an unmanaged transport
+    # Seed francis-like sole blank first-run identity + an unmanaged transport
     (cfg_dir / "emailidentities").write_text(
         "[General]\n"
         "Default Identity=1301008340\n\n"
@@ -592,12 +606,7 @@ def test_provision_replaces_blank_firstrun_identity_and_preserves_unmanaged(
         "Disable Fcc=false\n"
         "Identity=Joel Benway\n"
         "Name=Joel Benway\n"
-        "uoid=1301008340\n\n"
-        "[Identity #1]\n"
-        "Email Address=manual@other.example\n"
-        "Identity=Manual\n"
-        "Name=Manual User\n"
-        "uoid=424242\n",
+        "uoid=1301008340\n",
         encoding="utf-8",
     )
     (cfg_dir / "mailtransports").write_text(
@@ -629,14 +638,13 @@ def test_provision_replaces_blank_firstrun_identity_and_preserves_unmanaged(
     main = parsed.accounts[0]
     domain, duck = main.aliases
 
-    # Check emailidentities
+    # Check emailidentities: sole blank default replaced cleanly
     ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
     assert ei.get("General", "Default Identity") == str(domain.uoid)
     id_groups = [g for g in ei.groups() if g.startswith("Identity #")]
-    assert len(id_groups) == 4  # 1 manual + 3 managed; blank default replaced!
+    assert len(id_groups) == 3  # 3 managed; sole blank default replaced!
     by_email = {ei.get(g, "Email Address"): g for g in id_groups}
     assert "" not in by_email and None not in by_email
-    assert "manual@other.example" in by_email
 
     for spec in (main.identity, domain, duck):
         grp = by_email[spec.email]
@@ -1522,9 +1530,9 @@ def test_identity_reconcile_leaves_non_numeric_groups_and_secondary_blank_identi
     # Secondary blank identity with Transport preserved at its original index
     assert "Identity #2" in ei.groups()
     assert ei.get("Identity #2", "uoid") == "200"
-    # First-run placeholder (uoid=100) was removed
+    # Multi-identity file: blank default (uoid=100) is NOT deleted without --prune
     all_uoids = {ei.get(g, "uoid") for g in ei.groups()}
-    assert "100" not in all_uoids
+    assert "100" in all_uoids
 
 
 def test_reserve_recorded_resources_before_fallback_matching(tmp_path: Path) -> None:
@@ -1893,11 +1901,12 @@ def test_customized_blank_first_run_identity_is_preserved(tmp_path: Path) -> Non
     cfg_dir.mkdir()
     state_file = tmp_path / "state.json"
 
-    # Single identity with blank Email Address, but customized Reply-To & Inline Signature
+    # Single identity with blank Email Address + Default Domain, but customized Reply-To & Signature
     (cfg_dir / "emailidentities").write_text(
         "[General]\n"
         "Default Identity=505\n\n"
         "[Identity #0]\n"
+        "Default Domain=francis\n"
         "Identity=Custom Draft Identity\n"
         "Name=Joel Benway\n"
         "Reply-To Address=reply@custom.example\n"
@@ -2259,3 +2268,329 @@ def test_adopted_resource_removed_from_retired_account_entry(tmp_path: Path) -> 
     assert "resource_id" not in st["acct_a"]
     assert st["acct_a"]["transport_id"] == kp.stable_transport_id("acct_a")
     assert st["acct_a"]["identity_uoid"] == kp.stable_identity_uoid("acct_a")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for PR #14 Round 3 CodeRabbit review findings
+# ---------------------------------------------------------------------------
+
+
+def test_adoption_checkpoint_clears_former_owner_before_final_save(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    keychain = FakeKeychainClient()
+
+    class FailOnSecondApplyAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_apply = False
+
+        def apply_imap_settings(self, resource_id: str, settings: dict[str, object]) -> None:
+            if self.fail_apply:
+                raise kp.ProvisionError("interrupted during adoption")
+            super().apply_imap_settings(resource_id, settings)
+
+    akonadi = FailOnSecondApplyAkonadi()
+    p1 = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "acct_a",
+                    "name": "A",
+                    "provider": "gmail",
+                    "email": "same@example.com",
+                    "realName": "A",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="a1.json",
+    )
+    kp.provision(
+        config_path=p1,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    res_id = akonadi.created[0]
+
+    # Rename acct_a -> acct_b (adopts res_id) and crash mid-apply before final state save
+    akonadi.fail_apply = True
+    p2 = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "acct_b",
+                    "name": "B",
+                    "provider": "gmail",
+                    "email": "same@example.com",
+                    "realName": "B",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="a2.json",
+    )
+    with pytest.raises(kp.ProvisionError):
+        kp.provision(
+            config_path=p2,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    st = json.loads(state_file.read_text(encoding="utf-8"))["managed"]
+    assert st["acct_b"]["resource_id"] == res_id
+    # Former owner acct_a must already have lost resource_id at checkpoint time
+    assert "resource_id" not in st["acct_a"]
+    assert st["acct_a"]["transport_id"] == kp.stable_transport_id("acct_a")
+
+
+def test_resume_checkpointed_resource_polls_settings_and_raises_session_not_ready(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    keychain = FakeKeychainClient()
+
+    class SlowSettingsAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.settings_ready = False
+            self.wait_calls: list[str] = []
+
+        def create_imap_resource(self, wait_seconds: int, on_created=None) -> str:
+            res_id = super().create_imap_resource(wait_seconds, on_created=on_created)
+            if not self.settings_ready:
+                raise kp.SessionNotReadyError("initial /Settings timeout")
+            return res_id
+
+        def wait_for_resource_settings(self, resource_id: str, wait_seconds: int) -> None:
+            self.wait_calls.append(resource_id)
+            if not self.settings_ready:
+                raise kp.SessionNotReadyError("still starting /Settings")
+
+        def get_imap_settings(self, resource_id: str) -> dict[str, object]:
+            if not self.settings_ready:
+                raise kp.ProvisionError("D-Bus service not yet on bus")
+            return super().get_imap_settings(resource_id)
+
+    akonadi = SlowSettingsAkonadi()
+
+    # Run 1: creates & checkpoints resource, times out with SessionNotReadyError (exit 2)
+    with pytest.raises(kp.SessionNotReadyError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    # Run 2: /Settings STILL not ready -> must raise SessionNotReadyError (exit 2), NOT ProvisionError (exit 3)
+    with pytest.raises(kp.SessionNotReadyError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+    assert len(akonadi.wait_calls) == 1
+    assert len(akonadi.created) == 1
+
+    # Run 3: /Settings becomes ready -> finishes cleanly reusing same resource
+    akonadi.settings_ready = True
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert len(akonadi.created) == 1
+
+
+def test_dry_run_never_calls_ensure_ready_when_adapter_lacks_is_ready(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+
+    class NoProbeAkonadi:
+        def __init__(self) -> None:
+            self.ensure_called = False
+
+        def ensure_ready(self, wait_seconds: int) -> None:
+            self.ensure_called = True
+            raise AssertionError("ensure_ready must never be called during dry-run")
+
+    akonadi = NoProbeAkonadi()
+    rc = kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        dry_run=True,
+        akonadi=akonadi,  # type: ignore[arg-type]
+        keychain=FakeKeychainClient(),
+        gpg_runner=lambda _a: "",
+    )
+    assert rc == kp.EXIT_OK
+    assert akonadi.ensure_called is False
+    assert "skipping live IMAP diff" in capsys.readouterr().out
+
+
+def test_alias_ids_checkpointed_before_imap_failure_allows_later_prune(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    keychain = FakeKeychainClient()
+
+    class FailListImapAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_list = True
+
+        def list_imap_resources(self) -> list[str]:
+            if self.fail_list:
+                raise kp.ProvisionError("IMAP list failed")
+            return super().list_imap_resources()
+
+    akonadi = FailListImapAkonadi()
+    with_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                    "aliases": [
+                        {
+                            "id": "ephemeral_alias",
+                            "name": "Ephemeral",
+                            "email": "eph@custom.example",
+                            "realName": "Alice",
+                            "smtp": {
+                                "host": "smtp.eph.example",
+                                "port": 465,
+                                "username": "eph@custom.example",
+                                "password": "pw",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+        name="eph1.json",
+    )
+    with pytest.raises(kp.ProvisionError):
+        kp.provision(
+            config_path=with_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    # Remove ephemeral_alias and re-run with --prune once Akonadi recovers
+    akonadi.fail_list = False
+    without_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="eph2.json",
+    )
+    assert (
+        kp.provision(
+            config_path=without_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            prune=True,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert f"Transport {kp.stable_transport_id('ephemeral_alias')}" not in mt.groups()
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    uoids = {ei.get(g, "uoid") for g in ei.groups()}
+    assert str(kp.stable_identity_uoid("ephemeral_alias")) not in uoids
+
+
+def test_mid_run_config_change_triggers_immediate_reconcile_pass(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    akonadi = FakeAkonadiClient()
+
+    class MutateConfigDuringImapWriteKeychain(FakeKeychainClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mutated = False
+
+        def set_password(self, service: str, key: str, password: str) -> bool:
+            changed = super().set_password(service, key, password)
+            if service == "imap" and not self.mutated:
+                self.mutated = True
+                updated = _gmail_with_aliases_payload()
+                updated["accounts"][0]["password"] = "midr unpw 9999 8888"
+                cfg_path.write_text(json.dumps(updated), encoding="utf-8")
+            return changed
+
+    keychain = MutateConfigDuringImapWriteKeychain()
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    res_id = akonadi.created[0]
+    assert keychain.secrets[("imap", f"{res_id}rc")] == "midrunpw99998888"

@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QString>
+#include <QStringDecoder>
 #include <qt6keychain/keychain.h>
 
 #include <cstddef>
@@ -53,7 +54,9 @@ int main(int argc, char *argv[]) {
       break;
     }
   }
-  const QString password = QString::fromUtf8(raw);
+  QStringDecoder utf8Decoder(
+      QStringDecoder::Utf8, QStringConverter::Flag::ConvertInitialBom);
+  const QString password = utf8Decoder(raw);
 
   // Check if the keychain already holds the exact same password.
   QKeychain::ReadPasswordJob readJob(service);

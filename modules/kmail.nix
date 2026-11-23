@@ -30,6 +30,9 @@
   };
 
   kmailProvision = import ../pkgs/kmail-provision {inherit pkgs;};
+
+  # Escape an argument for systemd ExecStart= (quotes + backslash/specifier/env escaping).
+  escapeSystemdArg = s: ''"${lib.replaceStrings ["\\" "\"" "%" "$"] ["\\\\" "\\\"" "%%" "$$"] s}"'';
 in {
   options.kmail = {
     users = lib.mkOption {
@@ -61,7 +64,7 @@ in {
                 Restart = "no";
                 RestartForceExitStatus = [2];
                 RestartSec = "60s";
-                ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg configPath}${lib.optionalString cfg.prune " --prune"}";
+                ExecStart = "${kmailProvision}/bin/kmail-provision --config ${escapeSystemdArg configPath}${lib.optionalString cfg.prune " --prune"}";
               };
               Install = {
                 WantedBy = ["graphical-session.target"];
