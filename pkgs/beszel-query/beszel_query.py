@@ -268,7 +268,7 @@ class BeszelClient:
     def list_alerts(
         self, system_id: str | None = None, history: bool = False
     ) -> list[dict[str, Any]]:
-        collection = "alert_history" if history else "alerts"
+        collection = "alerts_history" if history else "alerts"
         params: dict[str, str] = {"perPage": "200", "sort": "-created"}
         if system_id:
             params["filter"] = f"system='{escape_pb_filter(system_id)}'"

@@ -292,7 +292,7 @@ def test_alerts_and_history(monkeypatch, capsys):
             return _json_resp(
                 {"items": [{"system": "sys_zita", "name": "Disk", "value": 85, "triggered": True}]}
             )
-        if parsed.path == "/api/collections/alert_history/records":
+        if parsed.path == "/api/collections/alerts_history/records":
             return _json_resp(
                 {
                     "items": [
@@ -449,7 +449,7 @@ def test_collection_pagination_fetches_all_pages_and_preserves_single_page(monke
                     "items": stats_pages[page],
                 }
             )
-        if parsed.path == "/api/collections/alert_history/records":
+        if parsed.path == "/api/collections/alerts_history/records":
             return _json_resp(
                 {
                     "page": int(page),
