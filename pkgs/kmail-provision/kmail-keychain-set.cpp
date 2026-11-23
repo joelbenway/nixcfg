@@ -9,10 +9,10 @@
 
 #include <QCoreApplication>
 #include <QEventLoop>
-#include <QFile>
 #include <QString>
 #include <qt6keychain/keychain.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <iostream>
 
@@ -38,12 +38,21 @@ int main(int argc, char *argv[]) {
   const QString service = args.at(1);
   const QString key = args.at(2);
 
-  QFile stdinFile;
-  if (!stdinFile.open(stdin, QIODevice::ReadOnly)) {
-    std::cerr << "kmail-keychain-set: failed to open stdin\n";
-    return 1;
+  QByteArray raw;
+  char buf[4096];
+  while (true) {
+    const std::size_t n = std::fread(buf, 1, sizeof(buf), stdin);
+    if (n > 0) {
+      raw.append(buf, static_cast<qsizetype>(n));
+    }
+    if (n < sizeof(buf)) {
+      if (std::ferror(stdin) != 0) {
+        std::cerr << "kmail-keychain-set: failed reading stdin\n";
+        return 1;
+      }
+      break;
+    }
   }
-  const QByteArray raw = stdinFile.readAll();
   const QString password = QString::fromUtf8(raw);
 
   // Check if the keychain already holds the exact same password.

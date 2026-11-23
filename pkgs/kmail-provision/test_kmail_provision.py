@@ -433,7 +433,7 @@ class FakeAkonadiClient:
     def get_imap_settings(self, resource_id: str) -> dict[str, object]:
         return dict(self.resources[resource_id])
 
-    def create_imap_resource(self, wait_seconds: int) -> str:
+    def create_imap_resource(self, wait_seconds: int, on_created=None) -> str:
         res_id = f"akonadi_imap_resource_{self.counter}"
         self.counter += 1
         self.resources[res_id] = {
@@ -450,6 +450,8 @@ class FakeAkonadiClient:
             "accountIdentity": 0,
         }
         self.created.append(res_id)
+        if on_created is not None:
+            on_created(res_id)
         return res_id
 
     def apply_imap_settings(self, resource_id: str, settings: dict[str, object]) -> None:
@@ -1815,7 +1817,7 @@ def test_kde_session_readiness_requires_kwallet_open_even_if_secret_service_unlo
 
         if "Locked" in args:
             return _Res(0, "false\n")  # Secret Service unlocked
-        if any("localWallet" in a for a in args):
+        if any("networkWallet" in a for a in args):
             return _Res(0, "kdewallet\n")
         if any("isOpen" in a for a in args):
             return _Res(0, "false\n")  # KWallet still locked!
@@ -1853,3 +1855,407 @@ def test_keychain_client_distinguishes_permanent_vs_retryable_exit_codes(
         client.set_password("mailtransports", "retryable", "pw")
     with pytest.raises(kp.ProvisionError):
         client.set_password("mailtransports", "perm", "pw")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for PR #14 Round 2 CodeRabbit review findings
+# ---------------------------------------------------------------------------
+
+
+def test_kwallet_readiness_probes_network_wallet(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KDE_FULL_SESSION", "true")
+    monkeypatch.delenv("QTKEYCHAIN_BACKEND", raising=False)
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        calls.append(args)
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any("networkWallet" in a for a in args):
+            return _Res(0, "kdewallet\n")
+        if any("isOpen" in a for a in args):
+            return _Res(0, "true\n")
+        return _Res(1)
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    kp.KeychainClient().ensure_ready(wait_seconds=1)
+    assert any("networkWallet" in a for c in calls for a in c)
+    assert not any("localWallet" in a for c in calls for a in c)
+
+
+def test_customized_blank_first_run_identity_is_preserved(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+
+    # Single identity with blank Email Address, but customized Reply-To & Inline Signature
+    (cfg_dir / "emailidentities").write_text(
+        "[General]\n"
+        "Default Identity=505\n\n"
+        "[Identity #0]\n"
+        "Identity=Custom Draft Identity\n"
+        "Name=Joel Benway\n"
+        "Reply-To Address=reply@custom.example\n"
+        "Signature Enabled=true\n"
+        "Inline Signature=-- Custom Sig\n"
+        "uoid=505\n",
+        encoding="utf-8",
+    )
+
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=FakeAkonadiClient(),
+        keychain=FakeKeychainClient(),
+        gpg_runner=lambda _a: "",
+    )
+
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    assert "Identity #0" in ei.groups()
+    assert ei.get("Identity #0", "uoid") == "505"
+    assert ei.get("Identity #0", "Reply-To Address") == "reply@custom.example"
+
+
+def test_failed_gpg_lookup_after_email_change_clears_stale_pgp_binding(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+    _, gpg_runner = _mock_gpg_for_three_identities()
+
+    p1 = _write_json(tmp_path, _gmail_with_aliases_payload(), name="e1.json")
+    kp.provision(
+        config_path=p1,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=gpg_runner,
+    )
+
+    # Change 'domain' alias email while keeping its slug, AND fail GPG lookup
+    changed = _gmail_with_aliases_payload()
+    changed["accounts"][0]["aliases"][0]["email"] = "newaddr@other.example"
+    p2 = _write_json(tmp_path, changed, name="e2.json")
+    kp.provision(
+        config_path=p2,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _args: None,
+    )
+
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    by_email = {
+        ei.get(g, "Email Address"): g
+        for g in ei.groups()
+        if g.startswith("Identity #")
+    }
+    grp = by_email["newaddr@other.example"]
+    assert ei.get(grp, "PGP Signing Key") is None
+    assert ei.get(grp, "PGP Encryption Key") is None
+    assert ei.get(grp, "Override Encryption Defaults") == "false"
+
+
+def test_create_resource_checkpoint_recovers_after_readiness_timeout(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    keychain = FakeKeychainClient()
+
+    class TimeoutAfterCreateAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_first_create = True
+
+        def create_imap_resource(self, wait_seconds: int, on_created=None) -> str:
+            res_id = super().create_imap_resource(wait_seconds)
+            if on_created is not None:
+                on_created(res_id)
+            if self.fail_first_create:
+                self.fail_first_create = False
+                raise kp.SessionNotReadyError("resource /Settings timed out")
+            return res_id
+
+    akonadi = TimeoutAfterCreateAkonadi()
+
+    with pytest.raises(kp.SessionNotReadyError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+    assert len(akonadi.created) == 1
+    first_id = akonadi.created[0]
+
+    # Retry reuses checkpointed ID instead of creating a second resource
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert akonadi.created == [first_id]
+
+
+def test_pending_save_replays_imap_settings_save_even_when_live_values_match(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    keychain = FakeKeychainClient()
+
+    class FlakySaveAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_first_save = True
+
+        def apply_imap_settings(self, resource_id: str, settings: dict[str, object]) -> None:
+            # Setters mutate live object BEFORE save() fails
+            self.resources[resource_id].update(settings)
+            self.applied.append((resource_id, dict(settings)))
+            if self.fail_first_save:
+                self.fail_first_save = False
+                raise kp.ProvisionError("save() D-Bus call failed")
+
+    akonadi = FlakySaveAkonadi()
+    with pytest.raises(kp.ProvisionError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+    assert len(akonadi.applied) == 1
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    assert saved["managed"]["main"].get("pending_save") is True
+
+    # Next run: live values already match, yet pending_save forces apply_imap_settings (save) replay
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert len(akonadi.applied) == 2
+    saved2 = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not saved2["managed"]["main"].get("pending_save", False)
+
+
+def test_pending_restart_checkpointed_before_password_write_commits(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    akonadi = FakeAkonadiClient()
+
+    # Initial clean provision
+    keychain = FakeKeychainClient()
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+
+    # Rotate password, and crash right AFTER IMAP password commits to keychain
+    rotated = _gmail_with_aliases_payload()
+    rotated["accounts"][0]["password"] = "newp assw ord1 2345"
+    cfg_path.write_text(json.dumps(rotated), encoding="utf-8")
+
+    class CrashAfterImapCommitKeychain(FakeKeychainClient):
+        def set_password(self, service: str, key: str, password: str) -> bool:
+            changed = super().set_password(service, key, password)
+            if service == "imap":
+                # Verify pending_restart was ALREADY persisted to disk before commit
+                st = json.loads(state_file.read_text(encoding="utf-8"))
+                assert st["managed"]["main"].get("pending_restart") is True
+                raise kp.ProvisionError("simulated crash right after commit")
+            return changed
+
+    crash_kc = CrashAfterImapCommitKeychain()
+    crash_kc.secrets = dict(keychain.secrets)
+
+    with pytest.raises(kp.ProvisionError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=crash_kc,
+            gpg_runner=lambda _a: "",
+        )
+
+    # Next run sees unchanged password in wallet, yet still restarts resource
+    akonadi.reset_counters()
+    stable_kc = FakeKeychainClient()
+    stable_kc.secrets = dict(crash_kc.secrets)
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=stable_kc,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert len(akonadi.restarted) == 1
+
+
+def test_dry_run_proceeds_when_wallet_is_locked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+
+    locked_kc = FakeKeychainClient(ready_error=kp.SessionNotReadyError("wallet locked"))
+    rc = kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        dry_run=True,
+        akonadi=FakeAkonadiClient(),
+        keychain=locked_kc,
+        gpg_runner=lambda _a: "",
+    )
+    assert rc == kp.EXIT_OK
+    out = capsys.readouterr().out
+    assert "mailtransports" in out
+
+
+def test_config_reloaded_under_lock_picks_up_rotated_secret(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    akonadi = FakeAkonadiClient()
+
+    class RotateDuringEnsureReadyKeychain(FakeKeychainClient):
+        def ensure_ready(self, wait_seconds: int) -> None:
+            rotated = _gmail_with_aliases_payload()
+            rotated["accounts"][0]["password"] = "rota tedp assw 0000"
+            cfg_path.write_text(json.dumps(rotated), encoding="utf-8")
+
+    keychain = RotateDuringEnsureReadyKeychain()
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    res_id = akonadi.created[0]
+    assert keychain.secrets[("imap", f"{res_id}rc")] == "rotatedpassw0000"
+
+
+def test_adopted_resource_removed_from_retired_account_entry(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    # Step 1: provision account A
+    p1 = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "acct_a",
+                    "name": "A",
+                    "provider": "gmail",
+                    "email": "same@example.com",
+                    "realName": "A",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="r1.json",
+    )
+    kp.provision(
+        config_path=p1,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    res_id = akonadi.created[0]
+
+    # Step 2: rename acct_a -> acct_b (same endpoint) without --prune
+    p2 = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "acct_b",
+                    "name": "B",
+                    "provider": "gmail",
+                    "email": "same@example.com",
+                    "realName": "B",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="r2.json",
+    )
+    kp.provision(
+        config_path=p2,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        prune=False,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    st = json.loads(state_file.read_text(encoding="utf-8"))["managed"]
+    assert st["acct_b"]["resource_id"] == res_id
+    # Retired acct_a keeps transport/identity IDs for later prune, but drops adopted resource_id
+    assert "resource_id" not in st["acct_a"]
+    assert st["acct_a"]["transport_id"] == kp.stable_transport_id("acct_a")
+    assert st["acct_a"]["identity_uoid"] == kp.stable_identity_uoid("acct_a")

@@ -191,7 +191,7 @@ Two binaries built in one derivation (`pkgs/kmail-provision/default.nix`):
 
 1. **`kmail-keychain-set`** (C++17, ~55 lines, linked against `pkgs.qt6.qtbase` and `pkgs.qt6Packages.qtkeychain`):
    - CLI: `kmail-keychain-set <service> <key>`
-   - Reads the secret from `stdin` (stripping a single trailing newline if present) so passwords never appear in `argv` / `/proc`.
+   - Reads the secret from `stdin` up to EOF without trimming any bytes (preserving any trailing LF/CRLF verbatim; callers must not append a newline unless it is part of the password) so passwords never appear in `argv` / `/proc`.
    - First executes `QKeychain::ReadPasswordJob(service)` for `key`: if the stored password already equals the input, exits `0` immediately without dirtying the wallet.
    - Otherwise executes `QKeychain::WritePasswordJob(service)` with `setKey(key)` and `setTextData(password)` and exits `0` on success or non-zero with error message (never printing the password) on failure.
    - Runs under `QCoreApplication` (no X11/Wayland window needed, only `DBUS_SESSION_BUS_ADDRESS`).
@@ -254,8 +254,8 @@ Two binaries built in one derivation (`pkgs/kmail-provision/default.nix`):
 - Config (active per user only when `config.plasma.enable && cfg.enable && cfg.configFile != null`):
   - Adds `kmail-provision` to `home-manager.users.${user}.home.packages` so the user can run `kmail-provision --dry-run` or re-run manually anytime.
   - Defines `home-manager.users.${user}.systemd.user.services.kmail-provision`:
-    - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitBurst = 10`, `StartLimitIntervalSec = "10min"`
-    - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "30s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${cfg.configFile}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
+    - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitIntervalSec = 0`
+    - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "60s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${cfg.configFile}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
     - `Install`: `WantedBy = ["graphical-session.target"]`
   - Defines `home-manager.users.${user}.systemd.user.paths.kmail-provision` watching `PathChanged = toString cfg.configFile` (`WantedBy = ["graphical-session.target"]`) so updating the agenix secret and running `nixos-rebuild switch` automatically re-runs provisioning without needing to log out and back in!
 - Wiring in `users/joel.nix`:

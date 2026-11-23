@@ -217,8 +217,8 @@ Follow `modules/gpg.nix` and `modules/hex.nix` conventions:
   - When `cfg.enable && cfg.configFile != null`:
     - `home.packages = [kmailProvision];`
     - `systemd.user.services.kmail-provision`:
-      - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitBurst = 10`, `StartLimitIntervalSec = "10min"`
-      - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "30s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg (toString cfg.configFile)}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
+      - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitIntervalSec = 0`
+      - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "60s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg (toString cfg.configFile)}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
       - `Install`: `WantedBy = ["graphical-session.target"]`
     - `systemd.user.paths.kmail-provision`:
       - `Unit`: `Description = "Watch declarative KMail config for updates"`, `PartOf = ["graphical-session.target"]`
@@ -229,12 +229,14 @@ Follow `modules/gpg.nix` and `modules/hex.nix` conventions:
 
 In `users/joel.nix`, inside `extraConfig`:
 - Compute `kmailSecretFile = lib.custom.relativeToRoot "secrets/${username}-kmail.json.age";` and `hasKmailSecret = builtins.pathExists kmailSecretFile;`.
-- Merge `lib.optionalAttrs hasKmailSecret { "${username}-kmail-json" = { file = kmailSecretFile; name = "${username}-kmail.json"; mode = "0400"; owner = username; group = "users"; }; }` into `age.secrets`.
+- Merge `lib.mkIf (hasKmailSecret && config.${username}.desktop) { "${username}-kmail-json" = { file = kmailSecretFile; name = "${username}-kmail.json"; mode = "0400"; owner = username; group = "users"; }; }` into `age.secrets` (via `lib.mkMerge`) so headless hosts never attempt to decrypt it.
 - Set:
   ```nix
-  kmail.users.${username} = lib.mkIf (config.${username}.desktop && hasKmailSecret) {
-    enable = true;
-    configFile = config.age.secrets."${username}-kmail-json".path;
+  kmail.users = lib.mkIf (hasKmailSecret && config.${username}.desktop) {
+    ${username} = {
+      enable = true;
+      configFile = config.age.secrets."${username}-kmail-json".path;
+    };
   };
   ```
 - Note on CI placeholder discovery (`.github/workflows/ci.yml:131`): the `secrets/${username}...` pattern matches `secrets/${username}-kmail.json.age`, so the fallback loop creates an empty `secrets/joel-kmail.json.age` when no SSH key is configured. On `agnes`, `francis`, and `jerome` (where `desktop` defaults to `true`), this exercises the enabled KMail branch; on `michael` and `zita` (`desktop = false`), both the secret and KMail service stay disabled.
