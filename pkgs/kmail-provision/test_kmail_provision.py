@@ -406,3 +406,560 @@ def test_gpg_auto_match_unique_ambiguous_missing_and_revoked_expired(
         is None
     )
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Task 2 tests: KConfig merging, state store, reconciliation, dry-run, prune
+# ---------------------------------------------------------------------------
+
+
+class FakeAkonadiClient:
+    def __init__(self, *, ready_error: Exception | None = None) -> None:
+        self.ready_error = ready_error
+        self.resources: dict[str, dict[str, object]] = {}
+        self.counter = 0
+        self.created: list[str] = []
+        self.applied: list[tuple[str, dict[str, object]]] = []
+        self.restarted: list[str] = []
+        self.removed: list[str] = []
+
+    def ensure_ready(self, wait_seconds: int) -> None:
+        if self.ready_error is not None:
+            raise self.ready_error
+
+    def list_imap_resources(self) -> list[str]:
+        return list(self.resources.keys())
+
+    def get_imap_settings(self, resource_id: str) -> dict[str, object]:
+        return dict(self.resources[resource_id])
+
+    def create_imap_resource(self, wait_seconds: int) -> str:
+        res_id = f"akonadi_imap_resource_{self.counter}"
+        self.counter += 1
+        self.resources[res_id] = {
+            "name": "",
+            "imapServer": "",
+            "imapPort": 993,
+            "userName": "",
+            "safety": "SSL",
+            "authentication": 7,
+            "intervalCheckEnabled": False,
+            "intervalCheckTime": 5,
+            "disconnectedModeEnabled": False,
+            "useDefaultIdentity": True,
+            "accountIdentity": 0,
+        }
+        self.created.append(res_id)
+        return res_id
+
+    def apply_imap_settings(self, resource_id: str, settings: dict[str, object]) -> None:
+        self.resources[resource_id].update(settings)
+        self.applied.append((resource_id, dict(settings)))
+
+    def restart_resource(self, resource_id: str) -> None:
+        self.restarted.append(resource_id)
+
+    def remove_resource(self, resource_id: str) -> None:
+        self.resources.pop(resource_id, None)
+        self.removed.append(resource_id)
+
+    def reset_counters(self) -> None:
+        self.created.clear()
+        self.applied.clear()
+        self.restarted.clear()
+        self.removed.clear()
+
+
+class FakeKeychainClient:
+    def __init__(self, *, ready_error: Exception | None = None) -> None:
+        self.ready_error = ready_error
+        self.secrets: dict[tuple[str, str], str] = {}
+        self.writes: list[tuple[str, str, str]] = []
+
+    def ensure_ready(self, wait_seconds: int) -> None:
+        if self.ready_error is not None:
+            raise self.ready_error
+
+    def set_password(self, service: str, key: str, password: str) -> bool:
+        if self.secrets.get((service, key)) == password:
+            return False
+        self.secrets[(service, key)] = password
+        self.writes.append((service, key, password))
+        return True
+
+    def reset_counters(self) -> None:
+        self.writes.clear()
+
+
+def _gmail_with_aliases_payload() -> dict:
+    return {
+        "version": 1,
+        "defaultAccount": "main",
+        "defaultIdentity": "domain",
+        "accounts": [
+            {
+                "id": "main",
+                "name": "Main Gmail",
+                "provider": "gmail",
+                "email": "alice@gmail.example",
+                "realName": "Alice Example",
+                "password": "s3cr 3tpa sswd 9999",
+                "aliases": [
+                    {
+                        "id": "domain",
+                        "name": "Alice (Custom Domain)",
+                        "email": "alice@custom.example",
+                        "realName": "Alice Example",
+                    },
+                    {
+                        "id": "duck",
+                        "name": "Alice (Duck)",
+                        "email": "alt@duck.example",
+                        "realName": "Alt Name",
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def _mock_gpg_for_three_identities() -> tuple[dict[str, str], object]:
+    fprs = {
+        "alice@gmail.example": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "alice@custom.example": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "alt@duck.example": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    }
+    colons = "\n".join(
+        [
+            "sec:u:255:22:K1:1700000000:::u:::scESC:::+:::23::0:",
+            f"fpr:::::::::{fprs['alice@gmail.example']}:",
+            "uid:u::::1700000000::H1::Alice Example <alice@gmail.example>::::::::::0:",
+            "sec:u:255:22:K2:1700000000:::u:::scESC:::+:::23::0:",
+            f"fpr:::::::::{fprs['alice@custom.example']}:",
+            "uid:u::::1700000000::H2::Alice Example <alice@custom.example>::::::::::0:",
+            "sec:u:255:22:K3:1700000000:::u:::scESC:::+:::23::0:",
+            f"fpr:::::::::{fprs['alt@duck.example']}:",
+            "uid:u::::1700000000::H3::Alt Name <alt@duck.example>::::::::::0:",
+        ]
+    )
+    return fprs, lambda _args: colons
+
+
+def test_kconfig_preserves_case_kde_syntax_and_unmanaged_groups(tmp_path: Path) -> None:
+    rc = tmp_path / "sample.rc"
+    original = (
+        "# top comment\n"
+        "[Unmanaged]\n"
+        "Path[$e]=$HOME/.local/share/local-mail\n"
+        "MixedCase Key=Keep Me\n"
+        "\n"
+        "[Identity #0]\n"
+        "Email Address=old@example.com\n"
+        "Disable Fcc=false\n"
+    )
+    rc.write_text(original, encoding="utf-8")
+
+    kc = kp.KConfigFile.load(rc)
+    assert kc.get("Unmanaged", "Path[$e]") == "$HOME/.local/share/local-mail"
+    assert kc.set("Identity #0", "Email Address", "new@example.com") is True
+    assert kc.set("Identity #0", "Email Address", "new@example.com") is False
+    kc.save_atomic(rc)
+
+    assert (rc.stat().st_mode & 0o777) == 0o600
+    text = rc.read_text(encoding="utf-8")
+    assert "# top comment\n" in text
+    assert "Path[$e]=$HOME/.local/share/local-mail\n" in text
+    assert "MixedCase Key=Keep Me\n" in text
+    assert "Email Address=new@example.com\n" in text
+    assert "Disable Fcc=false\n" in text
+
+
+def test_provision_replaces_blank_firstrun_identity_and_preserves_unmanaged(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state" / "state.json"
+
+    # Seed francis-like blank first-run identity + a manual identity + an unmanaged transport
+    (cfg_dir / "emailidentities").write_text(
+        "[General]\n"
+        "Default Identity=1301008340\n\n"
+        "[Identity #0]\n"
+        "Default Domain=francis\n"
+        "Disable Fcc=false\n"
+        "Identity=Joel Benway\n"
+        "Name=Joel Benway\n"
+        "uoid=1301008340\n\n"
+        "[Identity #1]\n"
+        "Email Address=manual@other.example\n"
+        "Identity=Manual\n"
+        "Name=Manual User\n"
+        "uoid=424242\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "mailtransports").write_text(
+        "[General]\n"
+        "default=999\n\n"
+        "[Transport 999]\n"
+        "id=999\n"
+        "name=Manual SMTP\n"
+        "host=smtp.manual.example\n",
+        encoding="utf-8",
+    )
+
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    fprs, gpg_runner = _mock_gpg_for_three_identities()
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    rc = kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=gpg_runner,
+    )
+    assert rc == kp.EXIT_OK
+
+    parsed = kp.load_config(cfg_path)
+    main = parsed.accounts[0]
+    domain, duck = main.aliases
+
+    # Check emailidentities
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    assert ei.get("General", "Default Identity") == str(domain.uoid)
+    id_groups = [g for g in ei.groups() if g.startswith("Identity #")]
+    assert len(id_groups) == 4  # 1 manual + 3 managed; blank default replaced!
+    by_email = {ei.get(g, "Email Address"): g for g in id_groups}
+    assert "" not in by_email and None not in by_email
+    assert "manual@other.example" in by_email
+
+    for spec in (main.identity, domain, duck):
+        grp = by_email[spec.email]
+        assert ei.get(grp, "uoid") == str(spec.uoid)
+        assert ei.get(grp, "Transport") == str(main.transport_id)
+        assert ei.get(grp, "Disable Fcc") == "true"
+        assert ei.get(grp, "PGP Signing Key") == fprs[spec.email]
+        assert ei.get(grp, "PGP Encryption Key") == fprs[spec.email]
+        assert ei.get(grp, "Preferred Crypto Message Format") == "openpgp/mime"
+
+    # Check emaildefaults
+    ed = kp.KConfigFile.load(cfg_dir / "emaildefaults")
+    assert ed.get("PROFILE_Default", "EmailAddress") == "alice@custom.example"
+    assert ed.get("PROFILE_Default", "FullName") == "Alice Example"
+
+    # Check mailtransports
+    mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert mt.get("General", "default") == str(main.transport_id)
+    assert mt.get("Transport 999", "host") == "smtp.manual.example"
+    tgrp = f"Transport {main.transport_id}"
+    assert mt.get(tgrp, "host") == "smtp.gmail.com"
+    assert mt.get(tgrp, "port") == "465"
+    assert mt.get(tgrp, "encryption") == "SSL"
+    assert mt.get(tgrp, "authtype") == "PLAIN"
+    assert mt.get(tgrp, "auth") == "true"
+    assert mt.get(tgrp, "storepass") == "true"
+
+    # Check Akonadi IMAP resource
+    assert len(akonadi.created) == 1
+    res_id = akonadi.created[0]
+    res_settings = akonadi.resources[res_id]
+    assert res_settings["imapServer"] == "imap.gmail.com"
+    assert res_settings["imapPort"] == 993
+    assert res_settings["userName"] == "alice@gmail.example"
+    assert res_settings["safety"] == "SSL"
+    assert res_settings["authentication"] == 1  # PLAIN
+    assert res_settings["useDefaultIdentity"] is False
+    assert res_settings["accountIdentity"] == main.identity.uoid
+    assert akonadi.restarted == [res_id]
+
+    # Check QtKeychain targets
+    assert keychain.secrets[("mailtransports", str(main.transport_id))] == "s3cr3tpassw d9999".replace(" ", "")
+    assert keychain.secrets[("imap", f"{res_id}rc")] == "s3cr3tpassw d9999".replace(" ", "")
+
+
+def test_provision_second_run_is_strict_noop(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    _, gpg_runner = _mock_gpg_for_three_identities()
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=gpg_runner,
+        )
+        == kp.EXIT_OK
+    )
+
+    akonadi.reset_counters()
+    keychain.reset_counters()
+
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=gpg_runner,
+        )
+        == kp.EXIT_OK
+    )
+
+    assert akonadi.created == []
+    assert akonadi.applied == []
+    assert akonadi.restarted == []
+    assert keychain.writes == []
+
+
+def test_provision_recovers_when_state_file_missing_or_resource_deleted(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    _, gpg_runner = _mock_gpg_for_three_identities()
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=gpg_runner,
+    )
+    original_res_id = akonadi.created[0]
+
+    # Subcase A: state.json deleted -> fallback match by (imapServer, userName)
+    state_file.unlink()
+    akonadi.reset_counters()
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=gpg_runner,
+    )
+    assert akonadi.created == []
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["managed"]["main"]["resource_id"] == original_res_id
+
+    # Subcase B: IMAP resource manually deleted in KMail -> recreated cleanly
+    akonadi.resources.pop(original_res_id)
+    akonadi.reset_counters()
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=gpg_runner,
+    )
+    assert len(akonadi.created) == 1
+    assert akonadi.created[0] != original_res_id
+    state2 = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state2["managed"]["main"]["resource_id"] == akonadi.created[0]
+
+
+def test_dry_run_makes_no_mutations_and_redacts_passwords(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    _, gpg_runner = _mock_gpg_for_three_identities()
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    with caplog.at_level(logging.DEBUG):
+        rc = kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            dry_run=True,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=gpg_runner,
+        )
+
+    assert rc == kp.EXIT_OK
+    assert list(cfg_dir.iterdir()) == []
+    assert not state_file.exists()
+    assert akonadi.created == []
+    assert akonadi.applied == []
+    assert keychain.writes == []
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err + "\n".join(r.getMessage() for r in caplog.records)
+    assert "s3cr" not in combined
+    assert "3tpa" not in combined
+    assert "s3cr3tpassw" not in combined
+
+
+def test_prune_removes_only_managed_entries(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+
+    # Seed unmanaged transport, identity, and IMAP resource
+    (cfg_dir / "mailtransports").write_text(
+        "[General]\ndefault=777\n\n[Transport 777]\nid=777\nhost=smtp.unmanaged.example\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "emailidentities").write_text(
+        "[General]\nDefault Identity=777777\n\n"
+        "[Identity #0]\nEmail Address=keep@unmanaged.example\nIdentity=Keep\nuoid=777777\n",
+        encoding="utf-8",
+    )
+    akonadi = FakeAkonadiClient()
+    akonadi.resources["akonadi_imap_resource_99"] = {
+        "name": "Unmanaged IMAP",
+        "imapServer": "imap.unmanaged.example",
+        "userName": "keep@unmanaged.example",
+    }
+    keychain = FakeKeychainClient()
+
+    two_accounts = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "one",
+                    "name": "One",
+                    "provider": "gmail",
+                    "email": "one@example.com",
+                    "realName": "One",
+                    "password": "aaaa bbbb cccc dddd",
+                },
+                {
+                    "id": "two",
+                    "name": "Two",
+                    "provider": "gmail",
+                    "email": "two@example.com",
+                    "realName": "Two",
+                    "password": "eeee ffff gggg hhhh",
+                },
+            ],
+        },
+        name="two.json",
+    )
+    kp.provision(
+        config_path=two_accounts,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    res_two = json.loads(state_file.read_text(encoding="utf-8"))["managed"]["two"]["resource_id"]
+
+    one_account = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "one",
+                    "name": "One",
+                    "provider": "gmail",
+                    "email": "one@example.com",
+                    "realName": "One",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="one.json",
+    )
+    kp.provision(
+        config_path=one_account,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        prune=True,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+
+    assert res_two in akonadi.removed
+    assert "akonadi_imap_resource_99" in akonadi.resources
+    mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert f"Transport {kp.stable_transport_id('two')}" not in mt.groups()
+    assert "Transport 777" in mt.groups()
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    uoids = {ei.get(g, "uoid") for g in ei.groups() if g.startswith("Identity #")}
+    assert str(kp.stable_identity_uoid("two")) not in uoids
+    assert "777777" in uoids
+    assert str(kp.stable_identity_uoid("one")) in uoids
+
+
+def test_session_not_ready_returns_exit_code_2_without_mutating_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+
+    monkeypatch.setattr(
+        kp,
+        "KeychainClient",
+        lambda: FakeKeychainClient(ready_error=kp.SessionNotReadyError("wallet locked")),
+    )
+    monkeypatch.setattr(kp, "AkonadiClient", lambda: FakeAkonadiClient())
+
+    rc = kp.main(
+        [
+            "--config",
+            str(cfg_path),
+            "--config-dir",
+            str(cfg_dir),
+            "--state-file",
+            str(state_file),
+            "--wait-seconds",
+            "1",
+        ]
+    )
+    assert rc == kp.EXIT_SESSION_NOT_READY
+    assert not state_file.exists()
+    assert list(cfg_dir.iterdir()) == []
+    captured = capsys.readouterr()
+    assert "s3cr" not in (captured.out + captured.err)
+
+
+def test_state_file_contains_no_passwords_and_has_0600_mode(tmp_path: Path) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    _, gpg_runner = _mock_gpg_for_three_identities()
+
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=FakeAkonadiClient(),
+        keychain=FakeKeychainClient(),
+        gpg_runner=gpg_runner,
+    )
+
+    assert (state_file.stat().st_mode & 0o777) == 0o600
+    raw = state_file.read_text(encoding="utf-8")
+    assert "s3cr" not in raw
+    assert "3tpa" not in raw
+    assert "alice@gmail.example" not in raw
