@@ -1,9 +1,11 @@
 // Copyright (c) Joel Benway
 // SPDX-License-Identifier: MIT
 //
-// Minimal Qt6Keychain CLI helper: reads a UTF-8 secret from stdin and writes it
-// to QtKeychain under (service, key) if not already identical. Prints "updated"
-// or "unchanged" to stdout on success. Never logs secrets.
+// Minimal Qt6Keychain CLI helper: reads a UTF-8 secret from stdin (EOF-delimited,
+// exact bytes preserved) and writes it to QtKeychain under (service, key) if not
+// already identical. Prints "updated" or "unchanged" to stdout on success.
+// Exit codes: 0 = ok, 1 = permanent error, 2 = usage error, 3 = retryable backend/locked error.
+// Never logs secrets.
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -13,6 +15,16 @@
 
 #include <cstdio>
 #include <iostream>
+
+static int exitCodeForKeychainError(QKeychain::Error err) {
+  switch (err) {
+    case QKeychain::NoBackendAvailable:
+    case QKeychain::AccessDeniedByUser:
+      return 3;
+    default:
+      return 1;
+  }
+}
 
 int main(int argc, char *argv[]) {
   QCoreApplication app(argc, argv);
@@ -31,12 +43,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "kmail-keychain-set: failed to open stdin\n";
     return 1;
   }
-  QByteArray raw = stdinFile.readAll();
-  if (raw.endsWith("\r\n")) {
-    raw.chop(2);
-  } else if (raw.endsWith('\n')) {
-    raw.chop(1);
-  }
+  const QByteArray raw = stdinFile.readAll();
   const QString password = QString::fromUtf8(raw);
 
   // Check if the keychain already holds the exact same password.
@@ -55,9 +62,9 @@ int main(int argc, char *argv[]) {
     return 0;
   }
   if (readJob.error() != QKeychain::NoError && readJob.error() != QKeychain::EntryNotFound) {
-    std::cerr << "kmail-keychain-set: keychain read failed: "
+    std::cerr << "kmail-keychain-set: read failed: "
               << readJob.errorString().toStdString() << "\n";
-    return 1;
+    return exitCodeForKeychainError(readJob.error());
   }
 
   QKeychain::WritePasswordJob writeJob(service);
@@ -72,9 +79,9 @@ int main(int argc, char *argv[]) {
   }
 
   if (writeJob.error() != QKeychain::NoError) {
-    std::cerr << "kmail-keychain-set: keychain write failed: "
+    std::cerr << "kmail-keychain-set: write failed: "
               << writeJob.errorString().toStdString() << "\n";
-    return 1;
+    return exitCodeForKeychainError(writeJob.error());
   }
 
   std::cout << "updated\n";

@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import logging
@@ -15,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -40,6 +42,10 @@ class ProvisionError(Exception):
     """Raised when a provisioning step fails."""
 
 
+class GpgLookupError(Exception):
+    """Raised when gpg --list-secret-keys fails transiently."""
+
+
 # Exact MailTransport::TransportBase::EnumAuthenticationType values
 # verified from mailtransport.kcfg and akonadi_imap_resource (KDE PIM 26.08.2).
 IMAP_AUTH_ENUM: dict[str, int] = {
@@ -55,12 +61,15 @@ IMAP_AUTH_ENUM: dict[str, int] = {
     "XOAUTH2": 9,
 }
 
+# APOP is POP3-only; KDE PIM 26.08.2 IMAP has no mapping for it.
+VALID_IMAP_AUTH = frozenset(IMAP_AUTH_ENUM.keys()) - {"APOP"}
 VALID_IMAP_SAFETY = frozenset({"SSL", "STARTTLS", "None"})
 VALID_SMTP_ENCRYPTION = frozenset({"SSL", "TLS", "None"})
 VALID_SMTP_AUTH = frozenset(IMAP_AUTH_ENUM.keys())
 VALID_PROVIDERS = frozenset({"gmail", "custom"})
 
 _EMAIL_RE = re.compile(r"<([^<>]+@[^<>]+)>")
+_NUMERIC_IDENTITY_RE = re.compile(r"^Identity #(\d+)$")
 _INVALID_GPG_VALIDITY = frozenset({"r", "e", "d", "i"})
 
 
@@ -146,11 +155,17 @@ def _normalize_password(password: str, provider: str) -> str:
     return password
 
 
+def _validate_single_line(val: str, field_desc: str) -> str:
+    if "\n" in val or "\r" in val:
+        raise ConfigError(f"{field_desc} must not contain newline characters")
+    return val.strip()
+
+
 def _require_nonempty_str(obj: dict[str, Any], key: str, ctx: str) -> str:
     val = obj.get(key)
     if not isinstance(val, str) or not val.strip():
         raise ConfigError(f"{ctx}: missing or invalid string field '{key}'")
-    return val.strip()
+    return _validate_single_line(val, f"{ctx}.{key}")
 
 
 def _parse_gpg(raw: Any, ctx: str, *, present: bool) -> GpgConfig | None:
@@ -215,6 +230,7 @@ def _parse_smtp(
         host = raw_smtp.get("host")
     if not isinstance(host, str) or not host.strip():
         raise ConfigError(f"{ctx}: missing required field 'smtp.host'")
+    host = _validate_single_line(host, f"{ctx}.smtp.host")
 
     port = raw_smtp.get("port", 465)
     if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
@@ -223,17 +239,18 @@ def _parse_smtp(
     username = raw_smtp.get("username", default_email)
     if not isinstance(username, str) or not username.strip():
         raise ConfigError(f"{ctx}.smtp.username must be a non-empty string")
+    username = _validate_single_line(username, f"{ctx}.smtp.username")
 
     encryption = raw_smtp.get("encryption", "SSL")
     if not isinstance(encryption, str) or encryption not in VALID_SMTP_ENCRYPTION:
         raise ConfigError(
-            f"{ctx}.smtp.encryption {encryption!r} not in {sorted(VALID_SMTP_ENCRYPTION)}"
+            f"{ctx}.smtp.encryption must be one of {sorted(VALID_SMTP_ENCRYPTION)}"
         )
 
     auth = raw_smtp.get("auth", "PLAIN")
     if not isinstance(auth, str) or auth not in VALID_SMTP_AUTH:
         raise ConfigError(
-            f"{ctx}.smtp.auth {auth!r} not in {sorted(VALID_SMTP_AUTH)}"
+            f"{ctx}.smtp.auth must be one of {sorted(VALID_SMTP_AUTH)}"
         )
 
     raw_pw = raw_smtp.get("password", default_password)
@@ -268,6 +285,7 @@ def _parse_imap(
         host = raw_imap.get("host")
     if not isinstance(host, str) or not host.strip():
         raise ConfigError(f"{ctx}: missing required field 'imap.host'")
+    host = _validate_single_line(host, f"{ctx}.imap.host")
 
     port = raw_imap.get("port", 993)
     if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
@@ -276,17 +294,18 @@ def _parse_imap(
     username = raw_imap.get("username", default_email)
     if not isinstance(username, str) or not username.strip():
         raise ConfigError(f"{ctx}.imap.username must be a non-empty string")
+    username = _validate_single_line(username, f"{ctx}.imap.username")
 
     safety = raw_imap.get("safety", "SSL")
     if not isinstance(safety, str) or safety not in VALID_IMAP_SAFETY:
         raise ConfigError(
-            f"{ctx}.imap.safety {safety!r} not in {sorted(VALID_IMAP_SAFETY)}"
+            f"{ctx}.imap.safety must be one of {sorted(VALID_IMAP_SAFETY)}"
         )
 
     auth = raw_imap.get("auth", "PLAIN")
-    if not isinstance(auth, str) or auth not in IMAP_AUTH_ENUM:
+    if not isinstance(auth, str) or auth not in VALID_IMAP_AUTH:
         raise ConfigError(
-            f"{ctx}.imap.auth {auth!r} not in {sorted(IMAP_AUTH_ENUM)}"
+            f"{ctx}.imap.auth must be one of {sorted(VALID_IMAP_AUTH)}"
         )
 
     interval = raw_imap.get("intervalCheckMinutes", 5)
@@ -327,7 +346,7 @@ def load_config(path: Path) -> ProvisionConfig:
         raise ConfigError("config root must be a JSON object")
 
     if raw.get("version") != 1:
-        raise ConfigError(f"unsupported config version: {raw.get('version')!r} (expected 1)")
+        raise ConfigError("unsupported config version (expected integer 1)")
 
     raw_accounts = raw.get("accounts")
     if not isinstance(raw_accounts, list) or not raw_accounts:
@@ -375,7 +394,7 @@ def load_config(path: Path) -> ProvisionConfig:
         provider = acc_raw.get("provider", "gmail")
         if not isinstance(provider, str) or provider not in VALID_PROVIDERS:
             raise ConfigError(
-                f"{ctx}.provider {provider!r} not in {sorted(VALID_PROVIDERS)}"
+                f"{ctx}.provider must be one of {sorted(VALID_PROVIDERS)}"
             )
 
         shared_pw = acc_raw.get("password")
@@ -483,13 +502,13 @@ def load_config(path: Path) -> ProvisionConfig:
     default_account_id = raw.get("defaultAccount", accounts[0].id)
     if not isinstance(default_account_id, str) or default_account_id not in accounts_by_id:
         raise ConfigError(
-            f"defaultAccount {default_account_id!r} does not match any account id"
+            "defaultAccount must be a string matching an account id"
         )
 
     default_identity_id = raw.get("defaultIdentity", default_account_id)
     if not isinstance(default_identity_id, str) or default_identity_id not in identities_by_id:
         raise ConfigError(
-            f"defaultIdentity {default_identity_id!r} does not match any account or alias id"
+            "defaultIdentity must be a string matching an account or alias id"
         )
 
     default_account = accounts_by_id[default_account_id]
@@ -505,26 +524,34 @@ def load_config(path: Path) -> ProvisionConfig:
     )
 
 
-def _default_gpg_runner(args: list[str]) -> str:
-    res = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
-    )
+def _default_gpg_runner(args: list[str]) -> str | None:
+    try:
+        res = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        LOG.warning("gpg command failed while resolving keys: %s", exc)
+        return None
     if res.returncode != 0:
         LOG.warning("gpg command exited %d while resolving keys", res.returncode)
-        return ""
+        return None
     return res.stdout
 
 
 def resolve_gpg_fingerprint(
     email: str,
     gpg_cfg: GpgConfig | None,
-    gpg_runner: Callable[[list[str]], str] | None = None,
+    gpg_runner: Callable[[list[str]], str | None] | None = None,
 ) -> str | None:
-    """Resolve the GPG fingerprint to bind to an identity."""
+    """Resolve the GPG fingerprint to bind to an identity.
+
+    Raises GpgLookupError when the gpg command itself fails transiently so callers
+    preserve existing bindings instead of clearing them.
+    """
     if gpg_cfg is None or not gpg_cfg.enable:
         return None
     if gpg_cfg.key != "auto":
@@ -532,6 +559,8 @@ def resolve_gpg_fingerprint(
 
     runner = gpg_runner or _default_gpg_runner
     output = runner(["gpg", "--list-secret-keys", "--with-colons"])
+    if output is None:
+        raise GpgLookupError("gpg --list-secret-keys failed")
     if not output:
         return None
 
@@ -817,31 +846,45 @@ class AkonadiClient:
     _AGENT_MGR_IFACE = "org.freedesktop.Akonadi.AgentManager"
     _IMAP_IFACE = "org.kde.Akonadi.Imap.Settings"
 
-    def _control_ready(self) -> bool:
+    def _control_ready(self, timeout: int = 10) -> bool:
         res = _run_qdbus(
-            self._CONTROL, self._AGENT_MGR_PATH, f"{self._AGENT_MGR_IFACE}.agentInstances"
+            self._CONTROL,
+            self._AGENT_MGR_PATH,
+            f"{self._AGENT_MGR_IFACE}.agentInstances",
+            timeout=timeout,
         )
         return res.returncode == 0
 
+    def is_ready(self, timeout: int = 5) -> bool:
+        """Non-mutating check for whether Akonadi Control is already running."""
+        return self._control_ready(timeout=timeout)
+
     def ensure_ready(self, wait_seconds: int) -> None:
-        if self._control_ready():
+        deadline = time.monotonic() + max(wait_seconds, 1)
+        remaining = max(1, min(10, int(deadline - time.monotonic()) + 1))
+        if self._control_ready(timeout=remaining):
             return
         LOG.info("Akonadi not running; starting via akonadictl start")
+        start_timeout = max(1, min(15, int(max(deadline - time.monotonic(), 1))))
         try:
             subprocess.run(
                 ["akonadictl", "start"],
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=15,
+                timeout=start_timeout,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             LOG.warning("akonadictl start failed or timed out: %s", exc)
-        deadline = time.monotonic() + max(wait_seconds, 1)
-        while time.monotonic() < deadline:
-            if self._control_ready():
+        while True:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
+            if self._control_ready(timeout=max(1, min(10, int(rem) + 1))):
                 return
-            time.sleep(0.5)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
         raise SessionNotReadyError(
             f"Akonadi Control D-Bus service unavailable after {wait_seconds}s"
         )
@@ -876,6 +919,10 @@ class AkonadiClient:
             "/Settings",
             f"{self._IMAP_IFACE}.{getter}",
         )
+        if res.returncode == 124:
+            raise SessionNotReadyError(
+                f"Akonadi {resource_id} /Settings.{getter} timed out: {res.stderr.strip()}"
+            )
         if res.returncode != 0:
             raise ProvisionError(
                 f"Akonadi {resource_id} /Settings.{getter} failed: {res.stderr.strip()}"
@@ -889,6 +936,10 @@ class AkonadiClient:
             f"{self._IMAP_IFACE}.{setter}",
             *args,
         )
+        if res.returncode == 124:
+            raise SessionNotReadyError(
+                f"Akonadi {resource_id} /Settings.{setter} timed out: {res.stderr.strip()}"
+            )
         if res.returncode != 0:
             raise ProvisionError(
                 f"Akonadi {resource_id} /Settings.{setter} failed: {res.stderr.strip()}"
@@ -917,20 +968,32 @@ class AkonadiClient:
             "accountIdentity": int(self._get_setting(resource_id, "accountIdentity") or "0"),
         }
 
-    def create_imap_resource(self, wait_seconds: int) -> str:
+    def create_imap_resource(
+        self,
+        wait_seconds: int,
+        on_created: Callable[[str], None] | None = None,
+    ) -> str:
         res_id = self._call_agent_mgr("createAgentInstance", "akonadi_imap_resource")
         if not res_id:
             raise ProvisionError("Akonadi createAgentInstance returned empty identifier")
+        if on_created is not None:
+            on_created(res_id)
         deadline = time.monotonic() + max(wait_seconds, 1)
-        while time.monotonic() < deadline:
+        while True:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
             probe = _run_qdbus(
                 f"org.freedesktop.Akonadi.Resource.{res_id}",
                 "/Settings",
                 f"{self._IMAP_IFACE}.imapServer",
+                timeout=max(1, min(10, int(rem) + 1)),
             )
             if probe.returncode == 0:
                 return res_id
-            time.sleep(0.5)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
         raise SessionNotReadyError(
             f"Newly created Akonadi resource {res_id} /Settings unavailable after {wait_seconds}s"
         )
@@ -974,43 +1037,71 @@ class KeychainClient:
         self._helper_bin = helper_bin
 
     @staticmethod
-    def _secret_service_ready() -> bool:
+    def _prefer_kwallet() -> bool:
+        backend = os.environ.get("QTKEYCHAIN_BACKEND", "").strip().lower()
+        if backend == "kwallet":
+            return True
+        if backend in ("secretservice", "libsecret", "gnome"):
+            return False
+        if os.environ.get("KDE_FULL_SESSION"):
+            return True
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+        return "KDE" in desktop
+
+    @classmethod
+    def _kwallet_ready(cls, timeout: int = 10) -> tuple[bool, bool]:
+        """Return (kwallet_service_present, wallet_is_open)."""
+        wallet = _run_qdbus(
+            "org.kde.kwalletd6",
+            "/modules/kwalletd6",
+            "org.kde.KWallet.localWallet",
+            timeout=timeout,
+        )
+        wallet_name = wallet.stdout.strip()
+        if wallet.returncode != 0 or not wallet_name:
+            return False, False
+        opened = _run_qdbus(
+            "org.kde.kwalletd6",
+            "/modules/kwalletd6",
+            "org.kde.KWallet.isOpen",
+            wallet_name,
+            timeout=timeout,
+        )
+        return True, (opened.returncode == 0 and opened.stdout.strip().lower() == "true")
+
+    @staticmethod
+    def _freedesktop_secrets_ready(timeout: int = 10) -> bool:
         locked = _run_qdbus(
             "org.freedesktop.secrets",
             "/org/freedesktop/secrets/aliases/default",
             "org.freedesktop.DBus.Properties.Get",
             "org.freedesktop.Secret.Collection",
             "Locked",
+            timeout=timeout,
         )
-        if locked.returncode == 0 and locked.stdout.strip().lower() == "false":
+        return locked.returncode == 0 and locked.stdout.strip().lower() == "false"
+
+    @classmethod
+    def _secret_service_ready(cls, timeout: int = 10) -> bool:
+        if cls._prefer_kwallet():
+            present, is_open = cls._kwallet_ready(timeout=timeout)
+            if present:
+                return is_open
+            return cls._freedesktop_secrets_ready(timeout=timeout)
+        if cls._freedesktop_secrets_ready(timeout=timeout):
             return True
-
-        wallet = _run_qdbus(
-            "org.kde.kwalletd6",
-            "/modules/kwalletd6",
-            "org.kde.KWallet.localWallet",
-        )
-        wallet_name = wallet.stdout.strip()
-        if wallet.returncode == 0 and wallet_name:
-            opened = _run_qdbus(
-                "org.kde.kwalletd6",
-                "/modules/kwalletd6",
-                "org.kde.KWallet.isOpen",
-                wallet_name,
-            )
-            if opened.returncode == 0 and opened.stdout.strip().lower() == "true":
-                return True
-
-        return False
+        _, is_open = cls._kwallet_ready(timeout=timeout)
+        return is_open
 
     def ensure_ready(self, wait_seconds: int) -> None:
         deadline = time.monotonic() + max(wait_seconds, 1)
         while True:
-            if self._secret_service_ready():
+            rem = deadline - time.monotonic()
+            if self._secret_service_ready(timeout=max(1, min(10, int(max(rem, 1))))):
                 return
             if time.monotonic() >= deadline:
                 break
-            time.sleep(0.5)
+            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
         raise SessionNotReadyError(
             f"Secret Service / KWallet locked or unavailable after {wait_seconds}s"
         )
@@ -1029,12 +1120,13 @@ class KeychainClient:
             raise SessionNotReadyError(
                 f"Keychain helper timed out or unavailable for ({service}, {key}): {type(exc).__name__}"
             ) from exc
+        if res.returncode == 3:
+            err = res.stderr.strip() or "keychain backend unavailable or locked"
+            raise SessionNotReadyError(
+                f"Keychain unavailable for ({service}, {key}): {err}"
+            )
         if res.returncode != 0:
             err = res.stderr.strip() or f"exit status {res.returncode}"
-            if "wallet" in err.lower() or "keychain" in err.lower() or "locked" in err.lower():
-                raise SessionNotReadyError(
-                    f"Keychain unavailable for ({service}, {key}): {err}"
-                )
             raise ProvisionError(f"kmail-keychain-set failed for ({service}, {key}): {err}")
         return res.stdout.strip() == "updated"
 
@@ -1124,6 +1216,9 @@ def reconcile_mailtransports(
             for alias_entry in entry.get("aliases", {}).values():
                 if isinstance(alias_entry.get("transport_id"), int):
                     prev_tids.add(alias_entry["transport_id"])
+        for retired_tid in state.get("retired_transport_ids", []):
+            if isinstance(retired_tid, int):
+                prev_tids.add(retired_tid)
         for old_tid in sorted(prev_tids - desired_tids):
             if kc.remove_group(f"Transport {old_tid}"):
                 changed = True
@@ -1135,29 +1230,39 @@ def reconcile_mailtransports(
     return actions
 
 
-def _reindex_identity_groups(kc: KConfigFile) -> bool:
-    """Keep [Identity #0..N-1] contiguous so KIdentityManagement reads all entries."""
-    id_groups = [g for g in kc.groups() if g.startswith("Identity #")]
-    changed = False
-    # Rename through temporary names first to avoid collisions
-    temp_names: list[tuple[str, str]] = []
-    for idx, old in enumerate(id_groups):
-        target = f"Identity #{idx}"
-        if old != target:
-            tmp = f"__kmail_provision_tmp_identity_{idx}__"
-            kc.rename_group(old, tmp)
-            temp_names.append((tmp, target))
-            changed = True
-    for tmp, target in temp_names:
-        kc.rename_group(tmp, target)
-    return changed
+def _numeric_identity_groups(kc: KConfigFile) -> list[tuple[int, str]]:
+    """Return (index, group_name) for numeric KIdentityManagement groups only."""
+    found: list[tuple[int, str]] = []
+    for grp in kc.groups():
+        m = _NUMERIC_IDENTITY_RE.match(grp)
+        if m:
+            found.append((int(m.group(1)), grp))
+    return found
+
+
+def _is_firstrun_placeholder_identity(
+    kc: KConfigFile, grp: str, default_uoid: str | None, total_numeric: int
+) -> bool:
+    """Identify KDE's autogenerated blank first-run identity without touching user-customized ones."""
+    if (kc.get(grp, "Email Address") or "").strip():
+        return False
+    if (kc.get(grp, "Transport") or "").strip():
+        return False
+    if (kc.get(grp, "PGP Signing Key") or "").strip():
+        return False
+    if (kc.get(grp, "PGP Encryption Key") or "").strip():
+        return False
+    uoid = (kc.get(grp, "uoid") or "").strip()
+    if total_numeric == 1:
+        return True
+    return bool(default_uoid and uoid == default_uoid)
 
 
 def reconcile_emailidentities(
     cfg: ProvisionConfig,
     config_dir: Path,
     state: dict[str, Any],
-    gpg_runner: Callable[[list[str]], str] | None,
+    gpg_runner: Callable[[list[str]], str | None] | None,
     dry_run: bool,
     prune: bool,
 ) -> tuple[list[str], dict[str, int]]:
@@ -1169,14 +1274,15 @@ def reconcile_emailidentities(
     desired_identities = _iter_managed_identities(cfg)
     desired_uoids = {ident.uoid for ident in desired_identities}
 
-    # Remove blank auto-generated first-run identity (empty/missing Email Address)
-    for grp in list(kc.groups()):
-        if grp.startswith("Identity #"):
-            addr = (kc.get(grp, "Email Address") or "").strip()
-            if not addr:
-                kc.remove_group(grp)
-                changed = True
-                actions.append(f"emailidentities: removed blank default {grp}")
+    # Remove only positively identified first-run placeholder identity
+    numeric_groups = _numeric_identity_groups(kc)
+    default_uoid = (kc.get("General", "Default Identity") or "").strip() or None
+    total_numeric = len(numeric_groups)
+    for _idx, grp in list(numeric_groups):
+        if _is_firstrun_placeholder_identity(kc, grp, default_uoid, total_numeric):
+            kc.remove_group(grp)
+            changed = True
+            actions.append(f"emailidentities: removed blank default {grp}")
 
     if prune:
         prev_uoids: set[int] = set()
@@ -1187,26 +1293,28 @@ def reconcile_emailidentities(
                 if isinstance(alias_entry.get("identity_uoid"), int):
                     prev_uoids.add(alias_entry["identity_uoid"])
         to_remove = prev_uoids - desired_uoids
-        for grp in list(kc.groups()):
-            if grp.startswith("Identity #"):
-                raw_uoid = kc.get(grp, "uoid")
-                if raw_uoid and raw_uoid.isdigit() and int(raw_uoid) in to_remove:
-                    kc.remove_group(grp)
-                    changed = True
-                    actions.append(f"emailidentities: pruned {grp} (uoid={raw_uoid})")
-
-    if _reindex_identity_groups(kc):
-        changed = True
-
-    # Map existing uoid -> group name
-    uoid_to_group: dict[int, str] = {}
-    next_index = 0
-    for grp in kc.groups():
-        if grp.startswith("Identity #"):
-            next_index += 1
+        for _idx, grp in list(_numeric_identity_groups(kc)):
             raw_uoid = kc.get(grp, "uoid")
-            if raw_uoid and raw_uoid.isdigit():
-                uoid_to_group[int(raw_uoid)] = grp
+            if raw_uoid and raw_uoid.isdigit() and int(raw_uoid) in to_remove:
+                kc.remove_group(grp)
+                changed = True
+                actions.append(f"emailidentities: pruned {grp} (uoid={raw_uoid})")
+
+    # Map existing numeric groups (leaving existing indices and non-numeric groups untouched)
+    uoid_to_group: dict[int, str] = {}
+    used_indices: set[int] = set()
+    for idx, grp in _numeric_identity_groups(kc):
+        used_indices.add(idx)
+        raw_uoid = kc.get(grp, "uoid")
+        if raw_uoid and raw_uoid.isdigit():
+            uoid_to_group[int(raw_uoid)] = grp
+
+    def allocate_identity_group() -> str:
+        idx = 0
+        while idx in used_indices:
+            idx += 1
+        used_indices.add(idx)
+        return f"Identity #{idx}"
 
     if kc.set("General", "Default Identity", str(cfg.default_identity_uoid)):
         changed = True
@@ -1219,61 +1327,75 @@ def reconcile_emailidentities(
         slug_to_uoid[ident.id] = ident.uoid
         grp = uoid_to_group.get(ident.uoid)
         if grp is None:
-            grp = f"Identity #{next_index}"
-            next_index += 1
+            grp = allocate_identity_group()
             uoid_to_group[ident.uoid] = grp
 
-        fpr = resolve_gpg_fingerprint(ident.email, ident.gpg, gpg_runner=gpg_runner)
-        override_encryption_defaults = bool(
-            fpr
-            and ident.gpg is not None
-            and (ident.gpg.sign_by_default or ident.gpg.encrypt_by_default)
-        )
+        gpg_lookup_failed = False
+        fpr: str | None = None
+        try:
+            fpr = resolve_gpg_fingerprint(ident.email, ident.gpg, gpg_runner=gpg_runner)
+        except GpgLookupError:
+            gpg_lookup_failed = True
+            LOG.warning(
+                "GPG key lookup failed for %s; preserving existing PGP settings",
+                ident.id,
+            )
 
-        base_fields = {
+        base_fields: dict[str, str] = {
             "Identity": ident.name,
             "Name": ident.real_name,
             "Email Address": ident.email,
             "Transport": str(ident.transport_id),
             "Disable Fcc": _bool_str(ident.disable_fcc),
-            "Override Encryption Defaults": _bool_str(override_encryption_defaults),
             "uoid": str(ident.uoid),
         }
+        if not gpg_lookup_failed:
+            override_encryption_defaults = bool(
+                fpr
+                and ident.gpg is not None
+                and (ident.gpg.sign_by_default or ident.gpg.encrypt_by_default)
+            )
+            base_fields["Override Encryption Defaults"] = _bool_str(
+                override_encryption_defaults
+            )
+
         grp_changed = False
         for k, v in base_fields.items():
             if kc.set(grp, k, v):
                 grp_changed = True
                 changed = True
 
-        if fpr and ident.gpg is not None:
-            gpg_fields = {
-                "PGP Signing Key": fpr,
-                "PGP Encryption Key": fpr,
-                "Pgp Auto Sign": _bool_str(ident.gpg.sign_by_default),
-                "Pgp Auto Encrypt": _bool_str(ident.gpg.encrypt_by_default),
-                "Preferred Crypto Message Format": "openpgp/mime",
-                "Autocrypt": _bool_str(ident.gpg.autocrypt),
-            }
-            for k, v in gpg_fields.items():
-                if kc.set(grp, k, v):
-                    grp_changed = True
-                    changed = True
-        else:
-            for k in (
-                "PGP Signing Key",
-                "PGP Encryption Key",
-                "Pgp Auto Sign",
-                "Pgp Auto Encrypt",
-                "Preferred Crypto Message Format",
-                "Autocrypt",
-            ):
-                if kc.remove_key(grp, k):
-                    grp_changed = True
-                    changed = True
+        if not gpg_lookup_failed:
+            if fpr and ident.gpg is not None:
+                gpg_fields = {
+                    "PGP Signing Key": fpr,
+                    "PGP Encryption Key": fpr,
+                    "Pgp Auto Sign": _bool_str(ident.gpg.sign_by_default),
+                    "Pgp Auto Encrypt": _bool_str(ident.gpg.encrypt_by_default),
+                    "Preferred Crypto Message Format": "openpgp/mime",
+                    "Autocrypt": _bool_str(ident.gpg.autocrypt),
+                }
+                for k, v in gpg_fields.items():
+                    if kc.set(grp, k, v):
+                        grp_changed = True
+                        changed = True
+            else:
+                for k in (
+                    "PGP Signing Key",
+                    "PGP Encryption Key",
+                    "Pgp Auto Sign",
+                    "Pgp Auto Encrypt",
+                    "Preferred Crypto Message Format",
+                    "Autocrypt",
+                ):
+                    if kc.remove_key(grp, k):
+                        grp_changed = True
+                        changed = True
 
         if grp_changed:
+            gpg_status = "preserved" if gpg_lookup_failed else ("bound" if fpr else "none")
             actions.append(
-                f"emailidentities: upsert {grp} ({ident.id}, gpg={'bound' if fpr else 'none'})"
+                f"emailidentities: upsert {grp} ({ident.id}, gpg={gpg_status})"
             )
 
     if changed and not dry_run:
@@ -1305,6 +1427,7 @@ def reconcile_imap_resources(
     dry_run: bool,
     prune: bool,
     wait_seconds: int,
+    state_file: Path | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     actions: list[str] = []
     live_resources = set(akonadi.list_imap_resources())
@@ -1315,18 +1438,48 @@ def reconcile_imap_resources(
             live_settings_cache[res_id] = akonadi.get_imap_settings(res_id)
         return live_settings_cache[res_id]
 
-    prev_managed = state.get("managed", {})
-    claimed_resources: set[str] = set()
-    assigned: dict[str, str] = {}
+    prev_managed = state.setdefault("managed", {})
 
+    # Reserve live recorded resources for all current accounts before fallback endpoint matching
+    reserved_by_account: dict[str, str] = {}
+    claimed_resources: set[str] = set()
     for acc in cfg.accounts:
-        res_id: str | None = None
         prev_entry = prev_managed.get(acc.id, {})
         recorded_id = prev_entry.get("resource_id") if isinstance(prev_entry, dict) else None
+        if (
+            isinstance(recorded_id, str)
+            and recorded_id in live_resources
+            and recorded_id not in claimed_resources
+        ):
+            reserved_by_account[acc.id] = recorded_id
+            claimed_resources.add(recorded_id)
 
-        if isinstance(recorded_id, str) and recorded_id in live_resources and recorded_id not in claimed_resources:
-            res_id = recorded_id
+    assigned: dict[str, str] = {}
+
+    def persist_checkpoint(acc: AccountSpec, res_id: str, *, pending_restart: bool) -> None:
+        if dry_run or state_file is None:
+            return
+        entry = prev_managed.get(acc.id)
+        if not isinstance(entry, dict):
+            entry = {}
+            prev_managed[acc.id] = entry
+        entry["resource_id"] = res_id
+        entry["transport_id"] = acc.transport_id
+        entry["identity_uoid"] = acc.identity.uoid
+        if pending_restart:
+            entry["pending_restart"] = True
         else:
+            entry.pop("pending_restart", None)
+        StateStore.save(state_file, state)
+
+    for acc in cfg.accounts:
+        res_id: str | None = reserved_by_account.get(acc.id)
+        prev_entry = prev_managed.get(acc.id, {})
+        prior_pending_restart = bool(
+            isinstance(prev_entry, dict) and prev_entry.get("pending_restart")
+        )
+
+        if res_id is None:
             # Fallback match by (imapServer, userName) to recover from missing state.json
             for candidate in sorted(live_resources - claimed_resources):
                 cand_cfg = get_settings(candidate)
@@ -1346,7 +1499,17 @@ def reconcile_imap_resources(
                 res_id = f"<new-akonadi_imap_resource:{acc.id}>"
                 actions.append(f"akonadi: would create IMAP resource for {acc.id}")
             else:
-                res_id = akonadi.create_imap_resource(wait_seconds)
+                def _on_created(new_id: str, _acc: AccountSpec = acc) -> None:
+                    persist_checkpoint(_acc, new_id, pending_restart=True)
+
+                if hasattr(akonadi, "create_imap_resource"):
+                    try:
+                        res_id = akonadi.create_imap_resource(
+                            wait_seconds, on_created=_on_created  # type: ignore[call-arg]
+                        )
+                    except TypeError:
+                        res_id = akonadi.create_imap_resource(wait_seconds)
+                        _on_created(res_id)
                 live_resources.add(res_id)
                 created_new = True
                 actions.append(f"akonadi: created IMAP resource {res_id} for {acc.id}")
@@ -1380,6 +1543,8 @@ def reconcile_imap_resources(
                     actions.append(
                         f"akonadi: would update {res_id} fields={sorted(diffs.keys())}"
                     )
+                if prior_pending_restart:
+                    actions.append(f"akonadi: would retry pending restart on {res_id}")
             actions.append(f"keychain: ensure password for (imap, {res_id}rc) [redacted]")
             continue
 
@@ -1387,6 +1552,7 @@ def reconcile_imap_resources(
         diffs = {k: v for k, v in desired_settings.items() if current.get(k) != v}
         settings_changed = created_new or bool(diffs)
         if settings_changed:
+            persist_checkpoint(acc, res_id, pending_restart=True)
             akonadi.apply_imap_settings(res_id, desired_settings)
             live_settings_cache[res_id] = dict(desired_settings)
             actions.append(
@@ -1395,10 +1561,13 @@ def reconcile_imap_resources(
 
         pw_changed = keychain.set_password("imap", f"{res_id}rc", acc.imap.password)
         if pw_changed:
+            persist_checkpoint(acc, res_id, pending_restart=True)
             actions.append(f"keychain: updated password for (imap, {res_id}rc)")
 
-        if settings_changed or pw_changed:
+        if settings_changed or pw_changed or prior_pending_restart:
+            persist_checkpoint(acc, res_id, pending_restart=True)
             akonadi.restart_resource(res_id)
+            persist_checkpoint(acc, res_id, pending_restart=False)
             actions.append(f"akonadi: restarted {res_id}")
 
     if prune:
@@ -1417,6 +1586,24 @@ def reconcile_imap_resources(
     return actions, assigned
 
 
+@contextlib.contextmanager
+def _provision_lock(state_file: Path, *, enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+    lock_path = state_file.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def provision(
     config_path: Path,
     config_dir: Path,
@@ -1426,7 +1613,7 @@ def provision(
     wait_seconds: int = 30,
     akonadi: AkonadiProtocol | None = None,
     keychain: KeychainProtocol | None = None,
-    gpg_runner: Callable[[list[str]], str] | None = None,
+    gpg_runner: Callable[[list[str]], str | None] | None = None,
 ) -> int:
     """Reconcile KMail/Akonadi/QtKeychain state from a declarative JSON config."""
     cfg = load_config(config_path)
@@ -1434,65 +1621,104 @@ def provision(
     akonadi_client: AkonadiProtocol = akonadi if akonadi is not None else AkonadiClient()
     keychain_client: KeychainProtocol = keychain if keychain is not None else KeychainClient()
 
+    akonadi_available = True
     if not dry_run:
         keychain_client.ensure_ready(wait_seconds)
         akonadi_client.ensure_ready(wait_seconds)
     else:
-        # In dry-run, only fail if explicitly unavailable when real clients are used
-        akonadi_client.ensure_ready(wait_seconds)
+        # Never start Akonadi during --dry-run; check read-only if supported
+        is_ready_fn = getattr(akonadi_client, "is_ready", None)
+        if callable(is_ready_fn):
+            akonadi_available = bool(is_ready_fn(timeout=min(5, max(1, wait_seconds))))
+        else:
+            akonadi_client.ensure_ready(wait_seconds)
         keychain_client.ensure_ready(wait_seconds)
 
-    state = StateStore.load(state_file)
-    all_actions: list[str] = []
+    with _provision_lock(state_file, enabled=not dry_run):
+        state = StateStore.load(state_file)
+        all_actions: list[str] = []
 
-    all_actions.extend(
-        reconcile_mailtransports(
-            cfg, config_dir, state, keychain_client, dry_run=dry_run, prune=prune
+        all_actions.extend(
+            reconcile_mailtransports(
+                cfg, config_dir, state, keychain_client, dry_run=dry_run, prune=prune
+            )
         )
-    )
-    id_actions, _ = reconcile_emailidentities(
-        cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
-    )
-    all_actions.extend(id_actions)
-    imap_actions, assigned_resources = reconcile_imap_resources(
-        cfg,
-        state,
-        akonadi_client,
-        keychain_client,
-        dry_run=dry_run,
-        prune=prune,
-        wait_seconds=wait_seconds,
-    )
-    all_actions.extend(imap_actions)
+        id_actions, _ = reconcile_emailidentities(
+            cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
+        )
+        all_actions.extend(id_actions)
 
-    prev_managed = state.get("managed", {})
-    new_managed: dict[str, Any] = {}
-    for acc in cfg.accounts:
-        alias_map: dict[str, Any] = {}
-        if not prune:
-            prev_acc = prev_managed.get(acc.id, {})
-            if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict):
-                for prev_alias_id, prev_alias_entry in prev_acc["aliases"].items():
-                    alias_map[prev_alias_id] = dict(prev_alias_entry)
-        for alias in acc.aliases:
-            alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
-            if alias.smtp is not None:
-                alias_entry["transport_id"] = alias.transport_id
-            alias_map[alias.id] = alias_entry
-        new_managed[acc.id] = {
-            "resource_id": assigned_resources[acc.id],
-            "transport_id": acc.transport_id,
-            "identity_uoid": acc.identity.uoid,
-            "aliases": alias_map,
+        assigned_resources: dict[str, str] = {}
+        if akonadi_available:
+            imap_actions, assigned_resources = reconcile_imap_resources(
+                cfg,
+                state,
+                akonadi_client,
+                keychain_client,
+                dry_run=dry_run,
+                prune=prune,
+                wait_seconds=wait_seconds,
+                state_file=state_file,
+            )
+            all_actions.extend(imap_actions)
+        else:
+            all_actions.append(
+                "akonadi: Akonadi is not running; skipping live IMAP diff without starting it"
+            )
+
+        prev_managed = state.get("managed", {})
+        retired_tids: set[int] = {
+            t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
         }
+        desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
 
-    if not prune:
-        for prev_slug, prev_entry in prev_managed.items():
-            if prev_slug not in new_managed and isinstance(prev_entry, dict):
-                new_managed[prev_slug] = dict(prev_entry)
+        new_managed: dict[str, Any] = {}
+        for acc in cfg.accounts:
+            alias_map: dict[str, Any] = {}
+            prev_acc = prev_managed.get(acc.id, {})
+            prev_aliases = (
+                prev_acc.get("aliases", {})
+                if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict)
+                else {}
+            )
+            if not prune:
+                for prev_alias_id, prev_alias_entry in prev_aliases.items():
+                    if isinstance(prev_alias_entry, dict):
+                        alias_map[prev_alias_id] = dict(prev_alias_entry)
+            for alias in acc.aliases:
+                prev_alias = prev_aliases.get(alias.id)
+                if (
+                    not prune
+                    and alias.smtp is None
+                    and isinstance(prev_alias, dict)
+                    and isinstance(prev_alias.get("transport_id"), int)
+                ):
+                    retired_tids.add(prev_alias["transport_id"])
+                alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
+                if alias.smtp is not None:
+                    alias_entry["transport_id"] = alias.transport_id
+                alias_map[alias.id] = alias_entry
+            if acc.id in assigned_resources:
+                new_managed[acc.id] = {
+                    "resource_id": assigned_resources[acc.id],
+                    "transport_id": acc.transport_id,
+                    "identity_uoid": acc.identity.uoid,
+                    "aliases": alias_map,
+                }
 
-    if not dry_run:
-        StateStore.save(state_file, {"version": 1, "managed": new_managed})
+        if not prune:
+            for prev_slug, prev_entry in prev_managed.items():
+                if prev_slug not in new_managed and isinstance(prev_entry, dict):
+                    new_managed[prev_slug] = dict(prev_entry)
+            retired_tids -= desired_tids
+        else:
+            retired_tids.clear()
+
+        if not dry_run:
+            state_out: dict[str, Any] = {"version": 1, "managed": new_managed}
+            if retired_tids:
+                state_out["retired_transport_ids"] = sorted(retired_tids)
+            StateStore.save(state_file, state_out)
 
     if all_actions:
         prefix = "[dry-run] " if dry_run else ""

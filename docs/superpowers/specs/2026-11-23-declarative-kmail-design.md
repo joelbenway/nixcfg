@@ -254,8 +254,8 @@ Two binaries built in one derivation (`pkgs/kmail-provision/default.nix`):
 - Config (active per user only when `config.plasma.enable && cfg.enable && cfg.configFile != null`):
   - Adds `kmail-provision` to `home-manager.users.${user}.home.packages` so the user can run `kmail-provision --dry-run` or re-run manually anytime.
   - Defines `home-manager.users.${user}.systemd.user.services.kmail-provision`:
-    - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`
-    - `Service`: `Type = "oneshot"`, `RemainAfterExit = true`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${cfg.configFile}${lib.optionalString cfg.prune " --prune"}"`
+    - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitBurst = 10`, `StartLimitIntervalSec = "10min"`
+    - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "30s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${cfg.configFile}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
     - `Install`: `WantedBy = ["graphical-session.target"]`
   - Defines `home-manager.users.${user}.systemd.user.paths.kmail-provision` watching `PathChanged = toString cfg.configFile` (`WantedBy = ["graphical-session.target"]`) so updating the agenix secret and running `nixos-rebuild switch` automatically re-runs provisioning without needing to log out and back in!
 - Wiring in `users/joel.nix`:

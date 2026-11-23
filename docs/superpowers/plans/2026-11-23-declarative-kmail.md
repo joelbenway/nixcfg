@@ -217,8 +217,8 @@ Follow `modules/gpg.nix` and `modules/hex.nix` conventions:
   - When `cfg.enable && cfg.configFile != null`:
     - `home.packages = [kmailProvision];`
     - `systemd.user.services.kmail-provision`:
-      - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`
-      - `Service`: `Type = "oneshot"`, `RemainAfterExit = true`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg (toString cfg.configFile)}${lib.optionalString cfg.prune " --prune"}"`
+      - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitBurst = 10`, `StartLimitIntervalSec = "10min"`
+      - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "30s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg (toString cfg.configFile)}${lib.optionalString cfg.prune " --prune"}"` (omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)
       - `Install`: `WantedBy = ["graphical-session.target"]`
     - `systemd.user.paths.kmail-provision`:
       - `Unit`: `Description = "Watch declarative KMail config for updates"`, `PartOf = ["graphical-session.target"]`
@@ -237,7 +237,7 @@ In `users/joel.nix`, inside `extraConfig`:
     configFile = config.age.secrets."${username}-kmail-json".path;
   };
   ```
-- Note on CI placeholder discovery (`.github/workflows/ci.yml:131`): because `secrets/${username}-kmail.json.age` uses the exact `secrets/${username}...` pattern, CI's fallback secret-touching loop automatically creates dummy `secrets/joel-kmail.json.age` when running without SSH key, exercising the enabled code path in CI as well!
+- Note on CI placeholder discovery (`.github/workflows/ci.yml:131`): the `secrets/${username}...` pattern matches `secrets/${username}-kmail.json.age`, so the fallback loop creates an empty `secrets/joel-kmail.json.age` when no SSH key is configured. On `agnes`, `francis`, and `jerome` (where `desktop` defaults to `true`), this exercises the enabled KMail branch; on `michael` and `zita` (`desktop = false`), both the secret and KMail service stay disabled.
 
 - [ ] **Step 3: Write `docs/howto/declarative-kmail.md`**
 

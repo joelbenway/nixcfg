@@ -54,9 +54,14 @@ in {
                 After = ["graphical-session.target" "plasma-kwallet-pam.service"];
                 PartOf = ["graphical-session.target"];
                 ConditionPathExists = configPath;
+                StartLimitBurst = 10;
+                StartLimitIntervalSec = "10min";
               };
               Service = {
                 Type = "oneshot";
+                Restart = "no";
+                RestartForceExitStatus = [2];
+                RestartSec = "30s";
                 ExecStart = "${kmailProvision}/bin/kmail-provision --config ${lib.escapeShellArg configPath}${lib.optionalString cfg.prune " --prune"}";
               };
               Install = {
