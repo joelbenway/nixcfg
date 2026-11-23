@@ -225,15 +225,15 @@ def _parse_smtp(
         raise ConfigError(f"{ctx}.smtp.username must be a non-empty string")
 
     encryption = raw_smtp.get("encryption", "SSL")
-    if encryption not in VALID_SMTP_ENCRYPTION:
+    if not isinstance(encryption, str) or encryption not in VALID_SMTP_ENCRYPTION:
         raise ConfigError(
-            f"{ctx}.smtp.encryption '{encryption}' not in {sorted(VALID_SMTP_ENCRYPTION)}"
+            f"{ctx}.smtp.encryption {encryption!r} not in {sorted(VALID_SMTP_ENCRYPTION)}"
         )
 
     auth = raw_smtp.get("auth", "PLAIN")
-    if auth not in VALID_SMTP_AUTH:
+    if not isinstance(auth, str) or auth not in VALID_SMTP_AUTH:
         raise ConfigError(
-            f"{ctx}.smtp.auth '{auth}' not in {sorted(VALID_SMTP_AUTH)}"
+            f"{ctx}.smtp.auth {auth!r} not in {sorted(VALID_SMTP_AUTH)}"
         )
 
     raw_pw = raw_smtp.get("password", default_password)
@@ -278,15 +278,15 @@ def _parse_imap(
         raise ConfigError(f"{ctx}.imap.username must be a non-empty string")
 
     safety = raw_imap.get("safety", "SSL")
-    if safety not in VALID_IMAP_SAFETY:
+    if not isinstance(safety, str) or safety not in VALID_IMAP_SAFETY:
         raise ConfigError(
-            f"{ctx}.imap.safety '{safety}' not in {sorted(VALID_IMAP_SAFETY)}"
+            f"{ctx}.imap.safety {safety!r} not in {sorted(VALID_IMAP_SAFETY)}"
         )
 
     auth = raw_imap.get("auth", "PLAIN")
-    if auth not in IMAP_AUTH_ENUM:
+    if not isinstance(auth, str) or auth not in IMAP_AUTH_ENUM:
         raise ConfigError(
-            f"{ctx}.imap.auth '{auth}' not in {sorted(IMAP_AUTH_ENUM)}"
+            f"{ctx}.imap.auth {auth!r} not in {sorted(IMAP_AUTH_ENUM)}"
         )
 
     interval = raw_imap.get("intervalCheckMinutes", 5)
@@ -373,8 +373,10 @@ def load_config(path: Path) -> ProvisionConfig:
         real_name = _require_nonempty_str(acc_raw, "realName", ctx)
 
         provider = acc_raw.get("provider", "gmail")
-        if provider not in VALID_PROVIDERS:
-            raise ConfigError(f"{ctx}.provider '{provider}' not in {sorted(VALID_PROVIDERS)}")
+        if not isinstance(provider, str) or provider not in VALID_PROVIDERS:
+            raise ConfigError(
+                f"{ctx}.provider {provider!r} not in {sorted(VALID_PROVIDERS)}"
+            )
 
         shared_pw = acc_raw.get("password")
         if shared_pw is not None and not isinstance(shared_pw, str):
@@ -479,13 +481,15 @@ def load_config(path: Path) -> ProvisionConfig:
         accounts_by_id[slug] = account
 
     default_account_id = raw.get("defaultAccount", accounts[0].id)
-    if default_account_id not in accounts_by_id:
-        raise ConfigError(f"defaultAccount '{default_account_id}' does not match any account id")
+    if not isinstance(default_account_id, str) or default_account_id not in accounts_by_id:
+        raise ConfigError(
+            f"defaultAccount {default_account_id!r} does not match any account id"
+        )
 
     default_identity_id = raw.get("defaultIdentity", default_account_id)
-    if default_identity_id not in identities_by_id:
+    if not isinstance(default_identity_id, str) or default_identity_id not in identities_by_id:
         raise ConfigError(
-            f"defaultIdentity '{default_identity_id}' does not match any account or alias id"
+            f"defaultIdentity {default_identity_id!r} does not match any account or alias id"
         )
 
     default_account = accounts_by_id[default_account_id]
@@ -783,13 +787,22 @@ class KeychainProtocol(Protocol):
 
 
 def _run_qdbus(*args: str, timeout: int = 10) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["qdbus", *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    cmd = ["qdbus", *args]
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=124,
+            stdout="",
+            stderr=str(exc),
+        )
 
 
 def _parse_qdbus_bool(raw: str) -> bool:
@@ -814,13 +827,16 @@ class AkonadiClient:
         if self._control_ready():
             return
         LOG.info("Akonadi not running; starting via akonadictl start")
-        subprocess.run(
-            ["akonadictl", "start"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=15,
-        )
+        try:
+            subprocess.run(
+                ["akonadictl", "start"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            LOG.warning("akonadictl start failed or timed out: %s", exc)
         deadline = time.monotonic() + max(wait_seconds, 1)
         while time.monotonic() < deadline:
             if self._control_ready():
@@ -834,6 +850,10 @@ class AkonadiClient:
         res = _run_qdbus(
             self._CONTROL, self._AGENT_MGR_PATH, f"{self._AGENT_MGR_IFACE}.{method}", *args
         )
+        if res.returncode == 124:
+            raise SessionNotReadyError(
+                f"Akonadi AgentManager.{method} timed out or unavailable: {res.stderr.strip()}"
+            )
         if res.returncode != 0:
             raise ProvisionError(
                 f"Akonadi AgentManager.{method} failed: {res.stderr.strip()}"
@@ -955,10 +975,32 @@ class KeychainClient:
 
     @staticmethod
     def _secret_service_ready() -> bool:
-        for service in ("org.freedesktop.secrets", "org.kde.kwalletd6"):
-            res = _run_qdbus(service)
-            if res.returncode == 0:
+        locked = _run_qdbus(
+            "org.freedesktop.secrets",
+            "/org/freedesktop/secrets/aliases/default",
+            "org.freedesktop.DBus.Properties.Get",
+            "org.freedesktop.Secret.Collection",
+            "Locked",
+        )
+        if locked.returncode == 0 and locked.stdout.strip().lower() == "false":
+            return True
+
+        wallet = _run_qdbus(
+            "org.kde.kwalletd6",
+            "/modules/kwalletd6",
+            "org.kde.KWallet.localWallet",
+        )
+        wallet_name = wallet.stdout.strip()
+        if wallet.returncode == 0 and wallet_name:
+            opened = _run_qdbus(
+                "org.kde.kwalletd6",
+                "/modules/kwalletd6",
+                "org.kde.KWallet.isOpen",
+                wallet_name,
+            )
+            if opened.returncode == 0 and opened.stdout.strip().lower() == "true":
                 return True
+
         return False
 
     def ensure_ready(self, wait_seconds: int) -> None:
@@ -970,18 +1012,23 @@ class KeychainClient:
                 break
             time.sleep(0.5)
         raise SessionNotReadyError(
-            f"Secret Service / KWallet D-Bus unavailable after {wait_seconds}s"
+            f"Secret Service / KWallet locked or unavailable after {wait_seconds}s"
         )
 
     def set_password(self, service: str, key: str, password: str) -> bool:
-        res = subprocess.run(
-            [self._helper_bin, service, key],
-            input=password,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=15,
-        )
+        try:
+            res = subprocess.run(
+                [self._helper_bin, service, key],
+                input=password,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise SessionNotReadyError(
+                f"Keychain helper timed out or unavailable for ({service}, {key}): {type(exc).__name__}"
+            ) from exc
         if res.returncode != 0:
             err = res.stderr.strip() or f"exit status {res.returncode}"
             if "wallet" in err.lower() or "keychain" in err.lower() or "locked" in err.lower():
@@ -1177,6 +1224,11 @@ def reconcile_emailidentities(
             uoid_to_group[ident.uoid] = grp
 
         fpr = resolve_gpg_fingerprint(ident.email, ident.gpg, gpg_runner=gpg_runner)
+        override_encryption_defaults = bool(
+            fpr
+            and ident.gpg is not None
+            and (ident.gpg.sign_by_default or ident.gpg.encrypt_by_default)
+        )
 
         base_fields = {
             "Identity": ident.name,
@@ -1184,7 +1236,7 @@ def reconcile_emailidentities(
             "Email Address": ident.email,
             "Transport": str(ident.transport_id),
             "Disable Fcc": _bool_str(ident.disable_fcc),
-            "Override Encryption Defaults": "false",
+            "Override Encryption Defaults": _bool_str(override_encryption_defaults),
             "uoid": str(ident.uoid),
         }
         grp_changed = False
@@ -1413,9 +1465,15 @@ def provision(
     )
     all_actions.extend(imap_actions)
 
+    prev_managed = state.get("managed", {})
     new_managed: dict[str, Any] = {}
     for acc in cfg.accounts:
         alias_map: dict[str, Any] = {}
+        if not prune:
+            prev_acc = prev_managed.get(acc.id, {})
+            if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict):
+                for prev_alias_id, prev_alias_entry in prev_acc["aliases"].items():
+                    alias_map[prev_alias_id] = dict(prev_alias_entry)
         for alias in acc.aliases:
             alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
             if alias.smtp is not None:
@@ -1427,6 +1485,11 @@ def provision(
             "identity_uoid": acc.identity.uoid,
             "aliases": alias_map,
         }
+
+    if not prune:
+        for prev_slug, prev_entry in prev_managed.items():
+            if prev_slug not in new_managed and isinstance(prev_entry, dict):
+                new_managed[prev_slug] = dict(prev_entry)
 
     if not dry_run:
         StateStore.save(state_file, {"version": 1, "managed": new_managed})

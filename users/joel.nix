@@ -58,7 +58,7 @@ in
       hasKmailSecret = builtins.pathExists kmailSecretFile;
     in {
       age = {
-        secrets =
+        secrets = lib.mkMerge [
           {
             "${username}s-wallpaper" = {
               file = lib.custom.relativeToRoot "secrets/${username}s-wallpaper.jpg.age";
@@ -82,7 +82,7 @@ in
               group = "users";
             };
           }
-          // lib.optionalAttrs hasKmailSecret {
+          (lib.mkIf (hasKmailSecret && config.${username}.desktop) {
             "${username}-kmail-json" = {
               file = kmailSecretFile;
               name = "${username}-kmail.json";
@@ -90,13 +90,14 @@ in
               owner = username;
               group = "users";
             };
-          };
+          })
+        ];
       };
 
       plasma.users.${username}.wallpaper = config.age.secrets."${username}s-wallpaper".path;
 
-      kmail.users = lib.optionalAttrs hasKmailSecret {
-        ${username} = lib.mkIf config.${username}.desktop {
+      kmail.users = lib.mkIf (hasKmailSecret && config.${username}.desktop) {
+        ${username} = {
           enable = true;
           configFile = config.age.secrets."${username}-kmail-json".path;
         };

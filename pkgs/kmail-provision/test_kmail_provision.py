@@ -963,3 +963,408 @@ def test_state_file_contains_no_passwords_and_has_0600_mode(tmp_path: Path) -> N
     assert "s3cr" not in raw
     assert "3tpa" not in raw
     assert "alice@gmail.example" not in raw
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for whole-branch review findings
+# ---------------------------------------------------------------------------
+
+
+def test_keychain_client_locked_wallet_polls_and_times_out_with_session_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        calls.append(args)
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        # Both D-Bus services exist, but wallet is LOCKED!
+        if "Locked" in args:
+            return _Res(0, "true\n")
+        if "localWallet" in args:
+            return _Res(0, "kdewallet\n")
+        if "isOpen" in args:
+            return _Res(0, "false\n")
+        return _Res(0, "/\n")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    now = [0.0]
+
+    def fake_monotonic() -> float:
+        now[0] += 0.6
+        return now[0]
+
+    monkeypatch.setattr(kp.time, "monotonic", fake_monotonic)
+
+    client = kp.KeychainClient()
+    with pytest.raises(kp.SessionNotReadyError):
+        client.ensure_ready(wait_seconds=1)
+    assert any("Locked" in c for c in calls)
+
+
+def test_keychain_client_unlocked_and_stdin_password_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_inputs: list[tuple[list[str], str | None]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> object:
+        captured_inputs.append((args, kwargs.get("input")))  # type: ignore[arg-type]
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if "Locked" in args:
+            return _Res(0, "false\n")
+        if args[0] == "kmail-keychain-set":
+            if args[2] == "already":
+                return _Res(0, "unchanged\n")
+            if args[2] == "timeout":
+                raise kp.subprocess.TimeoutExpired(cmd=args, timeout=15)
+            return _Res(0, "updated\n")
+        return _Res(1, "", "unexpected")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    client = kp.KeychainClient()
+    client.ensure_ready(wait_seconds=1)
+
+    assert client.set_password("mailtransports", "123", "my-secret-pw") is True
+    assert client.set_password("mailtransports", "already", "my-secret-pw") is False
+
+    # Password passed strictly via stdin, never in argv
+    helper_call = [c for c in captured_inputs if c[0][0] == "kmail-keychain-set"][0]
+    assert "my-secret-pw" not in " ".join(helper_call[0])
+    assert helper_call[1] == "my-secret-pw"
+
+    # Timeout converts cleanly to SessionNotReadyError (never leaks password)
+    with pytest.raises(kp.SessionNotReadyError) as exc_info:
+        client.set_password("mailtransports", "timeout", "my-secret-pw")
+    assert "my-secret-pw" not in str(exc_info.value)
+
+
+def test_akonadi_client_qdbus_operations_and_timeout_handling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if args[0] == "qdbus":
+            if args[-1].endswith(".agentInstances"):
+                return _Res(0, "akonadi_imap_resource_0\nakonadi_maildir_resource_0\n")
+            if args[-2].endswith(".agentInstanceType"):
+                return _Res(
+                    0,
+                    "akonadi_imap_resource\n"
+                    if args[-1] == "akonadi_imap_resource_0"
+                    else "akonadi_maildir_resource\n",
+                )
+            if ".imapServer" in args[-1]:
+                return _Res(0, "imap.gmail.com\n")
+            if ".imapPort" in args[-1]:
+                return _Res(0, "993\n")
+            if ".userName" in args[-1]:
+                return _Res(0, "alice@example.com\n")
+            if ".safety" in args[-1]:
+                return _Res(0, "SSL\n")
+            if ".authentication" in args[-1]:
+                return _Res(0, "1\n")
+            if ".intervalCheckEnabled" in args[-1]:
+                return _Res(0, "true\n")
+            if ".intervalCheckTime" in args[-1]:
+                return _Res(0, "5\n")
+            if ".disconnectedModeEnabled" in args[-1]:
+                return _Res(0, "true\n")
+            if ".useDefaultIdentity" in args[-1]:
+                return _Res(0, "false\n")
+            if ".accountIdentity" in args[-1]:
+                return _Res(0, "123456\n")
+            if ".name" in args[-1]:
+                return _Res(0, "Personal\n")
+            set_calls.append(args)
+            return _Res(0, "")
+        return _Res(0, "")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    client = kp.AkonadiClient()
+    client.ensure_ready(wait_seconds=1)
+    assert client.list_imap_resources() == ["akonadi_imap_resource_0"]
+    settings = client.get_imap_settings("akonadi_imap_resource_0")
+    assert settings["imapServer"] == "imap.gmail.com"
+    assert settings["imapPort"] == 993
+    assert settings["authentication"] == 1
+    assert settings["intervalCheckEnabled"] is True
+
+    client.apply_imap_settings(
+        "akonadi_imap_resource_0",
+        {"imapServer": "imap.gmail.com", "imapPort": 993, "useDefaultIdentity": False},
+    )
+    assert any(c[-1].endswith(".save") for c in set_calls)
+
+    # Timeout during qdbus ensure_ready raises SessionNotReadyError cleanly
+    def raise_timeout(args: list[str], **_kwargs: object) -> object:
+        raise kp.subprocess.TimeoutExpired(cmd=args, timeout=10)
+
+    monkeypatch.setattr(kp.subprocess, "run", raise_timeout)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    now = [0.0]
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 1.0) or now[0])
+    )
+    with pytest.raises(kp.SessionNotReadyError):
+        client.ensure_ready(wait_seconds=1)
+
+
+def test_gpg_sign_or_encrypt_by_default_sets_override_encryption_defaults(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+
+    payload = {
+        "version": 1,
+        "accounts": [
+            {
+                "id": "signed",
+                "name": "Signed Gmail",
+                "provider": "gmail",
+                "email": "alice@gmail.example",
+                "realName": "Alice Example",
+                "password": "aaaa bbbb cccc dddd",
+                "gpg": {
+                    "key": "auto",
+                    "signByDefault": True,
+                    "encryptByDefault": False,
+                },
+                "aliases": [
+                    {
+                        "id": "encrypted",
+                        "name": "Encrypted Alias",
+                        "email": "alice@custom.example",
+                        "realName": "Alice Example",
+                        "gpg": {
+                            "key": "auto",
+                            "signByDefault": False,
+                            "encryptByDefault": True,
+                        },
+                    },
+                    {
+                        "id": "default_crypto",
+                        "name": "Default Crypto Alias",
+                        "email": "alt@duck.example",
+                        "realName": "Alt Name",
+                        "gpg": {
+                            "key": "auto",
+                            "signByDefault": False,
+                            "encryptByDefault": False,
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    cfg_path = _write_json(tmp_path, payload)
+    _, gpg_runner = _mock_gpg_for_three_identities()
+
+    kp.provision(
+        config_path=cfg_path,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=FakeAkonadiClient(),
+        keychain=FakeKeychainClient(),
+        gpg_runner=gpg_runner,
+    )
+
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    by_email = {
+        ei.get(g, "Email Address"): g
+        for g in ei.groups()
+        if g.startswith("Identity #")
+    }
+    assert ei.get(by_email["alice@gmail.example"], "Override Encryption Defaults") == "true"
+    assert ei.get(by_email["alice@gmail.example"], "Pgp Auto Sign") == "true"
+    assert ei.get(by_email["alice@custom.example"], "Override Encryption Defaults") == "true"
+    assert ei.get(by_email["alice@custom.example"], "Pgp Auto Encrypt") == "true"
+    assert ei.get(by_email["alt@duck.example"], "Override Encryption Defaults") == "false"
+
+
+def test_non_prune_run_preserves_removed_entries_in_state_for_later_prune(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    two_payload = {
+        "version": 1,
+        "accounts": [
+            {
+                "id": "one",
+                "name": "One",
+                "provider": "gmail",
+                "email": "one@example.com",
+                "realName": "One",
+                "password": "aaaa bbbb cccc dddd",
+                "aliases": [
+                    {
+                        "id": "alias_smtp",
+                        "name": "Alias With SMTP",
+                        "email": "alias@custom.example",
+                        "realName": "Alias",
+                        "smtp": {
+                            "host": "smtp.custom.example",
+                            "port": 465,
+                            "username": "alias@custom.example",
+                            "password": "alias-secret",
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "two",
+                "name": "Two",
+                "provider": "gmail",
+                "email": "two@example.com",
+                "realName": "Two",
+                "password": "eeee ffff gggg hhhh",
+            },
+        ],
+    }
+    p_two = _write_json(tmp_path, two_payload, name="two.json")
+    kp.provision(
+        config_path=p_two,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    res_two = json.loads(state_file.read_text(encoding="utf-8"))["managed"]["two"]["resource_id"]
+
+    # Remove account 'two' and alias 'alias_smtp', run WITHOUT prune first (like PathChanged auto-run)
+    one_payload = {
+        "version": 1,
+        "accounts": [
+            {
+                "id": "one",
+                "name": "One",
+                "provider": "gmail",
+                "email": "one@example.com",
+                "realName": "One",
+                "password": "aaaa bbbb cccc dddd",
+            }
+        ],
+    }
+    p_one = _write_json(tmp_path, one_payload, name="one.json")
+    kp.provision(
+        config_path=p_one,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        prune=False,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+
+    # State must still remember unpruned account 'two' and alias 'alias_smtp'
+    mid_state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "two" in mid_state["managed"]
+    assert "alias_smtp" in mid_state["managed"]["one"]["aliases"]
+
+    # Dry-run with --prune must NOT remove anything
+    kp.provision(
+        config_path=p_one,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        dry_run=True,
+        prune=True,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    assert res_two in akonadi.resources
+
+    # Subsequent real --prune run must now clean up both 'two' and 'alias_smtp' transport + identity
+    kp.provision(
+        config_path=p_one,
+        config_dir=cfg_dir,
+        state_file=state_file,
+        prune=True,
+        akonadi=akonadi,
+        keychain=keychain,
+        gpg_runner=lambda _a: "",
+    )
+    assert res_two not in akonadi.resources
+    mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert f"Transport {kp.stable_transport_id('two')}" not in mt.groups()
+    assert f"Transport {kp.stable_transport_id('alias_smtp')}" not in mt.groups()
+    ei = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    uoids = {ei.get(g, "uoid") for g in ei.groups() if g.startswith("Identity #")}
+    assert str(kp.stable_identity_uoid("two")) not in uoids
+    assert str(kp.stable_identity_uoid("alias_smtp")) not in uoids
+    final_state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "two" not in final_state["managed"]
+    assert "alias_smtp" not in final_state["managed"]["one"]["aliases"]
+
+
+def test_unhashable_json_values_and_duplicate_accounts_raise_config_error(
+    tmp_path: Path,
+) -> None:
+    base_account = {
+        "id": "main",
+        "name": "Main",
+        "provider": "gmail",
+        "email": "alice@example.com",
+        "realName": "Alice",
+        "password": "abcd efgh ijkl mnop",
+    }
+    cases = [
+        {"version": 1, "defaultAccount": ["main"], "accounts": [base_account]},
+        {"version": 1, "defaultIdentity": {"id": "main"}, "accounts": [base_account]},
+        {"version": 1, "accounts": [{**base_account, "provider": ["gmail"]}]},
+        {"version": 1, "accounts": [{**base_account, "imap": {"safety": ["SSL"]}}]},
+        {"version": 1, "accounts": [{**base_account, "imap": {"auth": {"x": 1}}}]},
+        {"version": 1, "accounts": [{**base_account, "smtp": {"encryption": ["SSL"]}}]},
+        {"version": 1, "accounts": [{**base_account, "smtp": {"auth": ["PLAIN"]}}]},
+        # Duplicate id across two top-level accounts
+        {"version": 1, "accounts": [base_account, dict(base_account)]},
+        # defaultAccount targeting an alias id
+        {
+            "version": 1,
+            "defaultAccount": "myalias",
+            "accounts": [
+                {
+                    **base_account,
+                    "aliases": [
+                        {
+                            "id": "myalias",
+                            "name": "My Alias",
+                            "email": "alias@example.com",
+                            "realName": "Alias",
+                        }
+                    ],
+                }
+            ],
+        },
+    ]
+    for idx, payload in enumerate(cases):
+        p = _write_json(tmp_path, payload, name=f"unhashable_{idx}.json")
+        with pytest.raises(kp.ConfigError):
+            kp.load_config(p)
