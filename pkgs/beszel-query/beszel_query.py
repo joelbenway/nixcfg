@@ -420,6 +420,16 @@ def _run(args: argparse.Namespace, client: BeszelClient) -> None:
         if args.as_json:
             print(json.dumps({key: items}, indent=2))
             return
+        if args.history:
+            for item in items:
+                resolved_raw = item.get("resolved")
+                resolved_text = str(resolved_raw) if resolved_raw else "active"
+                print(
+                    f"{_fmt_text(item.get('name')):<16} system={_fmt_text(item.get('system'))} "
+                    f"value={_fmt_text(item.get('value'))} created={_fmt_text(item.get('created'), '-')} "
+                    f"resolved={resolved_text}"
+                )
+            return
         for item in items:
             print(
                 f"{_fmt_text(item.get('name')):<16} system={_fmt_text(item.get('system'))} "

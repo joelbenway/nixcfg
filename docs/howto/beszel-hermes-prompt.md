@@ -72,9 +72,10 @@ Open `https://metrics.benway.me` (or `https://zita.gentoo-humboldt.ts.net:8091`)
 1. **Create the read-only Hermes user:**
    - Open PocketBase Admin (`https://metrics.benway.me/_/`) -> **users** collection -> **New record**.
    - Set `email` and `password` to match `secrets/beszel-hermes.env.age`, set `role` = `readonly`, and set `verified` = `true`.
-   - Because NixOS sets `SHARE_ALL_SYSTEMS=true`, this read-only account automatically sees all 5 hosts without write or admin access.
+   - Because NixOS sets `SHARE_ALL_SYSTEMS=true`, this `readonly` account automatically sees all 5 hosts and can read their metrics, `systemd`, and S.M.A.R.T. collections without being able to add, edit, or delete systems, tokens, or hub settings.
 2. **Verify all 5 systems appear** (seeded automatically from `beszel_data/config.yml`): `zita`, `michael`, `francis`, `agnes`, `jerome`.
-3. **Configure alert policy:**
+3. **Configure alert policy (signed in as `hermes-ro@benway.me`):**
+   - **Important:** In Beszel, `alerts`, `alerts_history`, and notification webhooks (`user_settings`) are strictly per-user (`user = @request.auth.id`), and Beszel re-applies that rule on startup even with `SHARE_ALL_SYSTEMS=true`. Beszel natively allows `readonly` users to own their own alerts and notification settings while still blocking writes to systems, tokens, and hub config. Sign into `https://metrics.benway.me` as `hermes-ro@benway.me` before creating the fleet alerts and webhook below so `beszel-query alerts` and `beszel-query alerts --history` can read them cleanly without weakening PocketBase ownership rules.
    - **Always-on servers (`zita`, `michael`):**
      - **Status (offline):** Enabled (3–5 minute grace period so scheduled reboots don't page).
      - **Failed `systemd` units:** Enabled.
@@ -85,7 +86,7 @@ Open `https://metrics.benway.me` (or `https://zita.gentoo-humboldt.ts.net:8091`)
      - **Status (offline):** **Disabled** (prevents false alerts when laptops sleep or roam).
      - **Failed `systemd` units:** **Disabled** by default (still visible on the dashboard and via `beszel-query`).
      - **Disk, Temperature, S.M.A.R.T.:** Enabled.
-4. **Add Hermes's webhook URL:** After running the Hermes self-configuration prompt below, paste the Shoutrrr URL Hermes outputs into **Settings -> Notifications** (typically `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`) and click **Send test notification**.
+4. **Add Hermes's webhook URL (still signed in as `hermes-ro@benway.me`):** After running the Hermes self-configuration prompt below, paste the Shoutrrr URL Hermes outputs into **Settings -> Notifications** (typically `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`) and click **Send test notification**.
 
 ---
 

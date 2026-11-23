@@ -302,7 +302,14 @@ def test_alerts_and_history(monkeypatch, capsys):
                             "value": 88,
                             "created": "2026-11-20 11:00:00Z",
                             "resolved": "",
-                        }
+                        },
+                        {
+                            "system": "sys_zita",
+                            "name": "CPU",
+                            "value": 92,
+                            "created": "2026-11-20 10:00:00Z",
+                            "resolved": "2026-11-20 10:15:00Z",
+                        },
                     ]
                 }
             )
@@ -313,9 +320,21 @@ def test_alerts_and_history(monkeypatch, capsys):
     assert rc1 == 0
     assert json.loads(capsys.readouterr().out)["alerts"][0]["name"] == "Disk"
 
+    rc1_text = bq.main(["alerts"], opener=opener)
+    assert rc1_text == 0
+    alerts_text = capsys.readouterr().out
+    assert "triggered=True" in alerts_text
+
     rc2 = bq.main(["alerts", "--history", "--json"], opener=opener)
     assert rc2 == 0
     assert json.loads(capsys.readouterr().out)["history"][0]["value"] == 88
+
+    rc2_text = bq.main(["alerts", "--history"], opener=opener)
+    assert rc2_text == 0
+    history_text = capsys.readouterr().out
+    assert "triggered=" not in history_text
+    assert "resolved=active" in history_text
+    assert "resolved=2026-11-20 10:15:00Z" in history_text
 
 
 @pytest.mark.parametrize("mode", ["urlerror", "http401", "http500", "badjson"])
