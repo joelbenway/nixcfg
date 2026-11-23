@@ -53,34 +53,54 @@ in
       config,
       pkgs,
       ...
-    }: {
+    }: let
+      kmailSecretFile = lib.custom.relativeToRoot "secrets/${username}-kmail.json.age";
+      hasKmailSecret = builtins.pathExists kmailSecretFile;
+    in {
       age = {
-        secrets = {
-          "${username}s-wallpaper" = {
-            file = lib.custom.relativeToRoot "secrets/${username}s-wallpaper.jpg.age";
-            name = "${username}s-wallpaper.jpg";
-            mode = "770";
-            owner = username;
-            group = "users";
+        secrets =
+          {
+            "${username}s-wallpaper" = {
+              file = lib.custom.relativeToRoot "secrets/${username}s-wallpaper.jpg.age";
+              name = "${username}s-wallpaper.jpg";
+              mode = "770";
+              owner = username;
+              group = "users";
+            };
+            "${username}-api-env" = {
+              file = lib.custom.relativeToRoot "secrets/${username}-api.env.age";
+              name = "${username}-api.env";
+              mode = "400";
+              owner = username;
+              group = "users";
+            };
+            "${username}-gpg-keys-asc" = {
+              file = lib.custom.relativeToRoot "secrets/${username}-gpg-keys.asc.age";
+              name = "${username}-gpg-keys.asc";
+              mode = "600";
+              owner = username;
+              group = "users";
+            };
+          }
+          // lib.optionalAttrs hasKmailSecret {
+            "${username}-kmail-json" = {
+              file = kmailSecretFile;
+              name = "${username}-kmail.json";
+              mode = "400";
+              owner = username;
+              group = "users";
+            };
           };
-          "${username}-api-env" = {
-            file = lib.custom.relativeToRoot "secrets/${username}-api.env.age";
-            name = "${username}-api.env";
-            mode = "400";
-            owner = username;
-            group = "users";
-          };
-          "${username}-gpg-keys-asc" = {
-            file = lib.custom.relativeToRoot "secrets/${username}-gpg-keys.asc.age";
-            name = "${username}-gpg-keys.asc";
-            mode = "600";
-            owner = username;
-            group = "users";
-          };
-        };
       };
 
       plasma.users.${username}.wallpaper = config.age.secrets."${username}s-wallpaper".path;
+
+      kmail.users = lib.optionalAttrs hasKmailSecret {
+        ${username} = lib.mkIf config.${username}.desktop {
+          enable = true;
+          configFile = config.age.secrets."${username}-kmail-json".path;
+        };
+      };
 
       podman.enable = true;
 
