@@ -28,6 +28,6 @@ let
   };
 
   # Public ed25519 key for Beszel Hub SSH-pull authentication (see docs/howto/beszel-hermes-prompt.md)
-  beszelHub = "";
+  beszelHub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMkpHG50CrUpcQ8Fpm6KPL27Bc6Li0k9c864S5N+HoeM";
 in
   users // hosts // {inherit users hosts hostsBase64 binaryCache beszelHub;}
