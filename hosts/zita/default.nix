@@ -10,6 +10,12 @@
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  beszelHubKeySecret = lib.custom.relativeToRoot "secrets/beszel-hub-key.age";
+  beszelHubEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hub.env.age";
+  beszelHermesEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hermes.env.age";
+  hasBeszelHubKey = builtins.pathExists beszelHubKeySecret;
+  hasBeszelHubEnv = builtins.pathExists beszelHubEnvSecret;
+  hasBeszelHermesEnv = builtins.pathExists beszelHermesEnvSecret;
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
@@ -20,64 +26,92 @@ in {
 
   age = {
     identityPaths = ["/persist${hostKeyPath}"];
-    secrets = {
-      wifi-environment-variables = {
-        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-        mode = "600";
-        owner = "root";
-        group = "users";
-      };
-      wifi-guest-environment-variables = {
-        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-        mode = "600";
-        owner = "root";
-        group = "users";
-      };
-      tailscale-oauth-env = {
-        file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-        name = "tailscale.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      storage-luks-passphrase = {
-        file = lib.custom.relativeToRoot "secrets/storage-luks-passphrase.age";
-      };
-      hermes-env = {
-        file = lib.custom.relativeToRoot "secrets/hermes.env.age";
-        name = "hermes.env";
-        mode = "440";
-        owner = "root";
-        group = "root";
-      }; # hermes-env
-      cloudflare-api-env = {
-        file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
-        name = "cloudflare.env";
-        mode = "440";
-        owner = "caddy";
-        group = "caddy";
-      };
-      nix-builder-ssh = {
-        file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-        path = "/root/.ssh/nix-builder";
-        mode = "600";
-        owner = "root";
-        group = "root";
-      };
-      zita-cache-priv-key = {
-        file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      vaultwarden-env = {
-        file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
-        name = "vaultwarden.env";
-        mode = "400";
-        owner = "vaultwarden";
-        group = "vaultwarden";
-      };
-    }; # secrets
+    secrets =
+      {
+        wifi-environment-variables = {
+          file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+          mode = "600";
+          owner = "root";
+          group = "users";
+        };
+        wifi-guest-environment-variables = {
+          file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+          mode = "600";
+          owner = "root";
+          group = "users";
+        };
+        tailscale-oauth-env = {
+          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
+          name = "tailscale.env";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+        storage-luks-passphrase = {
+          file = lib.custom.relativeToRoot "secrets/storage-luks-passphrase.age";
+        };
+        hermes-env = {
+          file = lib.custom.relativeToRoot "secrets/hermes.env.age";
+          name = "hermes.env";
+          mode = "440";
+          owner = "root";
+          group = "root";
+        }; # hermes-env
+        cloudflare-api-env = {
+          file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
+          name = "cloudflare.env";
+          mode = "440";
+          owner = "caddy";
+          group = "caddy";
+        };
+        nix-builder-ssh = {
+          file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
+          path = "/root/.ssh/nix-builder";
+          mode = "600";
+          owner = "root";
+          group = "root";
+        };
+        zita-cache-priv-key = {
+          file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+        vaultwarden-env = {
+          file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
+          name = "vaultwarden.env";
+          mode = "400";
+          owner = "vaultwarden";
+          group = "vaultwarden";
+        };
+      }
+      // lib.optionalAttrs hasBeszelHubKey {
+        beszel-hub-key = {
+          file = beszelHubKeySecret;
+          name = "beszel-hub-key";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+      }
+      // lib.optionalAttrs hasBeszelHubEnv {
+        beszel-hub-env = {
+          file = beszelHubEnvSecret;
+          name = "beszel-hub.env";
+          mode = "400";
+          owner = "beszel-hub";
+          group = "beszel-hub";
+        };
+      }
+      // lib.optionalAttrs hasBeszelHermesEnv {
+        beszel-hermes-env = {
+          file = beszelHermesEnvSecret;
+          name = "beszel-hermes.env";
+          mode = "400";
+          owner = "hermes";
+          group = "hermes";
+        };
+      }; # secrets
   }; # age
 
   impermanence = {
@@ -97,6 +131,14 @@ in {
     "d /var/lib/private 0700 root root -"
     "z /var/lib/private 0700 root root -"
   ];
+
+  # Impermanence creates parent dirs like /var/lib/private with 0755 when mounting
+  # /var/lib/private/actual; systemd requires /var/lib/private to be 0700 for DynamicUser services.
+  system.activationScripts.fixVarLibPrivate = lib.stringAfter ["persist-files"] ''
+    if [ -d /var/lib/private ]; then
+      chmod 0700 /var/lib/private
+    fi
+  '';
 
   openssh = {
     enable = true;
@@ -178,6 +220,60 @@ in {
     environmentFile = config.age.secrets.vaultwarden-env.path;
   };
 
+  beszel = {
+    agent = {
+      gpuCollectors = ["nvidia-smi"];
+      extraFilesystems = [
+        "/mnt/cache__Cache"
+        "/mnt/disk1__Bulk"
+      ];
+      diskUsageCache = "1h";
+    };
+    hub = {
+      enable = true;
+      domain = "metrics.benway.me";
+      keyFile =
+        if hasBeszelHubKey
+        then config.age.secrets.beszel-hub-key.path
+        else null;
+      environmentFile =
+        if hasBeszelHubEnv
+        then config.age.secrets.beszel-hub-env.path
+        else null;
+      hermesEnvFile =
+        if hasBeszelHermesEnv
+        then config.age.secrets.beszel-hermes-env.path
+        else null;
+      systems = [
+        {
+          name = "zita";
+          host = "127.0.0.1";
+          port = ports.beszel.agent;
+        }
+        {
+          name = "michael";
+          host = "192.168.77.1";
+          port = ports.beszel.agent;
+        }
+        {
+          name = "francis";
+          host = "francis.${config.tailscale.tailnet}";
+          port = ports.beszel.agent;
+        }
+        {
+          name = "agnes";
+          host = "agnes.${config.tailscale.tailnet}";
+          port = ports.beszel.agent;
+        }
+        {
+          name = "jerome";
+          host = "jerome.${config.tailscale.tailnet}";
+          port = ports.beszel.agent;
+        }
+      ];
+    };
+  };
+
   networking = {
     nameservers = ["192.168.77.1"];
     firewall.allowedTCPPorts = [
@@ -188,6 +284,7 @@ in {
       ports.jellyfin.tailscale
       ports.forgejo.tailscale
       ports.vaultwarden.tailscale
+      ports.beszel.tailscale
     ];
   };
 
@@ -205,7 +302,7 @@ in {
     enable = true;
     package = pkgs.caddy.withPlugins {
       plugins = ["github.com/caddy-dns/cloudflare@v0.2.4"];
-      hash = "sha256-5a5cpFl90pEWt0lUC4ZJQ7g+1//ZvsRhee64Dt9vh5o=";
+      hash = "sha256-QSiwKqKvSxhksWBF4/MlBOpyXba5xOQ2sRwA0R7399E=";
     };
     environmentFile = config.age.secrets.cloudflare-api-env.path;
     extraConfig = ''
@@ -245,6 +342,13 @@ in {
         reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
       }
 
+      metrics.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
+      }
+
       ${hostname}.${config.tailscale.tailnet} {
         redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
       }
@@ -268,6 +372,10 @@ in {
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.vaultwarden.tailscale} {
         reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.beszel.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
       }
     '';
   };
@@ -354,6 +462,7 @@ in {
       "smartd"
       "forgejo"
       "vaultwarden"
+      "beszel-hub"
     ];
     # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots
     reboot = {

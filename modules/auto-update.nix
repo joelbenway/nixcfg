@@ -16,11 +16,11 @@
   # Write status.json helper script
   writeStatusScript = pkgs.writeShellApplication {
     name = "nixos-auto-update-write-status";
-    runtimeInputs = with pkgs; [coreutils jq];
+    runtimeInputs = with pkgs; [bash coreutils jq];
     text = ''
       export AUTO_UPDATE_STATE_DIR="${cfg.stateDir}"
       export AUTO_UPDATE_HOST_NAME="${hostname}"
-      exec ${../pkgs/auto-update/write-status.sh} "$@"
+      exec bash ${../pkgs/auto-update/write-status.sh} "$@"
     '';
   };
 
@@ -28,6 +28,7 @@
   canaryScript = pkgs.writeShellApplication {
     name = "nixos-auto-update-canary";
     runtimeInputs = with pkgs; [
+      bash
       bind.dnsutils
       coreutils
       glibc.bin
@@ -37,7 +38,7 @@
       export AUTO_UPDATE_HOST_NAME="${hostname}"
       export CANARY_SERVICES="${lib.concatStringsSep " " cfg.canary.services}"
       export CANARY_CHECK_DNS="${lib.boolToString cfg.canary.checkDns}"
-      exec ${../pkgs/auto-update/canary.sh} "$@"
+      exec bash ${../pkgs/auto-update/canary.sh} "$@"
     '';
   };
 
@@ -45,6 +46,7 @@
   bootVerifyScript = pkgs.writeShellApplication {
     name = "nixos-boot-verify";
     runtimeInputs = with pkgs; [
+      bash
       coreutils
       jq
       systemd
@@ -54,7 +56,7 @@
     text = ''
       export AUTO_UPDATE_STATE_DIR="${cfg.stateDir}"
       export AUTO_UPDATE_HOST_NAME="${hostname}"
-      exec ${../pkgs/auto-update/boot-verify.sh} "$@"
+      exec bash ${../pkgs/auto-update/boot-verify.sh} "$@"
     '';
   };
 
@@ -63,6 +65,7 @@
     name = "nixos-auto-update";
     runtimeInputs =
       (with pkgs; [
+        bash
         coreutils
         findutils
         git
@@ -97,7 +100,7 @@
       export AUTO_UPDATE_TPM_ENABLE="${lib.boolToString (config.tpm.enable or false)}"
       export AUTO_UPDATE_REBOOT_ENABLE="${lib.boolToString cfg.reboot.enable}"
       export AUTO_UPDATE_REBOOT_WINDOW="${cfg.reboot.window}"
-      exec ${../pkgs/auto-update/auto-update.sh} "$@"
+      exec bash ${../pkgs/auto-update/auto-update.sh} "$@"
     '';
   };
 
@@ -114,6 +117,7 @@
   desktopNotifyScript = pkgs.writeShellApplication {
     name = "fleet-health-notify";
     runtimeInputs = with pkgs; [
+      bash
       coreutils
       curl
       jq
@@ -123,7 +127,7 @@
       export FLEET_NOTIFY_TAILNET="${tailnet}"
       export FLEET_NOTIFY_PORT="${toString cfg.statusServer.port}"
       export FLEET_NOTIFY_HOSTS="${lib.concatStringsSep " " cfg.desktopNotifications.monitoredHosts}"
-      exec ${../pkgs/auto-update/desktop-notify.sh} "$@"
+      exec bash ${../pkgs/auto-update/desktop-notify.sh} "$@"
     '';
   };
 in {

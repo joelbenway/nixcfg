@@ -120,12 +120,32 @@ run_ssh_sudo() {
   ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
 }
 
+PREV_SYSTEM=""
+SWITCH_STARTED=false
+
 rollback() {
-  error "Deployment verification failed! Initiating automatic rollback on ${TARGET_HOST}..."
-  if run_ssh_sudo "/run/booted-system/bin/switch-to-configuration test"; then
-    warn "Successfully rolled back ${TARGET_HOST} to previous booted system generation."
+  local rollback_target="${PREV_SYSTEM:-/run/booted-system}"
+  local current_system
+  current_system=$(run_ssh "readlink -f /run/current-system" 2>/dev/null || true)
+
+  if [[ -n "$PREV_SYSTEM" && "$current_system" == "$PREV_SYSTEM" && "$SWITCH_STARTED" == false ]]; then
+    warn "Target host ${TARGET_HOST} is still running previous generation (${PREV_SYSTEM}); skipping rollback."
+    exit 1
+  fi
+
+  error "Deployment verification failed! Initiating automatic rollback on ${TARGET_HOST} to ${rollback_target}..."
+  if [[ "$SWITCH_STARTED" == true && -n "$PREV_SYSTEM" ]]; then
+    if run_ssh_sudo "sh -c \"nix-env -p /nix/var/nix/profiles/system --set '${rollback_target}' && '${rollback_target}/bin/switch-to-configuration' switch\""; then
+      warn "Successfully rolled back ${TARGET_HOST} to previous system generation (${rollback_target})."
+    else
+      error "CRITICAL: Automated rollback command failed on ${TARGET_HOST}!"
+    fi
   else
-    error "CRITICAL: Automated rollback command failed on ${TARGET_HOST}!"
+    if run_ssh_sudo "'${rollback_target}/bin/switch-to-configuration' test"; then
+      warn "Successfully rolled back ${TARGET_HOST} to previous system generation (${rollback_target})."
+    else
+      error "CRITICAL: Automated rollback command failed on ${TARGET_HOST}!"
+    fi
   fi
   exit 1
 }
@@ -145,6 +165,13 @@ if [[ "$REMOTE_SHORT" != "$TARGET_HOST" ]]; then
   exit 1
 fi
 info "Connected to remote host: ${REMOTE_HOSTNAME}"
+
+PREV_SYSTEM=$(run_ssh "readlink -f /run/current-system")
+if [[ ! "$PREV_SYSTEM" =~ ^/nix/store/[A-Za-z0-9._+-]+$ ]]; then
+  error "Failed to resolve valid /run/current-system on ${TARGET_HOST} (got '${PREV_SYSTEM}')."
+  exit 1
+fi
+info "Previous live generation on ${TARGET_HOST}: ${PREV_SYSTEM}"
 
 # 2. Stage deployment with 'test'
 info "Deploying configuration to ${TARGET_HOST} via 'nixos-rebuild test'..."
@@ -236,6 +263,7 @@ if [ "$TEST_ONLY" = true ]; then
 fi
 
 info "Persisting configuration to bootloader via 'nixos-rebuild switch'..."
+SWITCH_STARTED=true
 SWITCH_CMD=(nixos-rebuild switch --flake "${ROOT_DIR}#${TARGET_HOST}" --target-host "${SSH_TARGET}" "$ELEVATE_FLAG" "${NIX_OPTIONS[@]}")
 if [[ -n "$BUILD_HOST" ]]; then
   SWITCH_CMD+=(--build-host "$BUILD_HOST")

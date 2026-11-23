@@ -441,10 +441,21 @@ in {
       enable = true;
       container.enable = false; # Native mode (no container layers)
       package = let
+        # Upstream hermes-agent unconditionally patches patchelf assuming 0.19.2
+        # (NixOS/patchelf#674), which fails to apply on nixpkgs's patchelf 0.15.2.
+        # On < 0.19.0, stock patchelf is unaffected, so make overrideAttrs a no-op.
+        patchelfForPm =
+          if lib.versionOlder pkgs.patchelf.version "0.19.0"
+          then pkgs.patchelf // {overrideAttrs = _: pkgs.patchelf;}
+          else pkgs.patchelf;
         pmPackages =
-          (pkgs.callPackage "${inputs.hermes-agent}/nix/pm-packages.nix" {})
+          lib.filterAttrs (_: lib.isDerivation) (
+            pkgs.callPackage "${inputs.hermes-agent}/nix/pm-packages.nix" {
+              patchelf = patchelfForPm;
+            }
+          )
           // {
-            node = pkgs.nodejs_22;
+            node = pkgs.nodejs_26;
           };
       in
         inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default.override {inherit pmPackages;};

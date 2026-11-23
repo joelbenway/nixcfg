@@ -77,6 +77,7 @@ Today, `zita` lives in the basement where it acts as the central storage applian
 * **[Hermes Signal Bot](../../modules/hermes.nix)**: Automated alerting agent routing homelab notifications and backup reports securely over Signal messaging.
 * **[Forgejo Git Forge & Actions Runner](../../modules/forgejo.nix)**: Private, self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port `2220`. Features built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores for native Nix builds and Podman container workflows.
 * **[Vaultwarden Password Manager](../../modules/vaultwarden.nix)**: Private, Bitwarden-compatible password manager (`vault.benway.me`) backed by SQLite with automated daily persistent backups, WebSocket sync across clients, and Caddy reverse proxy.
+* **[Beszel Fleet Telemetry Hub](../../modules/beszel.nix)**: Lightweight PocketBase-backed monitoring hub (`metrics.benway.me`) polling all 5 fleet hosts over Tailscale/LAN SSH for CPU, RAM, thermals, S.M.A.R.T. health, `systemd` service status/logs, laptop battery, and Quadro M2000 GPU utilization, paired with the read-only `beszel-query` CLI for Hermes triage over Signal.
 * **Distributed Nix Builder**: With 32 logical threads and 128GB of RAM, `zita` acts as the primary compilation beast for `agnes`, `jerome`, and `francis`.
 
 ---
