@@ -26,5 +26,8 @@ let
   binaryCache = {
     zita = "zita-cache-1:NZnUaNEPyAcPpeqdhZscnTzryEAw1mqA37W7v18lDWQ=";
   };
+
+  # Public ed25519 key for Beszel Hub SSH-pull authentication (see docs/howto/beszel-hermes-prompt.md)
+  beszelHub = "";
 in
-  users // hosts // {inherit users hosts hostsBase64 binaryCache;}
+  users // hosts // {inherit users hosts hostsBase64 binaryCache beszelHub;}

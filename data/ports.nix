@@ -24,6 +24,11 @@ let
       internal = 8222;
       tailscale = 8223;
     };
+    beszel = {
+      internal = 8090;
+      tailscale = 8091;
+      agent = 45876;
+    };
 
     # Fleet & Infrastructure Services
     binaryCache = {
