@@ -839,6 +839,7 @@ class AkonadiProtocol(Protocol):
     ) -> str: ...
     def apply_imap_settings(self, resource_id: str, settings: dict[str, Any]) -> None: ...
     def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None: ...
+    def set_resource_online(self, resource_id: str, online: bool) -> None: ...
     def remove_resource(self, resource_id: str) -> None: ...
 
 
@@ -1168,6 +1169,11 @@ class AkonadiClient:
 
         raise SessionNotReadyError(
             f"Akonadi resource {resource_id} did not restart within {wait_seconds}s"
+        )
+
+    def set_resource_online(self, resource_id: str, online: bool) -> None:
+        self._call_agent_mgr(
+            "setAgentInstanceOnline", resource_id, "true" if online else "false"
         )
 
     def remove_resource(self, resource_id: str) -> None:
@@ -1721,6 +1727,7 @@ def reconcile_imap_resources(
         *,
         pending_save: bool | None = None,
         pending_restart: bool | None = None,
+        pending_online: bool | None = None,
     ) -> None:
         if dry_run or state_file is None:
             return
@@ -1731,6 +1738,7 @@ def reconcile_imap_resources(
                     other_entry.pop("resource_id", None)
                     other_entry.pop("pending_save", None)
                     other_entry.pop("pending_restart", None)
+                    other_entry.pop("pending_online", None)
         entry = prev_managed.get(acc.id)
         if not isinstance(entry, dict):
             entry = {}
@@ -1746,6 +1754,10 @@ def reconcile_imap_resources(
             entry["pending_restart"] = True
         elif pending_restart is False:
             entry.pop("pending_restart", None)
+        if pending_online is True:
+            entry["pending_online"] = True
+        elif pending_online is False:
+            entry.pop("pending_online", None)
         StateStore.save(state_file, state)
 
     for acc in cfg.accounts:
@@ -1756,6 +1768,9 @@ def reconcile_imap_resources(
         )
         prior_pending_restart = bool(
             isinstance(prev_entry, dict) and prev_entry.get("pending_restart")
+        )
+        prior_pending_online = bool(
+            isinstance(prev_entry, dict) and prev_entry.get("pending_online")
         )
 
         if res_id is None:
@@ -1780,7 +1795,11 @@ def reconcile_imap_resources(
             else:
                 def _on_created(new_id: str, _acc: AccountSpec = acc) -> None:
                     persist_checkpoint(
-                        _acc, new_id, pending_save=True, pending_restart=True
+                        _acc,
+                        new_id,
+                        pending_save=True,
+                        pending_restart=True,
+                        pending_online=True,
                     )
 
                 res_id = akonadi.create_imap_resource(
@@ -1821,6 +1840,8 @@ def reconcile_imap_resources(
                     )
                 if prior_pending_restart:
                     actions.append(f"akonadi: would retry pending restart on {res_id}")
+                if prior_pending_online:
+                    actions.append(f"akonadi: would bring {res_id} online")
             actions.append(f"keychain: ensure password for (imap, {res_id}rc) [redacted]")
             continue
 
@@ -1854,6 +1875,13 @@ def reconcile_imap_resources(
             actions.append(f"akonadi: restarted {res_id}")
         else:
             persist_checkpoint(acc, res_id, pending_restart=False)
+
+        if created_new or prior_pending_online:
+            online_fn = getattr(akonadi, "set_resource_online", None)
+            if callable(online_fn):
+                online_fn(res_id, True)
+            persist_checkpoint(acc, res_id, pending_online=False)
+            actions.append(f"akonadi: brought {res_id} online")
 
     if prune:
         desired_slugs = {acc.id for acc in cfg.accounts}
@@ -1986,6 +2014,7 @@ def _sync_managed_state(
                 copied.pop("resource_id", None)
                 copied.pop("pending_save", None)
                 copied.pop("pending_restart", None)
+                copied.pop("pending_online", None)
             updated_managed[prev_slug] = copied
 
     if prune:
@@ -2109,7 +2138,6 @@ def provision(
     if all_actions:
         prefix = "[dry-run] " if dry_run else ""
         for act in all_actions:
-            LOG.info("%s%s", prefix, act)
             print(f"{prefix}{act}")
     else:
         LOG.info("KMail configuration already up to date")

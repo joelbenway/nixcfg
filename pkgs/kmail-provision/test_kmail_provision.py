@@ -421,6 +421,7 @@ class FakeAkonadiClient:
         self.created: list[str] = []
         self.applied: list[tuple[str, dict[str, object]]] = []
         self.restarted: list[str] = []
+        self.online_calls: list[tuple[str, bool]] = []
         self.removed: list[str] = []
 
     def is_ready(self, timeout: int = 5) -> bool:
@@ -468,6 +469,9 @@ class FakeAkonadiClient:
     def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
         self.restarted.append(resource_id)
 
+    def set_resource_online(self, resource_id: str, online: bool) -> None:
+        self.online_calls.append((resource_id, online))
+
     def remove_resource(self, resource_id: str) -> None:
         self.resources.pop(resource_id, None)
         self.removed.append(resource_id)
@@ -476,6 +480,7 @@ class FakeAkonadiClient:
         self.created.clear()
         self.applied.clear()
         self.restarted.clear()
+        self.online_calls.clear()
         self.removed.clear()
 
 
@@ -3394,3 +3399,71 @@ def test_identity_ids_checkpointed_before_emaildefaults_failure_allows_later_pru
     ei_after = kp.KConfigFile.load(cfg_dir / "emailidentities")
     uoids_after = {ei_after.get(g, "uoid") for g in ei_after.groups()}
     assert str(kp.stable_identity_uoid("ephemeral_ident")) not in uoids_after
+
+
+def test_newly_created_imap_resource_brought_online_once_and_retried_if_interrupted(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    keychain = FakeKeychainClient()
+
+    class FlakyOnlineAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next_online = True
+
+        def set_resource_online(self, resource_id: str, online: bool) -> None:
+            if self.fail_next_online:
+                self.fail_next_online = False
+                raise kp.SessionNotReadyError("transient online toggle failure")
+            super().set_resource_online(resource_id, online)
+
+    akonadi = FlakyOnlineAkonadi()
+
+    # First run creates resource, restarts it, then fails on set_resource_online -> pending_online stays True
+    with pytest.raises(kp.SessionNotReadyError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+    res_id = akonadi.created[0]
+    state_mid = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state_mid["managed"]["main"].get("pending_online") is True
+
+    # Retry completes bringing the newly created resource online and clears pending_online
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert akonadi.online_calls == [(res_id, True)]
+    state_after = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "pending_online" not in state_after["managed"]["main"]
+
+    # Subsequent steady-state run does NOT call set_resource_online again (respects manual Work Offline)
+    akonadi.reset_counters()
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert akonadi.online_calls == []
