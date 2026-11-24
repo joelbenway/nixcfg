@@ -124,6 +124,8 @@ in {
           do-tcp = true;
           harden-dnssec-stripped = true;
           harden-referral-path = true;
+          qname-minimisation = true;
+          root-hints = "${pkgs.dns-root-data}/root.hints";
           cache-min-ttl = 300;
           cache-max-ttl = 86400;
           prefetch = true;
@@ -149,15 +151,6 @@ in {
             config.tailscale.tailnet
           ];
         };
-        forward-zone = [
-          {
-            name = ".";
-            forward-addr = [
-              "9.9.9.9"
-              "149.112.112.112"
-            ];
-          }
-        ];
       };
     };
   };
@@ -214,12 +207,11 @@ in {
               ${lib.concatMapStringsSep ",\n              " (it: "'${it.url}'") piholeGroups.allLists}
             );
 
-            DELETE FROM adlist_by_group
-            WHERE group_id = 0 AND adlist_id IN (
-              SELECT a.id FROM adlist a
-              WHERE a.address IN (
-                ${lib.concatMapStringsSep ",\n                " (it: "'${it.url}'") piholeGroups.categories.Other.lists}
-              )
+            -- Ensure all configured lists (including Other) are active in the Default group (0)
+            INSERT OR IGNORE INTO adlist_by_group (adlist_id, group_id)
+            SELECT a.id, 0 FROM adlist a
+            WHERE a.address IN (
+              ${lib.concatMapStringsSep ",\n              " (it: "'${it.url}'") piholeGroups.allLists}
             );
           ''
         ]

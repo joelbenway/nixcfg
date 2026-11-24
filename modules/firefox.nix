@@ -172,9 +172,9 @@
                 "network.file.disable_unc_paths" = true;
                 "permissions.manager.defaultsUrl" = "";
                 "network.IDN_show_punycode" = true;
+                # Disable Firefox DoH so DNS goes through local Pi-hole / Tailscale
                 "doh-rollout.disable-heuristics" = true;
-                "network.trr.mode" = 2;
-                "network.trr.uri" = "https://dns.quad9.net/dns-query";
+                "network.trr.mode" = 5;
                 # Search bar: suggestions, autofill
                 "browser.search.defaultenginename" = "DuckDuckGo";
                 "browser.search.order.1" = "DuckDuckGo";

@@ -45,6 +45,7 @@
         "BraveVPNDisabled" = true;
         "BraveWalletDisabled" = true;
         "BrowserSignin" = 0;
+        "DnsOverHttpsMode" = "off";
         "MetricsReportingEnabled" = false;
         "PasswordManagerEnabled" = false;
         "SearchSuggestEnabled" = false;
