@@ -1310,6 +1310,33 @@ def _file_stat_sig(path: Path) -> tuple[int, int, int, int] | None:
         return None
 
 
+def _merge_kconfig_atomic(
+    path: Path,
+    apply_fn: Callable[[KConfigFile], tuple[bool, list[str]]],
+    *,
+    dry_run: bool,
+    label: str,
+    max_attempts: int = 5,
+) -> list[str]:
+    """Load, merge, check stat signature for concurrent edits, and atomically save a KConfig file."""
+    attempts = 1 if dry_run else max_attempts
+    for _ in range(attempts):
+        stat_before = _file_stat_sig(path)
+        kc = KConfigFile.load(path)
+        changed, file_actions = apply_fn(kc)
+        if dry_run:
+            return file_actions
+        if _file_stat_sig(path) != stat_before:
+            continue
+        if not changed:
+            return file_actions
+        kc.save_atomic(path)
+        return file_actions
+    raise SessionNotReadyError(
+        f"{label} changed concurrently across merge retries; retrying later"
+    )
+
+
 def reconcile_mailtransports(
     cfg: ProvisionConfig,
     config_dir: Path,
@@ -1344,10 +1371,7 @@ def reconcile_mailtransports(
             if isinstance(retired_tid, int):
                 prev_tids.add(retired_tid)
 
-    max_merge_attempts = 1 if dry_run else 5
-    for _attempt in range(max_merge_attempts):
-        stat_before = _file_stat_sig(mt_path)
-        kc = KConfigFile.load(mt_path)
+    def _apply_transports(kc: KConfigFile) -> tuple[bool, list[str]]:
         changed = False
         file_actions: list[str] = []
 
@@ -1385,25 +1409,13 @@ def reconcile_mailtransports(
                     changed = True
                     file_actions.append(f"mailtransports: pruned Transport {old_tid}")
 
-        if dry_run:
-            actions.extend(file_actions)
-            break
+        return changed, file_actions
 
-        if _file_stat_sig(mt_path) != stat_before:
-            continue
-
-        if not changed:
-            actions.extend(file_actions)
-            break
-
-        kc.save_atomic(mt_path)
-        actions.extend(file_actions)
-        break
-    else:
-        raise SessionNotReadyError(
-            "mailtransports changed concurrently across merge retries; retrying later"
+    actions.extend(
+        _merge_kconfig_atomic(
+            mt_path, _apply_transports, dry_run=dry_run, label="mailtransports"
         )
-
+    )
     return actions
 
 
@@ -1478,164 +1490,187 @@ def reconcile_emailidentities(
 ) -> tuple[list[str], dict[str, int]]:
     actions: list[str] = []
     ei_path = config_dir / "emailidentities"
-    kc = KConfigFile.load(ei_path)
-    changed = False
-
     desired_identities = _iter_managed_identities(cfg)
     desired_uoids = {ident.uoid for ident in desired_identities}
+    slug_to_uoid: dict[str, int] = {ident.id: ident.uoid for ident in desired_identities}
 
-    # Remove only when the file contains solely KDE's untouched first-run placeholder identity
-    numeric_groups = _numeric_identity_groups(kc)
-    default_uoid = (kc.get("General", "Default Identity") or "").strip() or None
-    if len(numeric_groups) == 1:
-        _idx, grp = numeric_groups[0]
-        if _is_firstrun_placeholder_identity(kc, grp, default_uoid):
-            kc.remove_group(grp)
-            changed = True
-            actions.append(f"emailidentities: removed blank default {grp}")
+    # Resolve GPG fingerprints BEFORE loading emailidentities so slow gpg
+    # subprocesses never hold a stale KConfig snapshot across manual edits.
+    gpg_results: dict[str, tuple[str | None, bool]] = {}
+    for ident in desired_identities:
+        try:
+            gpg_results[ident.id] = (
+                resolve_gpg_fingerprint(ident.email, ident.gpg, gpg_runner=gpg_runner),
+                False,
+            )
+        except GpgLookupError:
+            gpg_results[ident.id] = (None, True)
 
+    prev_uoids: set[int] = set()
     if prune:
-        prev_uoids: set[int] = set()
         for entry in state.get("managed", {}).values():
             if isinstance(entry.get("identity_uoid"), int):
                 prev_uoids.add(entry["identity_uoid"])
             for alias_entry in entry.get("aliases", {}).values():
                 if isinstance(alias_entry.get("identity_uoid"), int):
                     prev_uoids.add(alias_entry["identity_uoid"])
-        to_remove = prev_uoids - desired_uoids
-        for _idx, grp in list(_numeric_identity_groups(kc)):
-            raw_uoid = kc.get(grp, "uoid")
-            if raw_uoid and raw_uoid.isdigit() and int(raw_uoid) in to_remove:
+
+    def _apply_identities(kc: KConfigFile) -> tuple[bool, list[str]]:
+        changed = False
+        file_actions: list[str] = []
+
+        # Remove only when the file contains solely KDE's untouched first-run placeholder identity
+        numeric_groups = _numeric_identity_groups(kc)
+        default_uoid = (kc.get("General", "Default Identity") or "").strip() or None
+        if len(numeric_groups) == 1:
+            _idx, grp = numeric_groups[0]
+            if _is_firstrun_placeholder_identity(kc, grp, default_uoid):
                 kc.remove_group(grp)
                 changed = True
-                actions.append(f"emailidentities: pruned {grp} (uoid={raw_uoid})")
+                file_actions.append(f"emailidentities: removed blank default {grp}")
 
-    # Map existing numeric groups (leaving existing indices and non-numeric groups untouched)
-    uoid_to_group: dict[int, str] = {}
-    used_indices: set[int] = set()
-    for idx, grp in _numeric_identity_groups(kc):
-        used_indices.add(idx)
-        raw_uoid = kc.get(grp, "uoid")
-        if raw_uoid and raw_uoid.isdigit():
-            uoid_to_group[int(raw_uoid)] = grp
+        if prune:
+            to_remove = prev_uoids - desired_uoids
+            for _idx, grp in list(_numeric_identity_groups(kc)):
+                raw_uoid = kc.get(grp, "uoid")
+                if raw_uoid and raw_uoid.isdigit() and int(raw_uoid) in to_remove:
+                    kc.remove_group(grp)
+                    changed = True
+                    file_actions.append(f"emailidentities: pruned {grp} (uoid={raw_uoid})")
 
-    def allocate_identity_group() -> str:
-        idx = 0
-        while idx in used_indices:
-            idx += 1
-        used_indices.add(idx)
-        return f"Identity #{idx}"
+        # Map existing numeric groups (leaving existing indices and non-numeric groups untouched)
+        uoid_to_group: dict[int, str] = {}
+        used_indices: set[int] = set()
+        for idx, grp in _numeric_identity_groups(kc):
+            used_indices.add(idx)
+            raw_uoid = kc.get(grp, "uoid")
+            if raw_uoid and raw_uoid.isdigit():
+                uoid_to_group[int(raw_uoid)] = grp
 
-    if kc.set("General", "Default Identity", str(cfg.default_identity_uoid)):
-        changed = True
-        actions.append(
-            f"emailidentities: set General.Default Identity={cfg.default_identity_uoid}"
+        def allocate_identity_group() -> str:
+            idx = 0
+            while idx in used_indices:
+                idx += 1
+            used_indices.add(idx)
+            return f"Identity #{idx}"
+
+        if kc.set("General", "Default Identity", str(cfg.default_identity_uoid)):
+            changed = True
+            file_actions.append(
+                f"emailidentities: set General.Default Identity={cfg.default_identity_uoid}"
+            )
+
+        for ident in desired_identities:
+            grp = uoid_to_group.get(ident.uoid)
+            if grp is None:
+                grp = allocate_identity_group()
+                uoid_to_group[ident.uoid] = grp
+
+            existing_email = (kc.get(grp, "Email Address") or "").strip().lower()
+            address_matches_existing = bool(existing_email) and existing_email == ident.email.lower()
+            fpr, gpg_lookup_failed = gpg_results[ident.id]
+            if gpg_lookup_failed:
+                if address_matches_existing:
+                    LOG.warning(
+                        "GPG key lookup failed for %s; preserving existing PGP settings",
+                        ident.id,
+                    )
+                else:
+                    LOG.warning(
+                        "GPG key lookup failed for %s after email change; clearing stale PGP binding",
+                        ident.id,
+                    )
+
+            preserve_existing_gpg = gpg_lookup_failed and address_matches_existing
+
+            base_fields: dict[str, str] = {
+                "Identity": ident.name,
+                "Name": ident.real_name,
+                "Email Address": ident.email,
+                "Transport": str(ident.transport_id),
+                "Disable Fcc": _bool_str(ident.disable_fcc),
+                "uoid": str(ident.uoid),
+            }
+            if not preserve_existing_gpg:
+                override_encryption_defaults = bool(
+                    fpr
+                    and ident.gpg is not None
+                    and (ident.gpg.sign_by_default or ident.gpg.encrypt_by_default)
+                )
+                base_fields["Override Encryption Defaults"] = _bool_str(
+                    override_encryption_defaults
+                )
+
+            grp_changed = False
+            for k, v in base_fields.items():
+                if kc.set(grp, k, v):
+                    grp_changed = True
+                    changed = True
+
+            if not preserve_existing_gpg:
+                if fpr and ident.gpg is not None:
+                    gpg_fields = {
+                        "PGP Signing Key": fpr,
+                        "PGP Encryption Key": fpr,
+                        "Pgp Auto Sign": _bool_str(ident.gpg.sign_by_default),
+                        "Pgp Auto Encrypt": _bool_str(ident.gpg.encrypt_by_default),
+                        "Preferred Crypto Message Format": "openpgp/mime",
+                        "Autocrypt": _bool_str(ident.gpg.autocrypt),
+                    }
+                    for k, v in gpg_fields.items():
+                        if kc.set(grp, k, v):
+                            grp_changed = True
+                            changed = True
+                else:
+                    for k in (
+                        "PGP Signing Key",
+                        "PGP Encryption Key",
+                        "Pgp Auto Sign",
+                        "Pgp Auto Encrypt",
+                        "Preferred Crypto Message Format",
+                        "Autocrypt",
+                    ):
+                        if kc.remove_key(grp, k):
+                            grp_changed = True
+                            changed = True
+
+            if grp_changed:
+                gpg_status = "preserved" if preserve_existing_gpg else ("bound" if fpr else "none")
+                file_actions.append(
+                    f"emailidentities: upsert {grp} ({ident.id}, gpg={gpg_status})"
+                )
+
+        return changed, file_actions
+
+    actions.extend(
+        _merge_kconfig_atomic(
+            ei_path, _apply_identities, dry_run=dry_run, label="emailidentities"
         )
-
-    slug_to_uoid: dict[str, int] = {}
-    for ident in desired_identities:
-        slug_to_uoid[ident.id] = ident.uoid
-        grp = uoid_to_group.get(ident.uoid)
-        if grp is None:
-            grp = allocate_identity_group()
-            uoid_to_group[ident.uoid] = grp
-
-        existing_email = (kc.get(grp, "Email Address") or "").strip().lower()
-        address_matches_existing = bool(existing_email) and existing_email == ident.email.lower()
-
-        gpg_lookup_failed = False
-        fpr: str | None = None
-        try:
-            fpr = resolve_gpg_fingerprint(ident.email, ident.gpg, gpg_runner=gpg_runner)
-        except GpgLookupError:
-            gpg_lookup_failed = True
-            if address_matches_existing:
-                LOG.warning(
-                    "GPG key lookup failed for %s; preserving existing PGP settings",
-                    ident.id,
-                )
-            else:
-                LOG.warning(
-                    "GPG key lookup failed for %s after email change; clearing stale PGP binding",
-                    ident.id,
-                )
-
-        preserve_existing_gpg = gpg_lookup_failed and address_matches_existing
-
-        base_fields: dict[str, str] = {
-            "Identity": ident.name,
-            "Name": ident.real_name,
-            "Email Address": ident.email,
-            "Transport": str(ident.transport_id),
-            "Disable Fcc": _bool_str(ident.disable_fcc),
-            "uoid": str(ident.uoid),
-        }
-        if not preserve_existing_gpg:
-            override_encryption_defaults = bool(
-                fpr
-                and ident.gpg is not None
-                and (ident.gpg.sign_by_default or ident.gpg.encrypt_by_default)
-            )
-            base_fields["Override Encryption Defaults"] = _bool_str(
-                override_encryption_defaults
-            )
-
-        grp_changed = False
-        for k, v in base_fields.items():
-            if kc.set(grp, k, v):
-                grp_changed = True
-                changed = True
-
-        if not preserve_existing_gpg:
-            if fpr and ident.gpg is not None:
-                gpg_fields = {
-                    "PGP Signing Key": fpr,
-                    "PGP Encryption Key": fpr,
-                    "Pgp Auto Sign": _bool_str(ident.gpg.sign_by_default),
-                    "Pgp Auto Encrypt": _bool_str(ident.gpg.encrypt_by_default),
-                    "Preferred Crypto Message Format": "openpgp/mime",
-                    "Autocrypt": _bool_str(ident.gpg.autocrypt),
-                }
-                for k, v in gpg_fields.items():
-                    if kc.set(grp, k, v):
-                        grp_changed = True
-                        changed = True
-            else:
-                for k in (
-                    "PGP Signing Key",
-                    "PGP Encryption Key",
-                    "Pgp Auto Sign",
-                    "Pgp Auto Encrypt",
-                    "Preferred Crypto Message Format",
-                    "Autocrypt",
-                ):
-                    if kc.remove_key(grp, k):
-                        grp_changed = True
-                        changed = True
-
-        if grp_changed:
-            gpg_status = "preserved" if preserve_existing_gpg else ("bound" if fpr else "none")
-            actions.append(
-                f"emailidentities: upsert {grp} ({ident.id}, gpg={gpg_status})"
-            )
-
-    if changed and not dry_run:
-        kc.save_atomic(ei_path)
+    )
 
     # Also update emaildefaults
     ed_path = config_dir / "emaildefaults"
-    ed = KConfigFile.load(ed_path)
-    ed_changed = False
-    if ed.set("Defaults", "Profile", "Default"):
-        ed_changed = True
-    if ed.set("PROFILE_Default", "EmailAddress", cfg.default_identity_spec.email):
-        ed_changed = True
-    if ed.set("PROFILE_Default", "FullName", cfg.default_identity_spec.real_name):
-        ed_changed = True
-    if ed_changed:
-        actions.append(f"emaildefaults: updated PROFILE_Default for {cfg.default_identity_id}")
-        if not dry_run:
-            ed.save_atomic(ed_path)
+
+    def _apply_emaildefaults(ed: KConfigFile) -> tuple[bool, list[str]]:
+        ed_changed = False
+        if ed.set("Defaults", "Profile", "Default"):
+            ed_changed = True
+        if ed.set("PROFILE_Default", "EmailAddress", cfg.default_identity_spec.email):
+            ed_changed = True
+        if ed.set("PROFILE_Default", "FullName", cfg.default_identity_spec.real_name):
+            ed_changed = True
+        ed_actions = (
+            [f"emaildefaults: updated PROFILE_Default for {cfg.default_identity_id}"]
+            if ed_changed
+            else []
+        )
+        return ed_changed, ed_actions
+
+    actions.extend(
+        _merge_kconfig_atomic(
+            ed_path, _apply_emaildefaults, dry_run=dry_run, label="emaildefaults"
+        )
+    )
 
     return actions, slug_to_uoid
 
@@ -1858,28 +1893,47 @@ def _config_digest(path: Path) -> str | None:
         return None
 
 
-def _checkpoint_transport_ids(
-    cfg: ProvisionConfig, state: dict[str, Any], state_file: Path, *, prune: bool
+def _sync_managed_state(
+    cfg: ProvisionConfig,
+    state: dict[str, Any],
+    state_file: Path,
+    *,
+    prune: bool,
+    include_identities: bool,
+    assigned_resources: dict[str, str] | None = None,
 ) -> None:
-    """Persist applied transport IDs before identity writes can fail, preserving identity UOIDs."""
-    prev_managed = state.setdefault("managed", {})
+    """Update and save managed ID manifest (checkpoint or post-IMAP finalization)."""
+    prev_managed = state.get("managed")
+    if not isinstance(prev_managed, dict):
+        prev_managed = {}
     retired_tids: set[int] = {
         t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
     }
     desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
+    active_resource_ids = (
+        set(assigned_resources.values()) if assigned_resources is not None else set()
+    )
+
+    updated_managed: dict[str, Any] = {}
     for acc in cfg.accounts:
-        entry = prev_managed.get(acc.id)
-        if not isinstance(entry, dict):
-            entry = {}
-            prev_managed[acc.id] = entry
-        prev_aliases = entry.get("aliases") if isinstance(entry.get("aliases"), dict) else {}
+        prev_acc = prev_managed.get(acc.id)
+        prev_acc_dict = prev_acc if isinstance(prev_acc, dict) else {}
+        prev_aliases = (
+            prev_acc_dict.get("aliases")
+            if isinstance(prev_acc_dict.get("aliases"), dict)
+            else {}
+        )
+
         alias_map: dict[str, Any] = {}
-        for prev_aid, prev_aentry in prev_aliases.items():
-            if isinstance(prev_aentry, dict):
-                copied = dict(prev_aentry)
-                if prune:
-                    copied.pop("transport_id", None)
-                alias_map[prev_aid] = copied
+        if not include_identities or not prune:
+            for prev_aid, prev_aentry in prev_aliases.items():
+                if isinstance(prev_aentry, dict):
+                    copied = dict(prev_aentry)
+                    if prune and not include_identities:
+                        # Keep identity_uoid for upcoming identity pruning; drop pruned transport_id
+                        copied.pop("transport_id", None)
+                    alias_map[prev_aid] = copied
+
         for alias in acc.aliases:
             prev_alias = prev_aliases.get(alias.id)
             if (
@@ -1890,7 +1944,9 @@ def _checkpoint_transport_ids(
             ):
                 retired_tids.add(prev_alias["transport_id"])
             a_entry: dict[str, Any] = (
-                dict(alias_map[alias.id]) if alias.id in alias_map else {}
+                {"identity_uoid": alias.uoid}
+                if include_identities
+                else (dict(alias_map[alias.id]) if alias.id in alias_map else {})
             )
             if alias.smtp is not None:
                 a_entry["transport_id"] = alias.transport_id
@@ -1898,64 +1954,49 @@ def _checkpoint_transport_ids(
                 a_entry.pop("transport_id", None)
             if a_entry:
                 alias_map[alias.id] = a_entry
-        entry["transport_id"] = acc.transport_id
-        entry["aliases"] = alias_map
+
+        if assigned_resources is not None:
+            if acc.id in assigned_resources:
+                updated_managed[acc.id] = {
+                    "resource_id": assigned_resources[acc.id],
+                    "transport_id": acc.transport_id,
+                    "identity_uoid": acc.identity.uoid,
+                    "aliases": alias_map,
+                }
+        else:
+            entry = dict(prev_acc_dict)
+            entry["transport_id"] = acc.transport_id
+            if include_identities:
+                entry["identity_uoid"] = acc.identity.uoid
+            entry["aliases"] = alias_map
+            updated_managed[acc.id] = entry
+
+    for prev_slug, prev_entry in prev_managed.items():
+        if prev_slug in updated_managed or not isinstance(prev_entry, dict):
+            continue
+        if assigned_resources is None:
+            # Intermediate checkpoint: preserve retired accounts for upcoming identity/IMAP pruning
+            updated_managed[prev_slug] = dict(prev_entry)
+        elif not prune:
+            copied = dict(prev_entry)
+            if copied.get("resource_id") in active_resource_ids:
+                copied.pop("resource_id", None)
+                copied.pop("pending_save", None)
+                copied.pop("pending_restart", None)
+            updated_managed[prev_slug] = copied
+
     if prune:
-        state.pop("retired_transport_ids", None)
+        retired_tids.clear()
     else:
         retired_tids -= desired_tids
-        if retired_tids:
-            state["retired_transport_ids"] = sorted(retired_tids)
-        else:
-            state.pop("retired_transport_ids", None)
-    StateStore.save(state_file, state)
 
+    state_out: dict[str, Any] = {"version": 1, "managed": updated_managed}
+    if retired_tids:
+        state_out["retired_transport_ids"] = sorted(retired_tids)
 
-def _checkpoint_local_ids(
-    cfg: ProvisionConfig, state: dict[str, Any], state_file: Path, *, prune: bool
-) -> None:
-    """Persist applied transport/identity/alias IDs before IMAP reconciliation starts."""
-    prev_managed = state.setdefault("managed", {})
-    retired_tids: set[int] = {
-        t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
-    }
-    desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
-    for acc in cfg.accounts:
-        entry = prev_managed.get(acc.id)
-        if not isinstance(entry, dict):
-            entry = {}
-            prev_managed[acc.id] = entry
-        prev_aliases = entry.get("aliases") if isinstance(entry.get("aliases"), dict) else {}
-        alias_map: dict[str, Any] = {}
-        if not prune:
-            for prev_aid, prev_aentry in prev_aliases.items():
-                if isinstance(prev_aentry, dict):
-                    alias_map[prev_aid] = dict(prev_aentry)
-        for alias in acc.aliases:
-            prev_alias = prev_aliases.get(alias.id)
-            if (
-                not prune
-                and alias.smtp is None
-                and isinstance(prev_alias, dict)
-                and isinstance(prev_alias.get("transport_id"), int)
-            ):
-                retired_tids.add(prev_alias["transport_id"])
-            a_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
-            if alias.smtp is not None:
-                a_entry["transport_id"] = alias.transport_id
-            alias_map[alias.id] = a_entry
-        entry["transport_id"] = acc.transport_id
-        entry["identity_uoid"] = acc.identity.uoid
-        entry["aliases"] = alias_map
-    if prune:
-        state.pop("retired_transport_ids", None)
-    else:
-        retired_tids -= desired_tids
-        if retired_tids:
-            state["retired_transport_ids"] = sorted(retired_tids)
-        else:
-            state.pop("retired_transport_ids", None)
-    StateStore.save(state_file, state)
+    state.clear()
+    state.update(state_out)
+    StateStore.save(state_file, state_out)
 
 
 def provision(
@@ -2003,7 +2044,9 @@ def provision(
                 )
             )
             if not dry_run:
-                _checkpoint_transport_ids(cfg, state, state_file, prune=prune)
+                _sync_managed_state(
+                    cfg, state, state_file, prune=prune, include_identities=False
+                )
 
             id_actions, _ = reconcile_emailidentities(
                 cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
@@ -2011,7 +2054,9 @@ def provision(
             all_actions.extend(id_actions)
 
             if not dry_run:
-                _checkpoint_local_ids(cfg, state, state_file, prune=prune)
+                _sync_managed_state(
+                    cfg, state, state_file, prune=prune, include_identities=True
+                )
 
             assigned_resources: dict[str, str] = {}
             if akonadi_available:
@@ -2031,65 +2076,15 @@ def provision(
                     "akonadi: Akonadi is not running; skipping live IMAP diff without starting it"
                 )
 
-            prev_managed = state.get("managed", {})
-            retired_tids: set[int] = {
-                t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
-            }
-            desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
-            active_resource_ids = set(assigned_resources.values())
-
-            new_managed: dict[str, Any] = {}
-            for acc in cfg.accounts:
-                alias_map: dict[str, Any] = {}
-                prev_acc = prev_managed.get(acc.id, {})
-                prev_aliases = (
-                    prev_acc.get("aliases", {})
-                    if isinstance(prev_acc, dict) and isinstance(prev_acc.get("aliases"), dict)
-                    else {}
-                )
-                if not prune:
-                    for prev_alias_id, prev_alias_entry in prev_aliases.items():
-                        if isinstance(prev_alias_entry, dict):
-                            alias_map[prev_alias_id] = dict(prev_alias_entry)
-                for alias in acc.aliases:
-                    prev_alias = prev_aliases.get(alias.id)
-                    if (
-                        not prune
-                        and alias.smtp is None
-                        and isinstance(prev_alias, dict)
-                        and isinstance(prev_alias.get("transport_id"), int)
-                    ):
-                        retired_tids.add(prev_alias["transport_id"])
-                    alias_entry: dict[str, Any] = {"identity_uoid": alias.uoid}
-                    if alias.smtp is not None:
-                        alias_entry["transport_id"] = alias.transport_id
-                    alias_map[alias.id] = alias_entry
-                if acc.id in assigned_resources:
-                    new_managed[acc.id] = {
-                        "resource_id": assigned_resources[acc.id],
-                        "transport_id": acc.transport_id,
-                        "identity_uoid": acc.identity.uoid,
-                        "aliases": alias_map,
-                    }
-
-            if not prune:
-                for prev_slug, prev_entry in prev_managed.items():
-                    if prev_slug not in new_managed and isinstance(prev_entry, dict):
-                        copied = dict(prev_entry)
-                        if copied.get("resource_id") in active_resource_ids:
-                            copied.pop("resource_id", None)
-                            copied.pop("pending_save", None)
-                            copied.pop("pending_restart", None)
-                        new_managed[prev_slug] = copied
-                retired_tids -= desired_tids
-            else:
-                retired_tids.clear()
-
             if not dry_run:
-                state_out: dict[str, Any] = {"version": 1, "managed": new_managed}
-                if retired_tids:
-                    state_out["retired_transport_ids"] = sorted(retired_tids)
-                StateStore.save(state_file, state_out)
+                _sync_managed_state(
+                    cfg,
+                    state,
+                    state_file,
+                    prune=prune,
+                    include_identities=True,
+                    assigned_resources=assigned_resources,
+                )
                 digest_after = _config_digest(config_path)
                 if digest_after is None or digest_after == digest_before:
                     break

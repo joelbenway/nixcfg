@@ -3261,3 +3261,40 @@ def test_bom_prefixed_password_rejected_early_with_config_error(tmp_path: Path) 
     )
     with pytest.raises(kp.ConfigError, match="BOM|U\\+FEFF"):
         kp.load_config(bad_bom)
+
+
+def test_reconcile_emailidentities_preserves_manual_edits_made_during_gpg_lookup(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    ei_path = cfg_dir / "emailidentities"
+    ei_path.write_text("[General]\nDefault Identity=1\n", encoding="utf-8")
+
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    cfg = kp.load_config(cfg_path)
+
+    def gpg_with_concurrent_manual_edit(_args: list[str]) -> str:
+        existing = ei_path.read_text(encoding="utf-8")
+        if "[Identity #99]" not in existing:
+            ei_path.write_text(
+                existing
+                + "\n[Identity #99]\nEmail Address=manual@example.org\nIdentity=Manual\nName=Manual User\nuoid=999999\n",
+                encoding="utf-8",
+            )
+        return ""
+
+    kp.reconcile_emailidentities(
+        cfg,
+        cfg_dir,
+        {"version": 1, "managed": {}},
+        gpg_runner=gpg_with_concurrent_manual_edit,
+        dry_run=False,
+        prune=False,
+    )
+
+    ei = kp.KConfigFile.load(ei_path)
+    assert "Identity #99" in ei.groups()
+    assert ei.get("Identity #99", "Email Address") == "manual@example.org"
+    uoids = {ei.get(g, "uoid") for g in ei.groups()}
+    assert str(cfg.accounts[0].identity.uoid) in uoids
