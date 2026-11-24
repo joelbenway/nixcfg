@@ -462,7 +462,7 @@ def test_desktop_recovers_from_incomplete_read_and_failed_dispatch_preserves_cur
 ) -> None:
     import fleet_notify_desktop as fnd
 
-    # 1. Failed dispatch must not advance persisted cursor
+    # 1. Failed dispatch must stop processing immediately so later messages cannot advance cursor past m99
     cursor_path = tmp_path / "cursor.json"
     msg_line = json.dumps(
         {
@@ -475,14 +475,55 @@ def test_desktop_recovers_from_incomplete_read_and_failed_dispatch_preserves_cur
             "priority": 4,
         }
     ).encode()
+    next_line = json.dumps(
+        {
+            "id": "m100",
+            "time": 201,
+            "event": "message",
+            "topic": "fleet-alerts",
+            "title": "Later",
+            "message": "Should wait until m99 retries",
+            "priority": 3,
+        }
+    ).encode()
+    attempted: list[str] = []
+
+    def fail_first(ev: dict[str, Any]) -> bool:
+        attempted.append(ev["id"])
+        return ev["id"] != "m99"
+
     last_id = fnd.process_stream(
-        [msg_line],
+        [msg_line, next_line],
         cursor_path,
         seen_id=None,
-        dispatch_fn=lambda _ev: False,
+        dispatch_fn=fail_first,
     )
+    assert attempted == ["m99"]
     assert last_id is None
     assert not cursor_path.exists()
+
+    # 1b. Same-second replay across reconnect/restart must not re-dispatch earlier sibling IDs
+    a1 = json.dumps({"id": "a1", "time": 500, "event": "message", "topic": "fleet-alerts", "title": "A1", "message": "1", "priority": 3}).encode()
+    a2 = json.dumps({"id": "a2", "time": 500, "event": "message", "topic": "fleet-alerts", "title": "A2", "message": "2", "priority": 3}).encode()
+    a3 = json.dumps({"id": "a3", "time": 501, "event": "message", "topic": "fleet-alerts", "title": "A3", "message": "3", "priority": 3}).encode()
+
+    delivered_1: list[str] = []
+    lid1 = fnd.process_stream([a1, a2], cursor_path, seen_id=None, dispatch_fn=lambda ev: (delivered_1.append(ev["id"]) or True))
+    assert delivered_1 == ["a1", "a2"]
+    assert lid1 == "a2"
+
+    # Simulate restart loading persisted cursor and receiving same-second replay [a1, a2, a3]
+    persisted = fnd.load_cursor(cursor_path)
+    delivered_2: list[str] = []
+    lid2 = fnd.process_stream(
+        [a1, a2, a3],
+        cursor_path,
+        seen_id=persisted.get("last_id"),
+        seen_ids=persisted.get("recent_ids"),
+        dispatch_fn=lambda ev: (delivered_2.append(ev["id"]) or True),
+    )
+    assert delivered_2 == ["a3"]
+    assert lid2 == "a3"
 
     # 2. dispatch_notification strips NUL bytes cleanly
     recorded: list[list[str]] = []

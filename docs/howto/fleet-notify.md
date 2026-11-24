@@ -175,24 +175,26 @@ This wires `unitConfig.OnFailure = lib.mkAfter ["fleet-notify@%n.service"];`, wh
 
 ### Supporting another desktop environment
 
-`modules/notify.nix` intentionally never references Plasma, GNOME, Hyprland, or Home Manager. To enable desktop toast notifications in a future desktop module (for example `modules/hyprland.nix` or `modules/gnome.nix`), reuse `config.notify.client.package` directly inside that desktop module:
+`modules/notify.nix` intentionally never references Plasma, GNOME, Hyprland, or Home Manager. To enable desktop toast notifications in a future desktop module (for example `modules/hyprland.nix` or `modules/gnome.nix`), reuse `config.notify.client.package` directly inside that desktop module's Home Manager user configuration (`home-manager.users.<name>`, using Home Manager's `Unit`/`Service`/`Install` schema just like `modules/plasma.nix`):
 
 ```nix
-systemd.user.services.fleet-notify-desktop = lib.mkIf (
-  config.notify.client.enable && config.notify.client.subscribeTokenFile != null
-) {
-  Unit = {
-    Description = "Stream fleet ntfy alerts to desktop notifications";
-    After = ["graphical-session.target" "network-online.target"];
-    PartOf = ["graphical-session.target"];
-    ConditionPathExists = toString config.notify.client.subscribeTokenFile;
+home-manager.users.<name> = {
+  systemd.user.services.fleet-notify-desktop = lib.mkIf (
+    config.notify.client.enable && config.notify.client.subscribeTokenFile != null
+  ) {
+    Unit = {
+      Description = "Stream fleet ntfy alerts to desktop notifications";
+      After = ["graphical-session.target" "network-online.target"];
+      PartOf = ["graphical-session.target"];
+      ConditionPathExists = toString config.notify.client.subscribeTokenFile;
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = "${config.notify.client.package}/bin/fleet-notify-desktop";
+      Restart = "always";
+      RestartSec = "5s";
+    };
+    Install.WantedBy = ["graphical-session.target"];
   };
-  Service = {
-    Type = "simple";
-    ExecStart = "${config.notify.client.package}/bin/fleet-notify-desktop";
-    Restart = "always";
-    RestartSec = "5s";
-  };
-  Install.WantedBy = ["graphical-session.target"];
 };
 ```

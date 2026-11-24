@@ -15,7 +15,7 @@ if [ -f "$PENDING_BOOT_FILE" ]; then
   HAS_PENDING_BOOT=true
 elif [ -f "$STATUS_FILE" ]; then
   CUR_STATUS=$(jq -r '.status // "healthy"' "$STATUS_FILE" 2>/dev/null || echo "healthy")
-  if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ]; then
+  if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ] || [ "$CUR_STATUS" = "boot_verify_failed" ]; then
     HAS_PENDING_BOOT=true
   fi
 fi
@@ -38,7 +38,7 @@ if ! nixos-auto-update-canary; then
     systemctl reboot
   else
     nixos-auto-update-write-status \
-      "update_failed" \
+      "boot_verify_failed" \
       "critical" \
       "${HOST_NAME} failed post-boot canary check after attended reboot" \
       "Post-boot canary failed on $(readlink -f /run/booted-system)."
@@ -72,7 +72,7 @@ if [ -f "$PENDING_BOOT_FILE" ]; then
   fi
 elif [ -f "$STATUS_FILE" ]; then
   CUR_STATUS=$(jq -r '.status // "healthy"' "$STATUS_FILE" 2>/dev/null || echo "healthy")
-  if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ]; then
+  if [ "$CUR_STATUS" = "reboot_required_attended" ] || [ "$CUR_STATUS" = "reboot_scheduled" ] || [ "$CUR_STATUS" = "boot_verify_failed" ]; then
     if [ "$(readlink -f /run/booted-system)" = "$(readlink -f /run/current-system)" ]; then
       echo "==> Attended reboot completed; clearing status to healthy."
       nixos-auto-update-write-status \

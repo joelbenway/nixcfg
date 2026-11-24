@@ -29,7 +29,7 @@ PRIORITY="default"
 TAGS=""
 
 case "$STATUS" in
-  update_failed | rollback_failed)
+  update_failed | rollback_failed | boot_verify_failed)
     SHOULD_NOTIFY=true
     TOPIC="fleet-alerts"
     PRIORITY="urgent"
@@ -59,7 +59,7 @@ case "$STATUS" in
     ;;
   healthy)
     case "$PREV_STATUS" in
-      update_failed | rollback_failed | reboot_required_attended | reboot_scheduled)
+      update_failed | rollback_failed | boot_verify_failed | reboot_required_attended | reboot_scheduled)
         SHOULD_NOTIFY=true
         TOPIC="fleet-updates"
         PRIORITY="low"

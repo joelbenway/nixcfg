@@ -24,6 +24,7 @@ REBOOT_WINDOW="${AUTO_UPDATE_REBOOT_WINDOW:-03:30}"
 mkdir -p "${STATE_DIR}"
 
 STATUS_REPORTED=false
+LOCK_ACQUIRED=false
 report_status() {
   STATUS_REPORTED=true
   nixos-auto-update-write-status "$@"
@@ -31,7 +32,9 @@ report_status() {
 
 on_exit() {
   local rc=$?
-  git -C "${REPO_DIR}" checkout -- modules/hermes/agent-env.nix 2>/dev/null || true
+  if [ "$LOCK_ACQUIRED" = "true" ]; then
+    git -C "${REPO_DIR}" checkout -- modules/hermes/agent-env.nix 2>/dev/null || true
+  fi
   if [ "$rc" -ne 0 ] && [ "$STATUS_REPORTED" != "true" ]; then
     report_status \
       "update_failed" \
@@ -48,6 +51,7 @@ if ! flock -n 9; then
   echo "==> [Auto-Update] Another nixos-auto-update instance is already running; exiting."
   exit 0
 fi
+LOCK_ACQUIRED=true
 
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0="safe.directory"

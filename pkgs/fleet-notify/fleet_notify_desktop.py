@@ -32,6 +32,7 @@ from fleet_notify import (
 ERROR_TAGS = frozenset({"rotating_light", "warning", "x", "skull", "fire", "bangbang"})
 REBOOT_TAGS = frozenset({"arrows_counterclockwise", "reboot", "recycle", "repeat"})
 DISK_TAGS = frozenset({"cd", "floppy_disk", "minidisc", "dvd", "disk"})
+MAX_RECENT_IDS = 32
 
 
 def _default_cursor_path() -> Path:
@@ -54,9 +55,25 @@ def load_cursor(path: Path) -> dict[str, Any]:
         return {}
 
 
-def save_cursor(path: Path, last_id: str, last_time: int) -> None:
+def save_cursor(
+    path: Path,
+    last_id: str,
+    last_time: int,
+    recent_ids: Iterable[str] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"last_id": last_id, "last_time": last_time}) + "\n"
+    deduped: list[str] = []
+    if recent_ids is not None:
+        for item in recent_ids:
+            if isinstance(item, str) and item and item not in deduped:
+                deduped.append(item)
+    if last_id not in deduped:
+        deduped.append(last_id)
+    deduped = deduped[-MAX_RECENT_IDS:]
+    payload = (
+        json.dumps({"last_id": last_id, "last_time": last_time, "recent_ids": deduped})
+        + "\n"
+    )
     fd, tmp_name = tempfile.mkstemp(prefix=".cursor.", dir=str(path.parent))
     try:
         os.fchmod(fd, 0o600)
@@ -142,9 +159,20 @@ def process_stream(
     seen_id: str | None,
     dispatch_fn: Callable[[dict[str, Any]], bool] | None = None,
     on_activity: Callable[[], None] | None = None,
+    seen_ids: Iterable[str] | None = None,
 ) -> str | None:
     dispatch = dispatch_fn if dispatch_fn is not None else dispatch_notification
     last_id = seen_id
+    recent_list: list[str] = []
+    if seen_ids is not None:
+        for item in seen_ids:
+            if isinstance(item, str) and item and item not in recent_list:
+                recent_list.append(item)
+    if seen_id and seen_id not in recent_list:
+        recent_list.append(seen_id)
+    recent_list = recent_list[-MAX_RECENT_IDS:]
+    recent_set = set(recent_list)
+
     for raw_line in lines:
         text = (
             raw_line.decode("utf-8", errors="replace").strip()
@@ -166,13 +194,19 @@ def process_stream(
         msg_id = event.get("id")
         if not isinstance(msg_id, str) or not msg_id:
             continue
-        if msg_id == last_id:
+        if msg_id in recent_set:
             continue
         if not dispatch(event):
-            continue
+            # Stop reading so main() closes the stream and reconnects from the
+            # unchanged cursor rather than letting a later message skip this one.
+            return last_id
         msg_time = event.get("time")
         ts = msg_time if isinstance(msg_time, int) else int(time.time())
-        save_cursor(cursor_path, msg_id, ts)
+        recent_list.append(msg_id)
+        if len(recent_list) > MAX_RECENT_IDS:
+            recent_list = recent_list[-MAX_RECENT_IDS:]
+        recent_set = set(recent_list)
+        save_cursor(cursor_path, msg_id, ts, recent_ids=recent_list)
         last_id = msg_id
     return last_id
 
@@ -224,6 +258,12 @@ def main(argv: list[str] | None = None) -> int:
                 cursor = load_cursor(cursor_path)
                 raw_last_id = cursor.get("last_id")
                 last_id = raw_last_id if isinstance(raw_last_id, str) and raw_last_id else None
+                raw_recent = cursor.get("recent_ids")
+                recent_ids = (
+                    [x for x in raw_recent if isinstance(x, str) and x]
+                    if isinstance(raw_recent, list)
+                    else None
+                )
                 since = last_id if last_id is not None else "10m"
 
                 base_url = cfg.urls[url_index % len(cfg.urls)]
@@ -245,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
                         cursor_path,
                         seen_id=last_id,
                         on_activity=_reset_backoff,
+                        seen_ids=recent_ids,
                     )
             except KeyboardInterrupt:
                 break

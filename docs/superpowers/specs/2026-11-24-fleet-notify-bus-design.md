@@ -115,7 +115,7 @@ We want a **single, fleet-wide notification bus module (`modules/notify.nix`)** 
 
 | User | Role | ACL (`auth-access`) | Purpose |
 |---|---|---|---|
-| `joel` | `admin` | `joel:*:rw` | Android `ntfy` app + ad-hoc admin / web UI |
+| `joel` | `admin` | *(implicit admin `rw`)* | Android `ntfy` app + ad-hoc admin / web UI |
 | `fleet-pub` | `user` | `fleet-pub:fleet-*:wo` | Write-only publishing from all 5 hosts (`auto-update`, `smartd`, `OnFailure=`, `beszel`, interactive `wheel` users) |
 | `fleet-sub` | `user` | `fleet-sub:fleet-*:ro` | Read-only SSE streaming for desktop sessions (`fleet-notify-desktop`) |
 
@@ -154,7 +154,7 @@ Completely desktop-agnostic module defining `options.notify`:
   - `extraSettings` (`attrsOf anything`, default `{}`)
   - Implementation:
     - Creates static system user/group `ntfy-sh` (`home = cfg.dataDir`).
-    - Configures `services.ntfy-sh` with `base-url = "https://${cfg.domain}"`, `listen-http = "127.0.0.1:${toString cfg.port}"`, `behind-proxy = true`, `auth-default-access = "deny-all"`, `auth-file = "${cfg.dataDir}/user.db"`, `cache-file = "${cfg.dataDir}/cache.db"`, `cache-duration = cfg.cacheDuration`, `attachment-cache-dir = "${cfg.dataDir}/attachments"`, `enable-signup = false`, `enable-login = true`, `enable-metrics = false`, `keepalive-interval = "45s"`, and `auth-access` (guarded on `cfg.environmentFile != null` so `ntfy-sh` never fails startup referencing undefined users) set to `["joel:*:rw" "fleet-pub:fleet-*:wo" "fleet-sub:fleet-*:ro"] ++ cfg.extraAccess`.
+    - Configures `services.ntfy-sh` with `base-url = "https://${cfg.domain}"`, `listen-http = "127.0.0.1:${toString cfg.port}"`, `behind-proxy = true`, `auth-default-access = "deny-all"`, `auth-file = "${cfg.dataDir}/user.db"`, `cache-file = "${cfg.dataDir}/cache.db"`, `cache-duration = cfg.cacheDuration`, `attachment-cache-dir = "${cfg.dataDir}/attachments"`, `enable-signup = false`, `enable-login = true`, `enable-metrics = false`, `keepalive-interval = "45s"`, and `auth-access` (guarded on `cfg.environmentFile != null` so `ntfy-sh` never fails startup referencing undefined users) set to `["fleet-pub:fleet-*:wo" "fleet-sub:fleet-*:ro"] ++ cfg.extraAccess` (admin `joel` has global `rw` implicitly; `ntfy-sh` rejects explicit ACL entries for admin users).
     - Overrides `systemd.services.ntfy-sh.serviceConfig` to `DynamicUser = lib.mkForce false; PrivateUsers = lib.mkForce false; User = "ntfy-sh"; Group = "ntfy-sh";` and orders `after`/`wants` after `dataDirMountUnit` when `config.impermanence.enable`.
     - Registers `cfg.dataDir` in `impermanence.directories` and `systemd.tmpfiles.rules` (`d ${cfg.dataDir} 0750 ntfy-sh ntfy-sh -`).
     - Configures Caddy? *Builder call:* keep Caddy reverse proxy definitions in `hosts/zita/default.nix` alongside `files`/`budget`/`jellyfin`/`forgejo`/`vaultwarden`/`beszel` so all `zita` vhosts stay in one place.

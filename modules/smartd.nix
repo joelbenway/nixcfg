@@ -122,7 +122,7 @@ in {
       };
       wall = lib.mkOption {
         type = lib.types.bool;
-        default = !(config.notify.client.enable or false);
+        default = !useFleetNotify;
         description = "Broadcast alert to all terminals via wall";
       };
       mail = {
