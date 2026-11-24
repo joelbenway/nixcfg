@@ -26,7 +26,7 @@
         --priority high \
         --tags warning,cd \
         --title "[${hostname}] SMART: ''${FAILTYPE} (''${DEVICE})" \
-        "''${BODY}"
+        -- "''${BODY}"
       ${lib.optionalString cfg.notifications.wall ''
         printf 'Problem detected with disk: %s\n%s\n' "''${SMARTD_DEVICESTRING:-$DEVICE}" "$BODY" | wall 2>/dev/null || true
       ''}
@@ -177,6 +177,7 @@ in {
       notifications = {
         wall.enable = !useFleetNotify && cfg.notifications.wall;
         x11.enable = false;
+        systembus-notify.enable = false;
         mail = {
           enable = !useFleetNotify && cfg.notifications.mail.enable;
           recipient = cfg.notifications.mail.recipient;

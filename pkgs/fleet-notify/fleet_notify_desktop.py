@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import signal
@@ -45,7 +46,7 @@ def load_cursor(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(
             f"fleet-notify-desktop: ignoring unreadable cursor {path}: {exc}",
             file=sys.stderr,
@@ -109,8 +110,8 @@ def dispatch_notification(
     icon = tags_to_icon(tags)
 
     topic = str(event.get("topic") or "fleet")
-    title = str(event.get("title") or f"[{topic}] Notification")
-    message = str(event.get("message") or "")
+    title = str(event.get("title") or f"[{topic}] Notification").replace("\x00", "")
+    message = str(event.get("message") or "").replace("\x00", "")
 
     cmd = [
         "notify-send",
@@ -130,7 +131,7 @@ def dispatch_notification(
             )
             return False
         return True
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
         print(f"fleet-notify-desktop: notify-send failed: {exc}", file=sys.stderr)
         return False
 
@@ -167,7 +168,8 @@ def process_stream(
             continue
         if msg_id == last_id:
             continue
-        dispatch(event)
+        if not dispatch(event):
+            continue
         msg_time = event.get("time")
         ts = msg_time if isinstance(msg_time, int) else int(time.time())
         save_cursor(cursor_path, msg_id, ts)
@@ -182,7 +184,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default=os.environ.get("FLEET_NOTIFY_CONFIG", DEFAULT_CONFIG_PATH),
+        default=os.environ.get("FLEET_NOTIFY_CONFIG") or DEFAULT_CONFIG_PATH,
         help="Path to non-secret fleet-notify JSON config",
     )
     parser.add_argument(
@@ -246,7 +248,14 @@ def main(argv: list[str] | None = None) -> int:
                     )
             except KeyboardInterrupt:
                 break
-            except (ConfigError, urllib.error.URLError, TimeoutError, OSError) as exc:
+            except (
+                ConfigError,
+                urllib.error.URLError,
+                http.client.HTTPException,
+                TimeoutError,
+                UnicodeDecodeError,
+                OSError,
+            ) as exc:
                 msg = _sanitize_error_text(str(exc), token)
                 print(
                     f"fleet-notify-desktop: stream disconnected ({msg}); retrying in {backoff:.0f}s",

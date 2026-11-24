@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import socket
@@ -76,7 +77,7 @@ def parse_priority(raw: str | int) -> int:
 def load_config(path: Path) -> NotifyConfig:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"cannot read config file {path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ConfigError(f"invalid JSON in {path}: {exc}") from exc
@@ -136,7 +137,7 @@ def read_token(path: str | None) -> str:
         raise ConfigError("notification token file is not configured")
     try:
         token = Path(path).read_text(encoding="utf-8").strip()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError(f"cannot read notification token file: {exc}") from exc
     if not token:
         raise ConfigError("notification token file is empty")
@@ -209,7 +210,12 @@ def publish_message(
                 )
                 if 400 <= code < 500 and code != 429:
                     raise PublishError(last_error) from exc
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            except (
+                urllib.error.URLError,
+                http.client.HTTPException,
+                TimeoutError,
+                OSError,
+            ) as exc:
                 last_error = _sanitize_error_text(
                     f"{base_url} request failed: {exc}", token
                 )
@@ -292,7 +298,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default=os.environ.get("FLEET_NOTIFY_CONFIG", DEFAULT_CONFIG_PATH),
+        default=os.environ.get("FLEET_NOTIFY_CONFIG") or DEFAULT_CONFIG_PATH,
         help="Path to non-secret fleet-notify JSON config",
     )
     parser.add_argument("--topic", default=None, help="Target ntfy topic")
@@ -368,7 +374,13 @@ def main(argv: list[str] | None = None) -> int:
             markdown=args.markdown,
         )
         return 0
-    except (ConfigError, PublishError, OSError) as exc:
+    except (
+        ConfigError,
+        PublishError,
+        http.client.HTTPException,
+        ValueError,
+        OSError,
+    ) as exc:
         msg = _sanitize_error_text(str(exc), token)
         print(f"fleet-notify: {msg}", file=sys.stderr)
         return 0 if args.best_effort else 1

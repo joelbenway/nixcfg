@@ -134,7 +134,7 @@ systemctl status ntfy-sh
 # On any host (as root or wheel user): send a test notification
 fleet-notify --topic fleet-updates --priority low --tags white_check_mark \
   --title "[$(hostname)] Fleet notify test" \
-  "End-to-end delivery check from $(hostname)"
+  -- "End-to-end delivery check from $(hostname)"
 
 # On a Plasma workstation (as desktop user): verify the SSE desktop subscriber
 systemctl --user status fleet-notify-desktop
@@ -156,7 +156,7 @@ fleet-notify \
   --priority high \
   --tags rotating_light,gear \
   --title "[$(hostname)] Backup failed" \
-  "Nightly snapshot returned exit code 1"
+  -- "Nightly snapshot returned exit code 1"
 ```
 
 Priority values accept `1..5` or `min`, `low`, `default`, `high`, `urgent`. You can also pipe a message body via `--stdin` or attach a click target with `--click https://...`. Any `fleet-*` topic is allowed by the default `fleet-pub` ACL without editing server rules.

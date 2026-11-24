@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import os
@@ -411,3 +412,107 @@ def test_missing_subscribe_token_sleeps_with_backoff_without_crashing(
     assert rc == 0
     assert len(slept) == 2
     assert slept[1] > slept[0]
+
+
+def test_publish_retries_incomplete_read_and_429_and_handles_corrupt_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg_path = _write_cfg(tmp_path)
+    cfg = fn.load_config(cfg_path)
+    token = fn.read_token(cfg.publish_token_file)
+    monkeypatch.setattr(fn.time, "sleep", lambda _s: None)
+
+    calls: list[str] = []
+
+    def fake_opener(req: Any, timeout: float = 5.0) -> _FakeResponse:
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise http.client.IncompleteRead(b"partial")
+        if len(calls) == 2:
+            raise urllib.error.HTTPError(
+                req.full_url, 429, "Too Many Requests", hdrs=None, fp=io.BytesIO(b"slow down")
+            )
+        return _FakeResponse(200)
+
+    fn.publish_message(
+        cfg,
+        token,
+        topic="fleet-alerts",
+        title="[zita] Test",
+        message="Retry check",
+        opener=fake_opener,
+    )
+    assert calls == [
+        "https://notify.example",
+        "https://notify.example",
+        "https://backup.example:2587",
+    ]
+
+    # Corrupt non-UTF-8 token file under --best-effort exits 0 cleanly
+    assert cfg.publish_token_file is not None
+    Path(cfg.publish_token_file).write_bytes(b"\xff\xfe\xfd")
+    rc = fn.main(["--config", str(cfg_path), "--best-effort", "--", "-leading-dash-body"])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "token" in err.lower()
+
+
+def test_desktop_recovers_from_incomplete_read_and_failed_dispatch_preserves_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fleet_notify_desktop as fnd
+
+    # 1. Failed dispatch must not advance persisted cursor
+    cursor_path = tmp_path / "cursor.json"
+    msg_line = json.dumps(
+        {
+            "id": "m99",
+            "time": 200,
+            "event": "message",
+            "topic": "fleet-alerts",
+            "title": "Test\x00Title",
+            "message": "Body\x00Here",
+            "priority": 4,
+        }
+    ).encode()
+    last_id = fnd.process_stream(
+        [msg_line],
+        cursor_path,
+        seen_id=None,
+        dispatch_fn=lambda _ev: False,
+    )
+    assert last_id is None
+    assert not cursor_path.exists()
+
+    # 2. dispatch_notification strips NUL bytes cleanly
+    recorded: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    assert (
+        fnd.dispatch_notification(
+            {"id": "m99", "title": "Bad\x00Title", "message": "Bad\x00Body", "priority": 3},
+            runner=fake_run,
+        )
+        is True
+    )
+    assert recorded[0][-2:] == ["BadTitle", "BadBody"]
+
+    # 3. IncompleteRead mid-stream triggers backoff reconnect rather than unhandled crash
+    cfg_path = _write_cfg(tmp_path)
+    slept: list[float] = []
+
+    def fake_urlopen(_req: Any, timeout: float = 70) -> Any:
+        raise http.client.IncompleteRead(b"truncated chunk")
+
+    def fake_sleep(sec: float) -> None:
+        slept.append(sec)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(fnd.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(fnd.time, "sleep", fake_sleep)
+    rc = fnd.main(["--config", str(cfg_path), "--cursor", str(cursor_path)])
+    assert rc == 0
+    assert slept == [2.0]

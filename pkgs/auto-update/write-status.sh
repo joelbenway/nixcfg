@@ -115,5 +115,5 @@ if [ "$SHOULD_NOTIFY" = true ] && command -v fleet-notify >/dev/null 2>&1; then
     --priority "$PRIORITY" \
     --tags "$TAGS" \
     --title "[${HOST_NAME}] ${SUMMARY}" \
-    "${DETAILS:-${SUMMARY}}"
+    -- "${DETAILS:-${SUMMARY}}"
 fi
