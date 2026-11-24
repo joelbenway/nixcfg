@@ -4,17 +4,32 @@
 # your system. Help is available in the configuration.nix(5) man page, on
 # https://search.nixos.org/options and in the NixOS manual (`nixos-help`).
 {
+  config,
   pkgs,
   inputs,
+  lib,
   platform,
   ...
-}: {
+}: let
+  nixAccessTokensFile = lib.custom.relativeToRoot "secrets/nix-access-tokens.conf.age";
+  hasNixAccessTokens = builtins.pathExists nixAccessTokensFile;
+in {
   imports = [
     inputs.agenix.nixosModules.default
     {
       environment.systemPackages = [inputs.agenix.packages.${platform}.default];
     }
   ];
+
+  age.secrets = lib.mkIf hasNixAccessTokens {
+    nix-access-tokens = {
+      file = nixAccessTokensFile;
+      name = "nix-access-tokens.conf";
+      mode = "0440";
+      owner = "root";
+      group = "wheel";
+    };
+  };
 
   nixpkgs.hostPlatform = platform;
 
@@ -48,6 +63,10 @@
     }; # settings
 
     nixPath = ["nixpkgs=${inputs.nixpkgs}"];
+
+    extraOptions = lib.mkIf hasNixAccessTokens ''
+      !include ${config.age.secrets.nix-access-tokens.path}
+    '';
 
     gc = {
       automatic = true;
