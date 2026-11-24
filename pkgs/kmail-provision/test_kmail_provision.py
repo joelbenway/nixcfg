@@ -3298,3 +3298,99 @@ def test_reconcile_emailidentities_preserves_manual_edits_made_during_gpg_lookup
     assert ei.get("Identity #99", "Email Address") == "manual@example.org"
     uoids = {ei.get(g, "uoid") for g in ei.groups()}
     assert str(cfg.accounts[0].identity.uoid) in uoids
+
+
+def test_identity_ids_checkpointed_before_emaildefaults_failure_allows_later_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    with_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                    "aliases": [
+                        {
+                            "id": "ephemeral_ident",
+                            "name": "Ephemeral Identity",
+                            "email": "eph-id@gmail.example",
+                            "realName": "Alice",
+                        }
+                    ],
+                }
+            ],
+        },
+        name="edfail1.json",
+    )
+
+    real_merge = kp._merge_kconfig_atomic
+    fail_once = [True]
+
+    def fail_on_emaildefaults(path: Path, *args: object, **kwargs: object) -> list[str]:
+        if fail_once[0] and path.name == "emaildefaults":
+            fail_once[0] = False
+            raise OSError("simulated emaildefaults write failure")
+        return real_merge(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kp, "_merge_kconfig_atomic", fail_on_emaildefaults)
+
+    with pytest.raises(OSError):
+        kp.provision(
+            config_path=with_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    # Confirm the alias identity was written before emaildefaults failed
+    ei_before = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    uoids_before = {ei_before.get(g, "uoid") for g in ei_before.groups()}
+    assert str(kp.stable_identity_uoid("ephemeral_ident")) in uoids_before
+
+    # Remove the alias and run with --prune; the checkpointed identity UOID must be pruned
+    without_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="edfail2.json",
+    )
+    assert (
+        kp.provision(
+            config_path=without_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            prune=True,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    ei_after = kp.KConfigFile.load(cfg_dir / "emailidentities")
+    uoids_after = {ei_after.get(g, "uoid") for g in ei_after.groups()}
+    assert str(kp.stable_identity_uoid("ephemeral_ident")) not in uoids_after

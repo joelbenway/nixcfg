@@ -1487,6 +1487,7 @@ def reconcile_emailidentities(
     gpg_runner: Callable[[list[str]], str | None] | None,
     dry_run: bool,
     prune: bool,
+    on_identities_saved: Callable[[], None] | None = None,
 ) -> tuple[list[str], dict[str, int]]:
     actions: list[str] = []
     ei_path = config_dir / "emailidentities"
@@ -1647,6 +1648,8 @@ def reconcile_emailidentities(
             ei_path, _apply_identities, dry_run=dry_run, label="emailidentities"
         )
     )
+    if not dry_run and on_identities_saved is not None:
+        on_identities_saved()
 
     # Also update emaildefaults
     ed_path = config_dir / "emaildefaults"
@@ -2049,14 +2052,21 @@ def provision(
                 )
 
             id_actions, _ = reconcile_emailidentities(
-                cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
+                cfg,
+                config_dir,
+                state,
+                gpg_runner=gpg_runner,
+                dry_run=dry_run,
+                prune=prune,
+                on_identities_saved=(
+                    None
+                    if dry_run
+                    else lambda: _sync_managed_state(
+                        cfg, state, state_file, prune=prune, include_identities=True
+                    )
+                ),
             )
             all_actions.extend(id_actions)
-
-            if not dry_run:
-                _sync_managed_state(
-                    cfg, state, state_file, prune=prune, include_identities=True
-                )
 
             assigned_resources: dict[str, str] = {}
             if akonadi_available:
