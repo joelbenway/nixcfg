@@ -97,6 +97,7 @@ in {
               "cname=git.benway.me,zita.skylab.home"
               "cname=vault.benway.me,zita.skylab.home"
               "cname=metrics.benway.me,zita.skylab.home"
+              "cname=notify.benway.me,zita.skylab.home"
             ];
         };
       };

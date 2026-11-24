@@ -196,6 +196,11 @@ in {
     ];
   };
 
+  notify.client.onFailureUnits = [
+    "pihole-ftl"
+    "unbound"
+  ];
+
   auto-update = {
     enable = true;
     dates = "*-*-* 06:00:00";

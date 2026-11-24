@@ -23,12 +23,35 @@ REBOOT_WINDOW="${AUTO_UPDATE_REBOOT_WINDOW:-03:30}"
 
 mkdir -p "${STATE_DIR}"
 
+STATUS_REPORTED=false
+LOCK_ACQUIRED=false
+report_status() {
+  STATUS_REPORTED=true
+  nixos-auto-update-write-status "$@"
+}
+
+on_exit() {
+  local rc=$?
+  if [ "$LOCK_ACQUIRED" = "true" ]; then
+    git -C "${REPO_DIR}" checkout -- modules/hermes/agent-env.nix 2>/dev/null || true
+  fi
+  if [ "$rc" -ne 0 ] && [ "$STATUS_REPORTED" != "true" ]; then
+    report_status \
+      "update_failed" \
+      "critical" \
+      "Auto-update exited unexpectedly on ${HOST_NAME} (exit ${rc})" \
+      "Inspect journalctl -u nixos-auto-update on ${HOST_NAME}." || true
+  fi
+}
+trap on_exit EXIT
+
 # Serialize updater executions across manual and timer-driven runs
 exec 9>"${STATE_DIR}/update.lock"
 if ! flock -n 9; then
   echo "==> [Auto-Update] Another nixos-auto-update instance is already running; exiting."
   exit 0
 fi
+LOCK_ACQUIRED=true
 
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0="safe.directory"
@@ -100,7 +123,7 @@ fi
 if [ -z "$FETCHED_REF" ]; then
   echo "ERROR: Unable to fetch nixcfg updates from either origin or zita!" >&2
   echo "$FETCH_ERROR" >&2
-  nixos-auto-update-write-status \
+  report_status \
     "update_failed" \
     "critical" \
     "Failed to fetch nixcfg updates on ${HOST_NAME}" \
@@ -126,7 +149,7 @@ if ! SUB_OUT=$(git -C "${REPO_DIR}" submodule update --init --recursive 2>&1); t
     if ! SUB_ZITA_OUT=$(git -C "${REPO_DIR}" submodule update --init --recursive 2>&1); then
       echo "ERROR: Failed to update secrets submodule via zita mirror on ${HOST_NAME}!" >&2
       echo "$SUB_ZITA_OUT" >&2
-      nixos-auto-update-write-status \
+      report_status \
         "update_failed" \
         "critical" \
         "Failed to synchronize secrets submodule on ${HOST_NAME}" \
@@ -136,7 +159,7 @@ if ! SUB_OUT=$(git -C "${REPO_DIR}" submodule update --init --recursive 2>&1); t
   else
     echo "ERROR: Failed to update secrets submodule on ${HOST_NAME}!" >&2
     echo "$SUB_OUT" >&2
-    nixos-auto-update-write-status \
+    report_status \
       "update_failed" \
       "critical" \
       "Failed to synchronize secrets submodule on ${HOST_NAME}" \
@@ -170,11 +193,6 @@ if [ -d "${INTERACTIVE_REPO}/.git" ]; then
 fi
 
 # Stage Hermes runtime leaf on Zita (if enabled) before evaluating flake
-cleanup_staged_leaf() {
-  git -C "${REPO_DIR}" checkout -- modules/hermes/agent-env.nix 2>/dev/null || true
-}
-trap cleanup_staged_leaf EXIT
-
 if [ "$HERMES_ENABLE" = "true" ]; then
   RUNTIME_LEAF="$HERMES_RUNTIME_LEAF"
   if [ -f "${RUNTIME_LEAF}" ]; then
@@ -192,7 +210,7 @@ echo "==> [Auto-Update] Building target system closure for ${HOST_NAME}..."
 PREV_SYSTEM=$(readlink -f /run/current-system)
 if ! NEW_SYSTEM=$(nix build --no-link --print-out-paths "${REPO_DIR}#nixosConfigurations.${HOST_NAME}.config.system.build.toplevel"); then
   echo "ERROR: Target system build failed on ${HOST_NAME}!" >&2
-  nixos-auto-update-write-status \
+  report_status \
     "update_failed" \
     "critical" \
     "Auto-update build failed on ${HOST_NAME}" \
@@ -204,13 +222,13 @@ rollback() {
   echo "ERROR: Update or canary verification failed on ${HOST_NAME}! Rolling back to ${PREV_SYSTEM}..." >&2
   nix-env -p /nix/var/nix/profiles/system --set "${PREV_SYSTEM}" 2>/dev/null || true
   if "${PREV_SYSTEM}/bin/switch-to-configuration" switch; then
-    nixos-auto-update-write-status \
+    report_status \
       "rollback_failed" \
       "critical" \
       "Update rolled back on ${HOST_NAME}" \
       "Failed to activate or pass canaries for ${NEW_SYSTEM}; rolled back to ${PREV_SYSTEM}."
   else
-    nixos-auto-update-write-status \
+    report_status \
       "rollback_failed" \
       "critical" \
       "CRITICAL: Update and rollback failed on ${HOST_NAME}" \
@@ -270,7 +288,7 @@ CURRENT_PARAMS=$(cat /run/current-system/kernel-params 2>/dev/null || echo "")
 if [ "$BOOTED_KERNEL" = "$CURRENT_KERNEL" ] &&
   [ "$BOOTED_INITRD" = "$CURRENT_INITRD" ] &&
   [ "$BOOTED_PARAMS" = "$CURRENT_PARAMS" ]; then
-  nixos-auto-update-write-status \
+  report_status \
     "healthy" \
     "info" \
     "${HOST_NAME} is up to date" \
@@ -290,7 +308,7 @@ if [ "$TPM_ENABLE" = "true" ]; then
   if [ "$SAFETY_RC" -ne 0 ]; then
     echo "WARNING: Pre-reboot TPM safety check flagged a risk; skipping automatic reboot!" >&2
     echo "$SAFETY_OUT" >&2
-    nixos-auto-update-write-status \
+    report_status \
       "reboot_required_attended" \
       "critical" \
       "${HOST_NAME} requires an attended reboot (TPM PCR drift risk)" \
@@ -300,7 +318,7 @@ if [ "$TPM_ENABLE" = "true" ]; then
 fi
 
 if [ "$REBOOT_ENABLE" != "true" ]; then
-  nixos-auto-update-write-status \
+  report_status \
     "reboot_required_attended" \
     "normal" \
     "${HOST_NAME} updated kernel; reboot required at your convenience" \
@@ -320,7 +338,7 @@ if command -v bootctl >/dev/null 2>&1; then
     ! bootctl set-default "$BOOTED_ID" ||
     ! bootctl set-oneshot "$TARGET_ID"; then
     echo "WARNING: Could not establish bootctl oneshot fallback guard (booted=${BOOTED_ID:-none}, target=${TARGET_ID:-none}); skipping unattended reboot!" >&2
-    nixos-auto-update-write-status \
+    report_status \
       "reboot_required_attended" \
       "critical" \
       "${HOST_NAME} requires an attended reboot (boot guard setup failed)" \
@@ -338,7 +356,7 @@ jq -n \
 
 echo "==> [Auto-Update] Scheduling maintenance reboot at ${REBOOT_WINDOW}..."
 shutdown -r "${REBOOT_WINDOW}" "NixOS auto-update scheduled kernel reboot" || true
-nixos-auto-update-write-status \
+report_status \
   "reboot_scheduled" \
   "info" \
   "${HOST_NAME} scheduled kernel reboot for ${REBOOT_WINDOW}" \

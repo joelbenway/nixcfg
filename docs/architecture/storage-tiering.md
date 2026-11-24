@@ -88,7 +88,7 @@ MIN_AGE_DAYS=14      # Only evict files whose access time (atime) is older than 
 
 ## Data Integrity & Maintenance
 
-* **Automated SMART Drive Health Monitoring (`smartd`)**: Fleet-wide daemon via [`modules/smartd.nix`](../../modules/smartd.nix) continuously monitoring ATA and NVMe storage devices. Schedules daily short self-tests (`02:00`), weekly long self-tests (`Sundays 04:00`), monitors temperature thresholds (warns at 55°C, critical at 65°C), respects disk spindown with `-n standby,q`, broadcasts terminal warnings via `wall`, and provides the [`disk-health`](../../pkgs/disk-health/disk-health.sh) CLI inspection utility.
+* **Automated SMART Drive Health Monitoring (`smartd`)**: Fleet-wide daemon via [`modules/smartd.nix`](../../modules/smartd.nix) continuously monitoring ATA and NVMe storage devices. Schedules daily short self-tests (`02:00`), weekly long self-tests (`Sundays 04:00`), monitors temperature thresholds (warns at 55°C, critical at 65°C), respects disk spindown with `-n standby,q`, publishes alerts to the fleet notification bus (`fleet-notify`, see [Fleet Notification Bus](../howto/fleet-notify.md)), and provides the [`disk-health`](../../pkgs/disk-health/disk-health.sh) CLI inspection utility.
 * **Monthly Automated Scrub**: Configured via `services.btrfs.autoScrub`, verifying checksums across root, the cache pool, and the 24TB bulk drive on a monthly cadence.
 * **Instant Decryption via Persistent Keyfile**: Storage disks are encrypted with LUKS2 and decrypted during Stage 2 system initialization using a keyfile safely stored on `/persist/secrets/storage-luks.key`.
 

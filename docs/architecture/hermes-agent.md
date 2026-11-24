@@ -5,7 +5,7 @@ description: "Architecture of the Hermes AI agent on zita: Signal messenger brid
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - architecture
   - ai
@@ -108,7 +108,16 @@ Hermes's core identity, behavioral directives, and immutable operating constrain
 
 ---
 
+## 5. Fleet Telemetry (`beszel-query`) & Alerting Boundary
+
+* **Read-Only Telemetry Access**: Hermes has the `beszel-query` CLI on its `PATH` backed by a strictly read-only Beszel Hub account (`secrets/beszel-hermes.env.age`), enabling on-demand Signal queries for host health, `systemd` unit status/logs, cached S.M.A.R.T. metrics (respecting `zita`'s HDD spindown), and alert history.
+* **No LLM in the Alert Path**: Automated fleet alerts (Beszel, `auto-update`, `smartd`, and systemd `OnFailure=`) push directly to self-hosted **`ntfy-sh`** on `zita` (`notify.benway.me`) rather than through a Hermes webhook listener. Alerts keep delivering to Android and desktops even if Hermes or external LLM APIs are offline; Hermes stays quiet until Joel asks a question over Signal.
+
+---
+
 ## Related Documents
+* [Beszel Fleet Telemetry & Hermes Setup](../howto/beszel-hermes-prompt.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
 * [AI Development Environment](./ai-development.md)
 * [Host Profile: zita](../hosts/zita.md)
 * [Security, Cryptography & Bootstrapping](./security-model.md)

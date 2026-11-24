@@ -8,6 +8,8 @@
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
+  fleetNotifySubTokenFile = lib.custom.relativeToRoot "secrets/fleet-notify-sub.token.age";
+  hasFleetNotifySubToken = builtins.pathExists fleetNotifySubTokenFile;
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
@@ -24,42 +26,54 @@ in {
 
   age = {
     identityPaths = ["/persist${hostKeyPath}"];
-    secrets = {
-      wifi-environment-variables = {
-        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-        mode = "600";
-        owner = "root";
-        group = "users";
+    secrets =
+      {
+        wifi-environment-variables = {
+          file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+          mode = "600";
+          owner = "root";
+          group = "users";
+        };
+        wifi-guest-environment-variables = {
+          file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+          mode = "600";
+          owner = "root";
+          group = "users";
+        };
+        tailscale-oauth-env = {
+          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
+          name = "tailscale.env";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+        luks-passphrase = {
+          file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
+          name = "${hostname}-luks-passphrase.txt";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+        nix-builder-ssh = {
+          file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
+          path = "/root/.ssh/nix-builder";
+          mode = "600";
+          owner = "root";
+          group = "root";
+        };
+      }
+      // lib.optionalAttrs hasFleetNotifySubToken {
+        fleet-notify-sub-token = {
+          file = fleetNotifySubTokenFile;
+          name = "fleet-notify-sub.token";
+          mode = "0440";
+          owner = "root";
+          group = "users";
+        };
       };
-      wifi-guest-environment-variables = {
-        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-        mode = "600";
-        owner = "root";
-        group = "users";
-      };
-      tailscale-oauth-env = {
-        file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-        name = "tailscale.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      luks-passphrase = {
-        file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
-        name = "${hostname}-luks-passphrase.txt";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      nix-builder-ssh = {
-        file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-        path = "/root/.ssh/nix-builder";
-        mode = "600";
-        owner = "root";
-        group = "root";
-      };
-    };
   };
+
+  notify.client.subscribeTokenFile = lib.mkIf hasFleetNotifySubToken config.age.secrets.fleet-notify-sub-token.path;
 
   openssh = {
     enable = true;
@@ -136,8 +150,7 @@ in {
     enable = true;
     dates = "*-*-* 06:15:00";
     randomizedDelaySec = "15m";
-    # Workstations/laptops apply user-space updates automatically and notify in KDE Plasma when a kernel reboot is ready
+    # Workstations/laptops apply user-space updates automatically and notify via fleet-notify when a kernel reboot is ready
     reboot.enable = false;
-    desktopNotifications.enable = true;
   };
 }

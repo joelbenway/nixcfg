@@ -1,11 +1,11 @@
 ---
 type: concept
 title: "Host Profile: zita (HP z620 Workstation & Storage Server)"
-description: "Homelab server profile for zita, an HP z620 dual Xeon workstation running 24TB tiered storage, Jellyfin, Actual Budget, Samba, Copyparty, and Nix binary cache."
+description: "Homelab server profile for zita, an HP z620 dual Xeon workstation running 24TB tiered storage, Jellyfin, Actual Budget, Samba, Copyparty, Forgejo, Vaultwarden, Beszel Hub, ntfy, Hermes, and Harmonia binary cache."
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - host
   - server
@@ -73,16 +73,20 @@ Today, `zita` lives in the basement where it acts as the central storage applian
 * **[Samba (SMB/CIFS)](../../modules/samba.nix)**: Declarative, multi-user local network file shares for Windows, Linux, and macOS clients with guest and authenticated access.
 * **[Copyparty](../../modules/copyparty.nix)**: Blazing-fast HTTP/WebDAV file server allowing instant upload, streaming, audio player, and file management via any browser without accounts or heavy client software.
 * **[Caddy Reverse Proxy](../../hosts/zita/default.nix)**: Handles automated TLS certificate acquisition via Cloudflare DNS-01 API challenges, exposing services securely over local DNS and Tailscale.
-* **[Nix Binary Cache (`nix-serve`)](../../modules/binary-cache.nix)**: Caches compiled Nix store paths locally and cryptographically signs them with a private key, dramatically accelerating rebuilds across all laptops and workstations.
-* **[Hermes Signal Bot](../../modules/hermes.nix)**: Automated alerting agent routing homelab notifications and backup reports securely over Signal messaging.
+* **[Nix Binary Cache (Harmonia)](../../modules/binary-cache.nix)**: Caches compiled Nix store paths locally (`services.harmonia.cache`) and cryptographically signs them with an ed25519 key, dramatically accelerating rebuilds across all laptops and workstations.
+* **[Hermes Autonomous Agent](../../modules/hermes.nix)**: Native systemd AI systems engineer bridged to Signal via `signal-cli`, with privilege-separated Agentic GitOps self-provisioning and read-only `beszel-query` fleet telemetry access.
 * **[Forgejo Git Forge & Actions Runner](../../modules/forgejo.nix)**: Private, self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port `2220`. Features built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores for native Nix builds and Podman container workflows.
 * **[Vaultwarden Password Manager](../../modules/vaultwarden.nix)**: Private, Bitwarden-compatible password manager (`vault.benway.me`) backed by SQLite with automated daily persistent backups, WebSocket sync across clients, and Caddy reverse proxy.
-* **[Beszel Fleet Telemetry Hub](../../modules/beszel.nix)**: Lightweight PocketBase-backed monitoring hub (`metrics.benway.me`) polling all 5 fleet hosts over Tailscale/LAN SSH for CPU, RAM, thermals, S.M.A.R.T. health, `systemd` service status/logs, laptop battery, and Quadro M2000 GPU utilization, paired with the read-only `beszel-query` CLI for Hermes triage over Signal.
-* **Distributed Nix Builder**: With 32 logical threads and 128GB of RAM, `zita` acts as the primary compilation beast for `agnes`, `jerome`, and `francis`.
+* **[Beszel Fleet Telemetry Hub](../../modules/beszel.nix)**: Lightweight PocketBase-backed monitoring hub (`metrics.benway.me`) polling all 5 fleet hosts over Tailscale/LAN SSH for CPU, RAM, thermals, S.M.A.R.T. health, `systemd` service status/logs, laptop battery, and Quadro M2000 GPU utilization—pushing alerts directly to loopback `ntfy`, paired with the read-only `beszel-query` CLI for on-demand Hermes Signal troubleshooting.
+* **[`ntfy` Fleet Notification Bus](../../modules/notify.nix)**: Self-hosted `ntfy-sh` broker (`notify.benway.me` + Tailscale `:2587`) with `deny-all` least-privilege tokens (`fleet-pub` write-only, `fleet-sub` read-only, `joel` admin), unifying `auto-update`, `smartd`, Beszel, and systemd `OnFailure=` alerts across Android and desktop sessions.
+* **Distributed Nix Builder**: With 32 logical threads and 128GB of RAM, `zita` pairs with `michael` as a remote compilation builder for `agnes`, `jerome`, and `francis`.
 
 ---
 
 ## Related Documents
 * [Storage Architecture & Tiering](../architecture/storage-tiering.md)
+* [Hermes Autonomous Agent & Signal Gateway](../architecture/hermes-agent.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
+* [Beszel Fleet Telemetry & Hermes Setup](../howto/beszel-hermes-prompt.md)
 * [Fleet Overview & Ethos](../architecture/fleet-overview.md)
 * [ADR 0002: MergerFS Tiered Storage over Traditional ZFS](../decisions/0002-mergerfs-over-zfs-for-bulk-storage.md)

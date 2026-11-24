@@ -29,6 +29,10 @@ let
       tailscale = 8091;
       agent = 45876;
     };
+    ntfy = {
+      internal = 2586;
+      tailscale = 2587;
+    };
 
     # Fleet & Infrastructure Services
     binaryCache = {
@@ -36,9 +40,6 @@ let
     };
     telemetry = {
       internal = 3000;
-    };
-    autoUpdate = {
-      internal = 9105;
     };
     hnsd = {
       resolver = 5350;

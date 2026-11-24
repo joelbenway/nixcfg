@@ -1,23 +1,24 @@
 ---
 type: howto
-title: "How-To: Beszel Fleet Telemetry & Hermes Self-Configuration"
-description: "One-time Agenix secret bootstrap, Beszel alert policy setup, and the ready-to-paste prompt for Hermes to self-configure its Signal alerting role."
+title: "How-To: Beszel Fleet Telemetry & Hermes Setup"
+description: "One-time Agenix secret bootstrap, Beszel alert policy setup via direct loopback ntfy, and the ready-to-paste prompt for Hermes's read-only beszel-query role."
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-20"
+timestamp: "2026-11-24"
 tags:
   - howto
   - telemetry
   - beszel
   - hermes
+  - ntfy
   - signal
   - monitoring
 ---
 
 # Beszel Fleet Telemetry & Hermes Setup
 
-This guide covers the one-time secret bootstrap, Beszel Hub alert policy setup on `https://metrics.benway.me`, and the prompt to paste into Signal so **Hermes** configures its own alert webhook and triage behavior.
+This guide covers the one-time secret bootstrap, Beszel Hub alert policy setup on `https://metrics.benway.me` pushing directly to the self-hosted **`ntfy`** fleet notification bus on `zita`, and the prompt to paste into Signal so **Hermes** verifies its read-only `beszel-query` troubleshooting role.
 
 ---
 
@@ -86,31 +87,36 @@ Open `https://metrics.benway.me` (or `https://zita.gentoo-humboldt.ts.net:8091`)
      - **Status (offline):** **Disabled** (prevents false alerts when laptops sleep or roam).
      - **Failed `systemd` units:** **Disabled** by default (still visible on the dashboard and via `beszel-query`).
      - **Disk, Temperature, S.M.A.R.T.:** Enabled.
-4. **Add Hermes's webhook URL (still signed in as `hermes-ro@benway.me`):** After running the Hermes self-configuration prompt below, paste the Shoutrrr URL Hermes outputs into **Settings -> Notifications** (typically `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`) and click **Send test notification**.
+4. **Add the loopback `ntfy` notification URL (still signed in as `hermes-ro@benway.me`):**
+   - Beszel pushes alerts directly to `zita`'s local `ntfy-sh` instance over loopback (zero LLM or Hermes dependency; instant delivery to Android `ntfy` and KDE Plasma desktops). See [Fleet Notification Bus](./fleet-notify.md) for bootstrapping the `fleet-pub` token.
+   - Paste the Shoutrrr URL into **Settings → Notifications**:
+     ```text
+     ntfy://:<PUB_TOKEN>@127.0.0.1:2586/fleet-alerts?disabletls=true&priority=high
+     ```
+     *(If an older Shoutrrr build rejects `disabletls=true`, use `scheme=http` instead.)*
+   - Click **Send test notification** and confirm delivery on your phone and desktop.
 
 ---
 
-## 3. Hermes Self-Configuration Prompt
+## 3. Hermes Read-Only Telemetry Check Prompt
 
-Open whichever Signal chat (your 1:1 DM with Hermes or a dedicated homelab alerts group) you want fleet alerts delivered to, and paste the prompt below directly to Hermes:
+Beszel alerts go directly to `ntfy` rather than through a Hermes webhook, so alerting keeps working even if Hermes or external LLM APIs are offline. Hermes retains read-only `beszel-query` access on `zita` for on-demand Signal questions and troubleshooting.
+
+Paste this prompt into Signal to verify Hermes's read-only telemetry setup:
 
 ```text
-You now have read-only access to fleet telemetry from Beszel Hub on zita via the `beszel-query` CLI (documented in your SOUL.md). Please configure yourself for your role in our fleet telemetry and alerting scheme targeting THIS Signal chat:
+You have read-only access to fleet telemetry from Beszel Hub on zita via the `beszel-query` CLI (documented in your SOUL.md). Automated Beszel alerts are now pushed directly to our self-hosted `ntfy` fleet bus on zita, so you do NOT need to run a Beszel alert webhook listener.
 
-1. Verify read-only telemetry access right now by running:
+Please verify your on-demand fleet telemetry role:
+
+1. Run read-only checks right now:
    - `beszel-query summary`
    - `beszel-query smart`
    - `beszel-query systemd --failed`
-   Report any missing credentials or errors immediately before continuing.
+   - `beszel-query alerts`
+   Report any missing credentials or errors immediately.
 
-2. Enable your built-in webhook adapter bound strictly to localhost (`127.0.0.1`, port `8644`). Set `WEBHOOK_ENABLED=true` and `WEBHOOK_PORT=8644` in `~/.hermes/.env`, and explicitly pin the bind host to loopback in `config.yaml` by setting `platforms.webhook.extra.host = "127.0.0.1"` via `agent-env.nix` `extraSettings` (do NOT rely on `WEBHOOK_HOST` in `~/.hermes/.env`, which the webhook env loader ignores; without `platforms.webhook.extra.host`, the adapter binds all interfaces and rejects/skips unsigned `INSECURE_NO_AUTH` routes for both static and dynamic subscriptions). Configure webhook routes under `platforms.webhook` in `config.yaml` (via `agent-env.nix` `extraSettings` or `hermes webhook subscribe`), followed by a detached reload if needed. Do NOT expose the webhook port beyond localhost.
+2. If you previously configured a `beszel` webhook route/subscription for alert forwarding, disable or remove it so alerts are not duplicated alongside `ntfy`.
 
-3. Create a webhook route/subscription named `beszel` (accepting Beszel Shoutrrr generic JSON `{ "title": "...", "message": "..." }`) that delivers to THIS Signal chat and runs a triage prompt with these rules:
-   - Because Beszel's Shoutrrr generic webhook sends unsigned JSON POSTs by default, either configure this loopback-only (`127.0.0.1`) route with `secret: INSECURE_NO_AUTH` (or equivalent unsigned loopback setting) OR configure header-based auth and include the matching Shoutrrr `@Header=Value` query parameter in the URL you return in step 4.
-   - Inspect the alert payload (`title` and `message`).
-   - Run targeted `beszel-query` checks for context (e.g., `beszel-query host <name> --hours 1`, `beszel-query systemd --host <name> --failed`, `beszel-query systemd --host <name> --logs <unit>`, or `beszel-query smart --host <name>`).
-   - Send ONE concise, actionable Signal message summarizing: severity, affected host, what actually triggered, relevant context/logs, and suggested next check.
-   - Remember: `zita` and `michael` are always-on servers; `francis`, `agnes`, and `jerome` are workstations/laptops that sleep normally. Stay quiet unless an alert fires or I ask you a question.
-
-4. Verify the webhook listener is healthy (`curl -sf http://127.0.0.1:8644/health`), test the `beszel` route end-to-end with a synthetic test payload (`{"title":"[TEST] Beszel -> Hermes","message":"Verify Signal triage pipeline"}`), and reply with the exact Shoutrrr URL for me to paste into Beszel Hub's Settings -> Notifications (e.g., `generic://127.0.0.1:8644/webhooks/beszel?template=json&disabletls=yes`, plus any `@Header` parameter if you enabled header auth).
+3. Remember: `zita` and `michael` are always-on servers; `francis`, `agnes`, and `jerome` are workstations/laptops that sleep normally. Stay quiet unless I ask you a question, and use `beszel-query` whenever I ask about host health, logs, S.M.A.R.T. status, or alert history.
 ```
