@@ -2,11 +2,38 @@
 # SPDX-License-Identifier: MIT
 {
   config,
+  hostname,
   lib,
   pkgs,
   ...
 }: let
   cfg = config.smartd;
+  useFleetNotify = cfg.notifications.fleetNotify && (config.notify.client.enable or false);
+
+  smartdNotifyScript = pkgs.writeShellApplication {
+    name = "smartd-fleet-notify";
+    runtimeInputs =
+      [config.notify.client.package]
+      ++ lib.optional cfg.notifications.wall pkgs.util-linux;
+    text = ''
+      set -euo pipefail
+      FAILTYPE="''${SMARTD_FAILTYPE:-Alert}"
+      DEVICE="''${SMARTD_DEVICE:-disk}"
+      BODY="''${SMARTD_FULLMESSAGE:-''${SMARTD_MESSAGE:-SMART warning detected on ${hostname}}}"
+      fleet-notify \
+        --best-effort \
+        --topic fleet-alerts \
+        --priority high \
+        --tags warning,cd \
+        --title "[${hostname}] SMART: ''${FAILTYPE} (''${DEVICE})" \
+        "''${BODY}"
+      ${lib.optionalString cfg.notifications.wall ''
+        printf 'Problem detected with disk: %s\n%s\n' "''${SMARTD_DEVICESTRING:-$DEVICE}" "$BODY" | wall 2>/dev/null || true
+      ''}
+    '';
+  };
+
+  fleetExecOpt = lib.optionalString useFleetNotify "-m <nomailer> -M exec ${smartdNotifyScript}/bin/smartd-fleet-notify";
 
   tempOpt = lib.optionalString (cfg.temperature.diff > 0 || cfg.temperature.info > 0 || cfg.temperature.crit > 0) "-W ${toString cfg.temperature.diff},${toString cfg.temperature.info},${toString cfg.temperature.crit}";
 
@@ -20,6 +47,7 @@
   in "-s (${scheds})");
 
   defaultOpts = lib.concatStringsSep " " (lib.filter (s: s != "") [
+      fleetExecOpt
       "-a"
       "-o on"
       "-S on"
@@ -87,9 +115,14 @@ in {
     };
 
     notifications = {
+      fleetNotify = lib.mkOption {
+        type = lib.types.bool;
+        default = config.notify.client.enable or false;
+        description = "Send SMART disk alerts to the fleet-notify bus (ntfy).";
+      };
       wall = lib.mkOption {
         type = lib.types.bool;
-        default = true;
+        default = !(config.notify.client.enable or false);
         description = "Broadcast alert to all terminals via wall";
       };
       mail = {
@@ -142,9 +175,10 @@ in {
       };
       devices = cfg.devices;
       notifications = {
-        wall.enable = cfg.notifications.wall;
+        wall.enable = !useFleetNotify && cfg.notifications.wall;
+        x11.enable = false;
         mail = {
-          enable = cfg.notifications.mail.enable;
+          enable = !useFleetNotify && cfg.notifications.mail.enable;
           recipient = cfg.notifications.mail.recipient;
         };
       };

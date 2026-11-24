@@ -41,9 +41,6 @@ let
     telemetry = {
       internal = 3000;
     };
-    autoUpdate = {
-      internal = 9105;
-    };
     hnsd = {
       resolver = 5350;
       root = 5354;

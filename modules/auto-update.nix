@@ -8,15 +8,15 @@
   ...
 }: let
   cfg = config.auto-update;
-  tailnet = config.tailscale.tailnet or "gentoo-humboldt.ts.net";
-  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   deployKeySecretFile = lib.custom.relativeToRoot "secrets/github-secrets-deploy-key.age";
   hasDeployKeySecret = builtins.pathExists deployKeySecretFile;
 
-  # Write status.json helper script
+  # Write status.json helper script (and publish actionable transitions to fleet-notify)
   writeStatusScript = pkgs.writeShellApplication {
     name = "nixos-auto-update-write-status";
-    runtimeInputs = with pkgs; [bash coreutils jq];
+    runtimeInputs =
+      (with pkgs; [bash coreutils jq])
+      ++ lib.optional (config.notify.client.enable or false) config.notify.client.package;
     text = ''
       export AUTO_UPDATE_STATE_DIR="${cfg.stateDir}"
       export AUTO_UPDATE_HOST_NAME="${hostname}"
@@ -101,33 +101,6 @@
       export AUTO_UPDATE_REBOOT_ENABLE="${lib.boolToString cfg.reboot.enable}"
       export AUTO_UPDATE_REBOOT_WINDOW="${cfg.reboot.window}"
       exec bash ${../pkgs/auto-update/auto-update.sh} "$@"
-    '';
-  };
-
-  # Tiny HTTP status server script (serves status.json on tailscale0:9105)
-  statusServerScript = pkgs.writeShellApplication {
-    name = "nixos-auto-update-status-server";
-    runtimeInputs = with pkgs; [python3];
-    text = ''
-      exec python3 ${../pkgs/auto-update/status-server.py} "${cfg.stateDir}/status.json" "${toString cfg.statusServer.port}"
-    '';
-  };
-
-  # KDE Plasma desktop notification poller script for workstations
-  desktopNotifyScript = pkgs.writeShellApplication {
-    name = "fleet-health-notify";
-    runtimeInputs = with pkgs; [
-      bash
-      coreutils
-      curl
-      jq
-      libnotify
-    ];
-    text = ''
-      export FLEET_NOTIFY_TAILNET="${tailnet}"
-      export FLEET_NOTIFY_PORT="${toString cfg.statusServer.port}"
-      export FLEET_NOTIFY_HOSTS="${lib.concatStringsSep " " cfg.desktopNotifications.monitoredHosts}"
-      exec bash ${../pkgs/auto-update/desktop-notify.sh} "$@"
     '';
   };
 in {
@@ -222,32 +195,6 @@ in {
         description = "Verify local DNS resolution (@127.0.0.1) during canary checks.";
       };
     };
-
-    statusServer = {
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Expose /var/lib/nixos-auto-update/status.json on tailscale0 for desktop notifications.";
-      };
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = ports.autoUpdate.internal;
-        description = "TCP port on tailscale0 for status.json HTTP server.";
-      };
-    };
-
-    desktopNotifications = {
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = config.plasma.enable or false;
-        description = "Poll fleet status.json endpoints and show native KDE Plasma notifications when human attention is needed.";
-      };
-      monitoredHosts = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = ["michael" "zita" "francis" "agnes" "jerome"];
-        description = "Fleet hosts to poll for attended reboot or rollback alerts.";
-      };
-    };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -320,28 +267,6 @@ in {
       };
     })
 
-    (lib.mkIf cfg.statusServer.enable {
-      networking.firewall.interfaces."tailscale0".allowedTCPPorts = [cfg.statusServer.port];
-      networking.firewall.extraInputRules = ''
-        iifname "tailscale0" tcp dport ${toString cfg.statusServer.port} accept
-        ip saddr 192.168.0.0/16 tcp dport ${toString cfg.statusServer.port} accept
-      '';
-
-      systemd.services.nixos-auto-update-status = {
-        description = "Expose NixOS Auto-Update status.json over Tailscale";
-        after = ["network.target" "tailscaled.service"];
-        wantedBy = ["multi-user.target"];
-        serviceConfig = {
-          Type = "simple";
-          ExecStart = "${statusServerScript}/bin/nixos-auto-update-status-server";
-          Restart = "always";
-          RestartSec = "5s";
-          DynamicUser = true;
-          ReadOnlyPaths = [cfg.stateDir];
-        };
-      };
-    })
-
     (lib.mkIf cfg.gitMirror.enable {
       networking.firewall.interfaces."tailscale0".allowedTCPPorts = [9418];
       networking.firewall.extraInputRules = ''
@@ -360,27 +285,6 @@ in {
           RestartSec = "5s";
           DynamicUser = true;
           ReadOnlyPaths = [cfg.stateDir];
-        };
-      };
-    })
-
-    (lib.mkIf cfg.desktopNotifications.enable {
-      systemd.user.services.fleet-health-notify = {
-        description = "Notify KDE Plasma desktop when a NixOS fleet host requires an attended reboot or rolled back";
-        after = ["graphical-session.target"];
-        partOf = ["graphical-session.target"];
-        serviceConfig = {
-          Type = "oneshot";
-          ExecStart = "${desktopNotifyScript}/bin/fleet-health-notify";
-        };
-      };
-
-      systemd.user.timers.fleet-health-notify = {
-        description = "Periodic check for NixOS fleet health alerts in active desktop session";
-        wantedBy = ["graphical-session.target"];
-        timerConfig = {
-          OnStartupSec = "45s";
-          OnUnitActiveSec = "30m";
         };
       };
     })

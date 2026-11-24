@@ -36,6 +36,12 @@ if ! nixos-auto-update-canary; then
       "${HOST_NAME} failed post-boot canary check after kernel update; rebooting into previous default generation" \
       "Post-boot canary failed on $(readlink -f /run/booted-system)."
     systemctl reboot
+  else
+    nixos-auto-update-write-status \
+      "update_failed" \
+      "critical" \
+      "${HOST_NAME} failed post-boot canary check after attended reboot" \
+      "Post-boot canary failed on $(readlink -f /run/booted-system)."
   fi
   exit 1
 fi
