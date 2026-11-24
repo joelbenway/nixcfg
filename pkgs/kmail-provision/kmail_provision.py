@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -259,6 +260,10 @@ def _parse_smtp(
     password = _normalize_password(raw_pw, provider)
     if not password:
         raise ConfigError(f"{ctx}: password for SMTP is empty after normalization")
+    if password.startswith("\ufeff"):
+        raise ConfigError(
+            f"{ctx}: SMTP password starting with U+FEFF (BOM) is unsupported by QtKeychain/KMail"
+        )
 
     return SmtpConfig(
         host=host.strip(),
@@ -324,6 +329,10 @@ def _parse_imap(
     password = _normalize_password(raw_pw, provider)
     if not password:
         raise ConfigError(f"{ctx}: password for IMAP is empty after normalization")
+    if password.startswith("\ufeff"):
+        raise ConfigError(
+            f"{ctx}: IMAP password starting with U+FEFF (BOM) is unsupported by QtKeychain/KMail"
+        )
 
     return ImapConfig(
         host=host.strip(),
@@ -912,9 +921,13 @@ class AkonadiClient:
             f"Akonadi Control D-Bus service unavailable after {wait_seconds}s"
         )
 
-    def _call_agent_mgr(self, method: str, *args: str) -> str:
+    def _call_agent_mgr(self, method: str, *args: str, timeout: int = 15) -> str:
         res = _run_qdbus(
-            self._CONTROL, self._AGENT_MGR_PATH, f"{self._AGENT_MGR_IFACE}.{method}", *args
+            self._CONTROL,
+            self._AGENT_MGR_PATH,
+            f"{self._AGENT_MGR_IFACE}.{method}",
+            *args,
+            timeout=timeout,
         )
         if res.returncode == 124:
             raise SessionNotReadyError(
@@ -1050,7 +1063,10 @@ class AkonadiClient:
             self._set_setting(resource_id, setter, arg)
         self._set_setting(resource_id, "save")
 
-    def _get_resource_dbus_owner(self, resource_id: str, timeout: int = 5) -> str | None:
+    def _probe_resource_dbus_owner(
+        self, resource_id: str, timeout: int = 5
+    ) -> tuple[bool, str | None]:
+        """Return (probe_ok, owner_or_none). Distinguishes NameHasNoOwner from probe failures."""
         res = _run_qdbus(
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
@@ -1058,10 +1074,13 @@ class AkonadiClient:
             f"org.freedesktop.Akonadi.Resource.{resource_id}",
             timeout=timeout,
         )
-        if res.returncode != 0:
-            return None
-        owner = res.stdout.strip()
-        return owner or None
+        if res.returncode == 0:
+            owner = res.stdout.strip()
+            return (True, owner) if owner else (False, None)
+        combined = f"{res.stdout}\n{res.stderr}"
+        if "NameHasNoOwner" in combined or "does not have an owner" in combined:
+            return (True, None)
+        return (False, None)
 
     def _get_agent_status(self, resource_id: str, timeout: int = 5) -> int | None:
         res = _run_qdbus(
@@ -1081,12 +1100,11 @@ class AkonadiClient:
 
     def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
         # Akonadi's AgentProcessInstance::restartWhenIdle() silently ignores
-        # restartAgentInstance() when status() == 1 (Running/busy). Wait until
-        # the resource is idle and confirm a new D-Bus unique owner takes over.
+        # restartAgentInstance() when status() == 1 (Running/busy). Establish a
+        # reliable D-Bus owner baseline, wait until idle, and confirm a new owner.
         deadline = time.monotonic() + max(wait_seconds, 1)
-        owner_before = self._get_resource_dbus_owner(
-            resource_id, timeout=min(5, max(1, wait_seconds))
-        )
+        baseline_known = False
+        owner_before: str | None = None
         restart_requested = False
         last_restart_at = 0.0
 
@@ -1094,25 +1112,53 @@ class AkonadiClient:
             rem = deadline - time.monotonic()
             if rem <= 0:
                 break
-            step_timeout = max(1, min(5, int(rem) + 1))
+            step_timeout = max(1, min(5, math.ceil(rem)))
 
+            if not baseline_known:
+                ok_base, owner_before = self._probe_resource_dbus_owner(
+                    resource_id, timeout=step_timeout
+                )
+                if not ok_base:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(min(0.25, max(0.05, deadline - time.monotonic())))
+                    continue
+                baseline_known = True
+
+            ok_now = False
             owner_now: str | None = None
             if restart_requested:
-                owner_now = self._get_resource_dbus_owner(resource_id, timeout=step_timeout)
-                if owner_before is not None:
-                    if owner_now is not None and owner_now != owner_before:
+                ok_now, owner_now = self._probe_resource_dbus_owner(
+                    resource_id, timeout=step_timeout
+                )
+                if ok_now:
+                    if owner_before is not None:
+                        if owner_now is not None and owner_now != owner_before:
+                            return
+                    elif owner_now is not None:
                         return
-                elif owner_now is not None:
-                    return
 
-            status = self._get_agent_status(resource_id, timeout=step_timeout)
+            rem_status = deadline - time.monotonic()
+            if rem_status <= 0:
+                break
+            status = self._get_agent_status(
+                resource_id, timeout=max(1, min(5, math.ceil(rem_status)))
+            )
             if status != 1:
+                rem_restart = deadline - time.monotonic()
+                if rem_restart <= 0:
+                    break
                 now = time.monotonic()
                 if not restart_requested or (
                     now - last_restart_at >= 1.5
+                    and ok_now
                     and (owner_before is None or owner_now == owner_before)
                 ):
-                    self._call_agent_mgr("restartAgentInstance", resource_id)
+                    self._call_agent_mgr(
+                        "restartAgentInstance",
+                        resource_id,
+                        timeout=max(1, math.ceil(rem_restart)),
+                    )
                     restart_requested = True
                     last_restart_at = time.monotonic()
 
@@ -1339,12 +1385,16 @@ def reconcile_mailtransports(
                     changed = True
                     file_actions.append(f"mailtransports: pruned Transport {old_tid}")
 
-        if dry_run or not changed:
+        if dry_run:
             actions.extend(file_actions)
             break
 
         if _file_stat_sig(mt_path) != stat_before:
             continue
+
+        if not changed:
+            actions.extend(file_actions)
+            break
 
         kc.save_atomic(mt_path)
         actions.extend(file_actions)

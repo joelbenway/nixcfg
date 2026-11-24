@@ -21,6 +21,7 @@ static int exitCodeForKeychainError(QKeychain::Error err) {
   switch (err) {
     case QKeychain::NoBackendAvailable:
     case QKeychain::AccessDeniedByUser:
+    case QKeychain::AccessDenied:
       return 3;
     default:
       return 1;
@@ -57,6 +58,12 @@ int main(int argc, char *argv[]) {
   QStringDecoder utf8Decoder(
       QStringDecoder::Utf8, QStringConverter::Flag::ConvertInitialBom);
   const QString password = utf8Decoder(raw);
+  // QtKeychain's ReadPasswordJob::textData() decodes UTF-8 via QString::fromUtf8(),
+  // which strips a leading U+FEFF BOM. Reject before touching any existing wallet entry.
+  if (password.startsWith(QChar(0xFEFF))) {
+    std::cerr << "kmail-keychain-set: passwords starting with U+FEFF (BOM) are unsupported by QtKeychain/KMail\n";
+    return 1;
+  }
 
   // Check if the keychain already holds the exact same password.
   QKeychain::ReadPasswordJob readJob(service);

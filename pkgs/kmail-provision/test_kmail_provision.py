@@ -2738,6 +2738,8 @@ def test_akonadi_restart_waits_for_idle_and_confirms_new_dbus_owner(
 ) -> None:
     statuses = [1, 1, 0, 0]  # Running (busy) twice, then Idle
     owners = [":1.10", ":1.10", ":1.20"]
+    last_status: list[int | None] = [None]
+    observed_owners: list[str] = []
     restart_calls = 0
 
     def fake_run(args: list[str], **_kwargs: object) -> object:
@@ -2751,13 +2753,15 @@ def test_akonadi_restart_waits_for_idle_and_confirms_new_dbus_owner(
 
         if any(a.endswith(".GetNameOwner") for a in args):
             val = owners.pop(0) if len(owners) > 1 else owners[0]
+            observed_owners.append(val)
             return _Res(0, f"{val}\n")
         if any(a.endswith(".agentInstanceStatus") for a in args):
             val = statuses.pop(0) if len(statuses) > 1 else statuses[0]
+            last_status[0] = val
             return _Res(0, f"{val}\n")
         if any(a.endswith(".restartAgentInstance") for a in args):
-            # Must never have been called while status was Running (1)
-            assert statuses[0] != 1
+            # Must only be invoked after the mock actually returned Idle (0)
+            assert last_status[0] == 0
             restart_calls += 1
             return _Res(0, "")
         raise AssertionError(f"unexpected qdbus call: {args}")
@@ -2772,6 +2776,7 @@ def test_akonadi_restart_waits_for_idle_and_confirms_new_dbus_owner(
     client = kp.AkonadiClient()
     client.restart_resource("akonadi_imap_resource_0", wait_seconds=5)
     assert restart_calls == 1
+    assert ":1.20" in observed_owners
 
 
 def test_akonadi_restart_busy_timeout_raises_session_not_ready_and_keeps_pending_restart(
@@ -2975,7 +2980,11 @@ def test_transport_ids_checkpointed_before_identity_failure_allows_later_prune(
             gpg_runner=lambda _a: "",
         )
 
-    # Transport was written; remove alias and run with --prune
+    # Transport must exist before pruning so the final assertion proves pruning removed it
+    mt_before = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert f"Transport {kp.stable_transport_id('ephemeral_smtp')}" in mt_before.groups()
+
+    # Remove alias and run with --prune
     without_alias = _write_json(
         tmp_path,
         {
@@ -3007,3 +3016,248 @@ def test_transport_ids_checkpointed_before_identity_failure_allows_later_prune(
     )
     mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
     assert f"Transport {kp.stable_transport_id('ephemeral_smtp')}" not in mt.groups()
+
+
+def test_akonadi_restart_rechecks_deadline_after_status_probe_and_caps_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1) Deadline expires during agentInstanceStatus -> must NOT call restartAgentInstance
+    restart_calls = 0
+    now = [0.0]
+
+    def fake_run_expired(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            return _Res(0, ":1.10\n")
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            # Advance clock past the 2s deadline during the status probe
+            now[0] += 3.0
+            return _Res(0, "0\n")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run_expired)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(kp.time, "monotonic", lambda: now[0])
+
+    client = kp.AkonadiClient()
+    with pytest.raises(kp.SessionNotReadyError):
+        client.restart_resource("akonadi_imap_resource_0", wait_seconds=2)
+    assert restart_calls == 0
+
+    # 2) Remaining budget is passed as timeout to restartAgentInstance (not full 15s default)
+    now[0] = 0.0
+    restart_timeouts: list[object] = []
+    owners = [":1.10", ":1.20"]
+
+    def fake_run_capped(args: list[str], **kwargs: object) -> object:
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            val = owners.pop(0) if len(owners) > 1 else owners[0]
+            return _Res(0, f"{val}\n")
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            now[0] += 1.5  # 1.5s left out of 3s budget
+            return _Res(0, "0\n")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_timeouts.append(kwargs.get("timeout"))
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run_capped)
+    client.restart_resource("akonadi_imap_resource_0", wait_seconds=3)
+    assert len(restart_timeouts) == 1
+    assert isinstance(restart_timeouts[0], int) and restart_timeouts[0] <= 2
+
+
+def test_akonadi_restart_distinguishes_failed_owner_probe_from_no_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1) Baseline GetNameOwner fails transiently with rc=124 -> must NOT treat as "no owner"
+    #    and must NOT accept unchanged ":1.10" as a completed restart.
+    owner_responses = [
+        (124, "", "timeout"),
+        (0, ":1.10\n", ""),
+        (0, ":1.10\n", ""),
+        (0, ":1.20\n", ""),
+    ]
+    observed: list[tuple[int, str]] = []
+    restart_calls = 0
+
+    def fake_run_retry_baseline(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            rc, out, err = owner_responses.pop(0) if len(owner_responses) > 1 else owner_responses[0]
+            observed.append((rc, out.strip()))
+            return _Res(rc, out, err)
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            return _Res(0, "0\n")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run_retry_baseline)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    now = [0.0]
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 0.1) or now[0])
+    )
+
+    client = kp.AkonadiClient()
+    client.restart_resource("akonadi_imap_resource_0", wait_seconds=5)
+    assert restart_calls == 1
+    assert (0, ":1.20") in observed
+
+    # 2) Baseline GetNameOwner always fails -> raises SessionNotReadyError, never restarts
+    restart_calls = 0
+
+    def fake_run_always_fail(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            return _Res(124, "", "timeout")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run_always_fail)
+    now[0] = 0.0
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 0.6) or now[0])
+    )
+    with pytest.raises(kp.SessionNotReadyError):
+        client.restart_resource("akonadi_imap_resource_0", wait_seconds=1)
+    assert restart_calls == 0
+
+    # 3) Explicit NameHasNoOwner IS a valid baseline (stopped resource) -> restart starts it
+    no_owner_seq = [
+        (2, "", "Error: org.freedesktop.DBus.Error.NameHasNoOwner\nThe name does not have an owner\n"),
+        (0, ":1.30\n", ""),
+    ]
+    restart_calls = 0
+
+    def fake_run_stopped(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            rc, out, err = no_owner_seq.pop(0) if len(no_owner_seq) > 1 else no_owner_seq[0]
+            return _Res(rc, out, err)
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            return _Res(0, "0\n")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run_stopped)
+    now[0] = 0.0
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 0.1) or now[0])
+    )
+    client.restart_resource("akonadi_imap_resource_0", wait_seconds=5)
+    assert restart_calls == 1
+
+
+def test_reconcile_mailtransports_noop_retries_when_file_signature_changes_during_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    mt_path = cfg_dir / "mailtransports"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    cfg = kp.load_config(cfg_path)
+    keychain = FakeKeychainClient()
+
+    # Initial converge so current file already matches desired transports (no-op)
+    kp.reconcile_mailtransports(
+        cfg, cfg_dir, {"version": 1, "managed": {}}, keychain, dry_run=False, prune=False
+    )
+    retired_tid = 777777
+
+    # Simulate a concurrent writer re-inserting the retired transport group RIGHT AFTER
+    # KConfigFile.load() returns an unchanged snapshot on attempt 1.
+    real_load = kp.KConfigFile.load
+    injected = [False]
+
+    def load_with_concurrent_write(path: Path) -> kp.KConfigFile:
+        kc = real_load(path)
+        if not injected[0] and path == mt_path:
+            injected[0] = True
+            existing = path.read_text(encoding="utf-8")
+            path.write_text(
+                existing + f"\n[Transport {retired_tid}]\nid={retired_tid}\nhost=old.example\n",
+                encoding="utf-8",
+            )
+        return kc
+
+    monkeypatch.setattr(kp.KConfigFile, "load", staticmethod(load_with_concurrent_write))
+
+    kp.reconcile_mailtransports(
+        cfg,
+        cfg_dir,
+        {"version": 1, "managed": {}, "retired_transport_ids": [retired_tid]},
+        keychain,
+        dry_run=False,
+        prune=True,
+    )
+
+    mt_after = real_load(mt_path)
+    assert f"Transport {retired_tid}" not in mt_after.groups()
+
+
+def test_bom_prefixed_password_rejected_early_with_config_error(tmp_path: Path) -> None:
+    bad_bom = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "bom-pw",
+                    "name": "Custom",
+                    "provider": "custom",
+                    "email": "bob@work.example",
+                    "realName": "Bob",
+                    "password": "\ufeffsecret123",
+                    "imap": {"host": "imap.work.example"},
+                    "smtp": {"host": "smtp.work.example"},
+                }
+            ],
+        },
+        name="bad_bom.json",
+    )
+    with pytest.raises(kp.ConfigError, match="BOM|U\\+FEFF"):
+        kp.load_config(bad_bom)
