@@ -132,6 +132,24 @@ in {
               tabWidth = 2;
             }; # editor
           }; # programs.kate
+
+          systemd.user.services.fleet-notify-desktop = lib.mkIf ((config.notify.client.enable or false) && config.notify.client.subscribeTokenFile != null) {
+            Unit = {
+              Description = "Stream fleet ntfy alerts to KDE Plasma notifications";
+              After = ["graphical-session.target" "network-online.target"];
+              PartOf = ["graphical-session.target"];
+              ConditionPathExists = toString config.notify.client.subscribeTokenFile;
+            };
+            Service = {
+              Type = "simple";
+              ExecStart = "${config.notify.client.package}/bin/fleet-notify-desktop";
+              Restart = "always";
+              RestartSec = "5s";
+            };
+            Install = {
+              WantedBy = ["graphical-session.target"];
+            };
+          };
         }) # users
         
         config.plasma.users;
