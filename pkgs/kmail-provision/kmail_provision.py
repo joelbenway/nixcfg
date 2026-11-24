@@ -257,6 +257,8 @@ def _parse_smtp(
     if not isinstance(raw_pw, str) or not raw_pw:
         raise ConfigError(f"{ctx}: missing password for SMTP")
     password = _normalize_password(raw_pw, provider)
+    if not password:
+        raise ConfigError(f"{ctx}: password for SMTP is empty after normalization")
 
     return SmtpConfig(
         host=host.strip(),
@@ -320,6 +322,8 @@ def _parse_imap(
     if not isinstance(raw_pw, str) or not raw_pw:
         raise ConfigError(f"{ctx}: missing password for IMAP")
     password = _normalize_password(raw_pw, provider)
+    if not password:
+        raise ConfigError(f"{ctx}: password for IMAP is empty after normalization")
 
     return ImapConfig(
         host=host.strip(),
@@ -825,7 +829,7 @@ class AkonadiProtocol(Protocol):
         on_created: Callable[[str], None] | None = None,
     ) -> str: ...
     def apply_imap_settings(self, resource_id: str, settings: dict[str, Any]) -> None: ...
-    def restart_resource(self, resource_id: str) -> None: ...
+    def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None: ...
     def remove_resource(self, resource_id: str) -> None: ...
 
 
@@ -1046,8 +1050,79 @@ class AkonadiClient:
             self._set_setting(resource_id, setter, arg)
         self._set_setting(resource_id, "save")
 
-    def restart_resource(self, resource_id: str) -> None:
-        self._call_agent_mgr("restartAgentInstance", resource_id)
+    def _get_resource_dbus_owner(self, resource_id: str, timeout: int = 5) -> str | None:
+        res = _run_qdbus(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus.GetNameOwner",
+            f"org.freedesktop.Akonadi.Resource.{resource_id}",
+            timeout=timeout,
+        )
+        if res.returncode != 0:
+            return None
+        owner = res.stdout.strip()
+        return owner or None
+
+    def _get_agent_status(self, resource_id: str, timeout: int = 5) -> int | None:
+        res = _run_qdbus(
+            self._CONTROL,
+            self._AGENT_MGR_PATH,
+            f"{self._AGENT_MGR_IFACE}.agentInstanceStatus",
+            resource_id,
+            timeout=timeout,
+        )
+        if res.returncode != 0:
+            return None
+        raw = res.stdout.strip()
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
+        # Akonadi's AgentProcessInstance::restartWhenIdle() silently ignores
+        # restartAgentInstance() when status() == 1 (Running/busy). Wait until
+        # the resource is idle and confirm a new D-Bus unique owner takes over.
+        deadline = time.monotonic() + max(wait_seconds, 1)
+        owner_before = self._get_resource_dbus_owner(
+            resource_id, timeout=min(5, max(1, wait_seconds))
+        )
+        restart_requested = False
+        last_restart_at = 0.0
+
+        while True:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
+            step_timeout = max(1, min(5, int(rem) + 1))
+
+            owner_now: str | None = None
+            if restart_requested:
+                owner_now = self._get_resource_dbus_owner(resource_id, timeout=step_timeout)
+                if owner_before is not None:
+                    if owner_now is not None and owner_now != owner_before:
+                        return
+                elif owner_now is not None:
+                    return
+
+            status = self._get_agent_status(resource_id, timeout=step_timeout)
+            if status != 1:
+                now = time.monotonic()
+                if not restart_requested or (
+                    now - last_restart_at >= 1.5
+                    and (owner_before is None or owner_now == owner_before)
+                ):
+                    self._call_agent_mgr("restartAgentInstance", resource_id)
+                    restart_requested = True
+                    last_restart_at = time.monotonic()
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.25, max(0.05, deadline - time.monotonic())))
+
+        raise SessionNotReadyError(
+            f"Akonadi resource {resource_id} did not restart within {wait_seconds}s"
+        )
 
     def remove_resource(self, resource_id: str) -> None:
         self._call_agent_mgr("removeAgentInstance", resource_id)
@@ -1181,6 +1256,14 @@ def _iter_managed_identities(cfg: ProvisionConfig) -> list[IdentitySpec]:
     return result
 
 
+def _file_stat_sig(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        st = path.stat()
+        return (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+    except FileNotFoundError:
+        return None
+
+
 def reconcile_mailtransports(
     cfg: ProvisionConfig,
     config_dir: Path,
@@ -1191,48 +1274,20 @@ def reconcile_mailtransports(
 ) -> list[str]:
     actions: list[str] = []
     mt_path = config_dir / "mailtransports"
-    kc = KConfigFile.load(mt_path)
-    changed = False
-
     desired_transports = _iter_managed_transports(cfg)
     desired_tids = {tid for _, _, tid, _ in desired_transports}
 
-    if kc.set("General", "default", str(cfg.default_transport_id)):
-        changed = True
-        actions.append(f"mailtransports: set General.default={cfg.default_transport_id}")
-
-    for slug, name, tid, smtp in desired_transports:
-        grp = f"Transport {tid}"
-        fields = {
-            "id": str(tid),
-            "name": name,
-            "identifier": "SMTP",
-            "host": smtp.host,
-            "port": str(smtp.port),
-            "user": smtp.username,
-            "auth": "true",
-            "storepass": "true",
-            "encryption": smtp.encryption,
-            "authtype": smtp.auth,
-        }
-        grp_changed = False
-        for k, v in fields.items():
-            if kc.set(grp, k, v):
-                grp_changed = True
-                changed = True
-        if grp_changed:
-            actions.append(
-                f"mailtransports: upsert {grp} ({slug}: {smtp.host}:{smtp.port})"
-            )
-
+    # Write wallet secrets BEFORE reading/merging mailtransports so manual edits
+    # made while wallet calls are pending are never overwritten by a stale snapshot.
+    for _slug, _name, tid, smtp in desired_transports:
         if dry_run:
             actions.append(f"keychain: ensure password for (mailtransports, {tid}) [redacted]")
         else:
             if keychain.set_password("mailtransports", str(tid), smtp.password):
                 actions.append(f"keychain: updated password for (mailtransports, {tid})")
 
+    prev_tids: set[int] = set()
     if prune:
-        prev_tids: set[int] = set()
         for entry in state.get("managed", {}).values():
             if isinstance(entry.get("transport_id"), int):
                 prev_tids.add(entry["transport_id"])
@@ -1242,13 +1297,62 @@ def reconcile_mailtransports(
         for retired_tid in state.get("retired_transport_ids", []):
             if isinstance(retired_tid, int):
                 prev_tids.add(retired_tid)
-        for old_tid in sorted(prev_tids - desired_tids):
-            if kc.remove_group(f"Transport {old_tid}"):
-                changed = True
-                actions.append(f"mailtransports: pruned Transport {old_tid}")
 
-    if changed and not dry_run:
+    max_merge_attempts = 1 if dry_run else 5
+    for _attempt in range(max_merge_attempts):
+        stat_before = _file_stat_sig(mt_path)
+        kc = KConfigFile.load(mt_path)
+        changed = False
+        file_actions: list[str] = []
+
+        if kc.set("General", "default", str(cfg.default_transport_id)):
+            changed = True
+            file_actions.append(f"mailtransports: set General.default={cfg.default_transport_id}")
+
+        for slug, name, tid, smtp in desired_transports:
+            grp = f"Transport {tid}"
+            fields = {
+                "id": str(tid),
+                "name": name,
+                "identifier": "SMTP",
+                "host": smtp.host,
+                "port": str(smtp.port),
+                "user": smtp.username,
+                "auth": "true",
+                "storepass": "true",
+                "encryption": smtp.encryption,
+                "authtype": smtp.auth,
+            }
+            grp_changed = False
+            for k, v in fields.items():
+                if kc.set(grp, k, v):
+                    grp_changed = True
+                    changed = True
+            if grp_changed:
+                file_actions.append(
+                    f"mailtransports: upsert {grp} ({slug}: {smtp.host}:{smtp.port})"
+                )
+
+        if prune:
+            for old_tid in sorted(prev_tids - desired_tids):
+                if kc.remove_group(f"Transport {old_tid}"):
+                    changed = True
+                    file_actions.append(f"mailtransports: pruned Transport {old_tid}")
+
+        if dry_run or not changed:
+            actions.extend(file_actions)
+            break
+
+        if _file_stat_sig(mt_path) != stat_before:
+            continue
+
         kc.save_atomic(mt_path)
+        actions.extend(file_actions)
+        break
+    else:
+        raise SessionNotReadyError(
+            "mailtransports changed concurrently across merge retries; retrying later"
+        )
 
     return actions
 
@@ -1657,7 +1761,7 @@ def reconcile_imap_resources(
             actions.append(f"keychain: updated password for (imap, {res_id}rc)")
 
         if settings_changed or pw_changed or prior_pending_restart:
-            akonadi.restart_resource(res_id)
+            akonadi.restart_resource(res_id, wait_seconds)
             persist_checkpoint(acc, res_id, pending_save=False, pending_restart=False)
             actions.append(f"akonadi: restarted {res_id}")
         else:
@@ -1702,6 +1806,59 @@ def _config_digest(path: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+def _checkpoint_transport_ids(
+    cfg: ProvisionConfig, state: dict[str, Any], state_file: Path, *, prune: bool
+) -> None:
+    """Persist applied transport IDs before identity writes can fail, preserving identity UOIDs."""
+    prev_managed = state.setdefault("managed", {})
+    retired_tids: set[int] = {
+        t for t in state.get("retired_transport_ids", []) if isinstance(t, int)
+    }
+    desired_tids = {tid for _, _, tid, _ in _iter_managed_transports(cfg)}
+    for acc in cfg.accounts:
+        entry = prev_managed.get(acc.id)
+        if not isinstance(entry, dict):
+            entry = {}
+            prev_managed[acc.id] = entry
+        prev_aliases = entry.get("aliases") if isinstance(entry.get("aliases"), dict) else {}
+        alias_map: dict[str, Any] = {}
+        for prev_aid, prev_aentry in prev_aliases.items():
+            if isinstance(prev_aentry, dict):
+                copied = dict(prev_aentry)
+                if prune:
+                    copied.pop("transport_id", None)
+                alias_map[prev_aid] = copied
+        for alias in acc.aliases:
+            prev_alias = prev_aliases.get(alias.id)
+            if (
+                not prune
+                and alias.smtp is None
+                and isinstance(prev_alias, dict)
+                and isinstance(prev_alias.get("transport_id"), int)
+            ):
+                retired_tids.add(prev_alias["transport_id"])
+            a_entry: dict[str, Any] = (
+                dict(alias_map[alias.id]) if alias.id in alias_map else {}
+            )
+            if alias.smtp is not None:
+                a_entry["transport_id"] = alias.transport_id
+            else:
+                a_entry.pop("transport_id", None)
+            if a_entry:
+                alias_map[alias.id] = a_entry
+        entry["transport_id"] = acc.transport_id
+        entry["aliases"] = alias_map
+    if prune:
+        state.pop("retired_transport_ids", None)
+    else:
+        retired_tids -= desired_tids
+        if retired_tids:
+            state["retired_transport_ids"] = sorted(retired_tids)
+        else:
+            state.pop("retired_transport_ids", None)
+    StateStore.save(state_file, state)
 
 
 def _checkpoint_local_ids(
@@ -1795,6 +1952,9 @@ def provision(
                     cfg, config_dir, state, keychain_client, dry_run=dry_run, prune=prune
                 )
             )
+            if not dry_run:
+                _checkpoint_transport_ids(cfg, state, state_file, prune=prune)
+
             id_actions, _ = reconcile_emailidentities(
                 cfg, config_dir, state, gpg_runner=gpg_runner, dry_run=dry_run, prune=prune
             )
@@ -1885,6 +2045,11 @@ def provision(
                     break
             else:
                 break
+        else:
+            if not dry_run:
+                raise ProvisionError(
+                    f"config file {config_path} changed during the final pass ({max_passes} reconciliation passes exhausted)"
+                )
 
     if all_actions:
         prefix = "[dry-run] " if dry_run else ""

@@ -465,7 +465,7 @@ class FakeAkonadiClient:
         self.resources[resource_id].update(settings)
         self.applied.append((resource_id, dict(settings)))
 
-    def restart_resource(self, resource_id: str) -> None:
+    def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
         self.restarted.append(resource_id)
 
     def remove_resource(self, resource_id: str) -> None:
@@ -1000,11 +1000,14 @@ def test_keychain_client_locked_wallet_polls_and_times_out_with_session_not_read
         # Both D-Bus services exist, but wallet is LOCKED!
         if "Locked" in args:
             return _Res(0, "true\n")
-        if any("localWallet" in a for a in args):
+        if any(a.endswith(".networkWallet") for a in args):
             return _Res(0, "kdewallet\n")
-        if any("isOpen" in a for a in args):
+        if any(a.endswith(".isOpen") for a in args):
+            assert args[-1] == "kdewallet", f"unexpected wallet queried: {args}"
             return _Res(0, "false\n")
-        return _Res(0, "/\n")
+        if args[:3] == ["qdbus", "org.freedesktop.secrets", "/org/freedesktop/secrets/aliases/default"]:
+            return _Res(0, "/\n")
+        raise AssertionError(f"unexpected subprocess call in wallet mock: {args}")
 
     monkeypatch.setattr(kp.subprocess, "run", fake_run)
     monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
@@ -1622,11 +1625,11 @@ def test_pending_restart_retries_after_failed_restart(tmp_path: Path) -> None:
             super().__init__()
             self.fail_next_restart = True
 
-        def restart_resource(self, resource_id: str) -> None:
+        def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
             if self.fail_next_restart:
                 self.fail_next_restart = False
                 raise kp.ProvisionError("transient restart failure")
-            super().restart_resource(resource_id)
+            super().restart_resource(resource_id, wait_seconds)
 
     akonadi = FlakyRestartAkonadi()
 
@@ -2594,3 +2597,413 @@ def test_mid_run_config_change_triggers_immediate_reconcile_pass(tmp_path: Path)
     )
     res_id = akonadi.created[0]
     assert keychain.secrets[("imap", f"{res_id}rc")] == "midrunpw99998888"
+
+
+def test_gmail_whitespace_only_password_rejected_after_normalization(
+    tmp_path: Path,
+) -> None:
+    # Shared whitespace-only Gmail password must be rejected after space stripping
+    bad_shared = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "gmail-blank",
+                    "name": "Gmail",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "    ",
+                }
+            ],
+        },
+        name="bad_shared.json",
+    )
+    with pytest.raises(kp.ConfigError, match="password"):
+        kp.load_config(bad_shared)
+
+    # SMTP-only whitespace Gmail password must be rejected
+    bad_smtp = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "gmail-blank-smtp",
+                    "name": "Gmail",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "imap": {"password": "abcd efgh ijkl mnop"},
+                    "smtp": {"password": "   "},
+                }
+            ],
+        },
+        name="bad_smtp.json",
+    )
+    with pytest.raises(kp.ConfigError, match="password"):
+        kp.load_config(bad_smtp)
+
+    # IMAP-only whitespace Gmail password must be rejected
+    bad_imap = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "gmail-blank-imap",
+                    "name": "Gmail",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "imap": {"password": "   "},
+                    "smtp": {"password": "abcd efgh ijkl mnop"},
+                }
+            ],
+        },
+        name="bad_imap.json",
+    )
+    with pytest.raises(kp.ConfigError, match="password"):
+        kp.load_config(bad_imap)
+
+    # Nonempty custom password with spaces (even all spaces) is preserved verbatim
+    ok_custom = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "custom-spaces",
+                    "name": "Custom",
+                    "provider": "custom",
+                    "email": "bob@work.example",
+                    "realName": "Bob",
+                    "password": "   ",
+                    "imap": {"host": "imap.work.example"},
+                    "smtp": {"host": "smtp.work.example"},
+                }
+            ],
+        },
+        name="ok_custom.json",
+    )
+    cfg = kp.load_config(ok_custom)
+    assert cfg.accounts[0].imap.password == "   "
+    assert cfg.accounts[0].smtp.password == "   "
+
+
+def test_reconcile_mailtransports_preserves_manual_edits_made_during_wallet_calls(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    mt_path = cfg_dir / "mailtransports"
+    mt_path.write_text("[General]\ndefault=1\n", encoding="utf-8")
+
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    cfg = kp.load_config(cfg_path)
+
+    class ConcurrentManualEditKeychain(FakeKeychainClient):
+        def set_password(self, service: str, key: str, password: str) -> bool:
+            changed = super().set_password(service, key, password)
+            if service == "mailtransports":
+                # Simulate user adding a manual transport while wallet write was pending
+                existing = mt_path.read_text(encoding="utf-8")
+                if "[Transport 99999]" not in existing:
+                    mt_path.write_text(
+                        existing
+                        + "\n[Transport 99999]\nid=99999\nname=Manual Relay\nhost=smtp.manual.example\n",
+                        encoding="utf-8",
+                    )
+            return changed
+
+    keychain = ConcurrentManualEditKeychain()
+    kp.reconcile_mailtransports(
+        cfg,
+        cfg_dir,
+        {"version": 1, "managed": {}},
+        keychain,
+        dry_run=False,
+        prune=False,
+    )
+
+    mt = kp.KConfigFile.load(mt_path)
+    assert "Transport 99999" in mt.groups()
+    assert mt.get("Transport 99999", "host") == "smtp.manual.example"
+    assert f"Transport {cfg.accounts[0].transport_id}" in mt.groups()
+
+
+def test_akonadi_restart_waits_for_idle_and_confirms_new_dbus_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statuses = [1, 1, 0, 0]  # Running (busy) twice, then Idle
+    owners = [":1.10", ":1.10", ":1.20"]
+    restart_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            val = owners.pop(0) if len(owners) > 1 else owners[0]
+            return _Res(0, f"{val}\n")
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            val = statuses.pop(0) if len(statuses) > 1 else statuses[0]
+            return _Res(0, f"{val}\n")
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            # Must never have been called while status was Running (1)
+            assert statuses[0] != 1
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    now = [0.0]
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 0.2) or now[0])
+    )
+
+    client = kp.AkonadiClient()
+    client.restart_resource("akonadi_imap_resource_0", wait_seconds=5)
+    assert restart_calls == 1
+
+
+def test_akonadi_restart_busy_timeout_raises_session_not_ready_and_keeps_pending_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 1) Direct AkonadiClient test: stays Running (1) past wait_seconds -> SessionNotReadyError
+    restart_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        nonlocal restart_calls
+
+        class _Res:
+            def __init__(self, rc: int, out: str = "", err: str = "") -> None:
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = err
+
+        if any(a.endswith(".GetNameOwner") for a in args):
+            return _Res(0, ":1.10\n")
+        if any(a.endswith(".agentInstanceStatus") for a in args):
+            return _Res(0, "1\n")  # Continuously busy
+        if any(a.endswith(".restartAgentInstance") for a in args):
+            restart_calls += 1
+            return _Res(0, "")
+        raise AssertionError(f"unexpected qdbus call: {args}")
+
+    monkeypatch.setattr(kp.subprocess, "run", fake_run)
+    monkeypatch.setattr(kp.time, "sleep", lambda _s: None)
+    now = [0.0]
+    monkeypatch.setattr(
+        kp.time, "monotonic", lambda: (now.__setitem__(0, now[0] + 0.6) or now[0])
+    )
+
+    client = kp.AkonadiClient()
+    with pytest.raises(kp.SessionNotReadyError):
+        client.restart_resource("akonadi_imap_resource_0", wait_seconds=1)
+    assert restart_calls == 0
+
+    # 2) End-to-end provision: busy restart preserves pending_restart=True for retry
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    keychain = FakeKeychainClient()
+
+    class BusyRestartAkonadi(FakeAkonadiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.busy = False
+
+        def restart_resource(self, resource_id: str, wait_seconds: int = 30) -> None:
+            if self.busy:
+                raise kp.SessionNotReadyError(f"{resource_id} busy")
+            super().restart_resource(resource_id, wait_seconds)
+
+    akonadi = BusyRestartAkonadi()
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+
+    # Rotate password while resource is busy
+    rotated = _gmail_with_aliases_payload()
+    rotated["accounts"][0]["password"] = "zzzy xxxw vvvu ttts"
+    cfg_path.write_text(json.dumps(rotated), encoding="utf-8")
+    akonadi.busy = True
+    akonadi.reset_counters()
+
+    with pytest.raises(kp.SessionNotReadyError):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert state["managed"]["main"].get("pending_restart") is True
+
+    # Next retry succeeds once resource is idle, and clears pending_restart
+    akonadi.busy = False
+    assert (
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    assert len(akonadi.restarted) == 1
+    state_after = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "pending_restart" not in state_after["managed"]["main"]
+
+
+def test_exhausting_mid_run_config_reconcile_passes_raises_provision_error(
+    tmp_path: Path,
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    cfg_path = _write_json(tmp_path, _gmail_with_aliases_payload())
+    akonadi = FakeAkonadiClient()
+
+    class AlwaysMutateConfigKeychain(FakeKeychainClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seq = 0
+
+        def set_password(self, service: str, key: str, password: str) -> bool:
+            changed = super().set_password(service, key, password)
+            if service == "imap":
+                self.seq += 1
+                updated = _gmail_with_aliases_payload()
+                updated["accounts"][0]["password"] = f"pass {self.seq:04d} abcd efgh"
+                cfg_path.write_text(json.dumps(updated), encoding="utf-8")
+            return changed
+
+    keychain = AlwaysMutateConfigKeychain()
+    with pytest.raises(kp.ProvisionError, match="changed"):
+        kp.provision(
+            config_path=cfg_path,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+
+def test_transport_ids_checkpointed_before_identity_failure_allows_later_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    state_file = tmp_path / "state.json"
+    akonadi = FakeAkonadiClient()
+    keychain = FakeKeychainClient()
+
+    with_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                    "aliases": [
+                        {
+                            "id": "ephemeral_smtp",
+                            "name": "Ephemeral SMTP",
+                            "email": "eph@custom.example",
+                            "realName": "Alice",
+                            "smtp": {
+                                "host": "smtp.custom.example",
+                                "port": 465,
+                                "username": "eph@custom.example",
+                                "password": "secret",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+        name="idfail1.json",
+    )
+
+    real_reconcile_ids = kp.reconcile_emailidentities
+    fail_once = [True]
+
+    def failing_reconcile_ids(*args: object, **kwargs: object) -> object:
+        if fail_once[0]:
+            fail_once[0] = False
+            raise OSError("simulated emailidentities write failure")
+        return real_reconcile_ids(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kp, "reconcile_emailidentities", failing_reconcile_ids)
+
+    with pytest.raises(OSError):
+        kp.provision(
+            config_path=with_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+
+    # Transport was written; remove alias and run with --prune
+    without_alias = _write_json(
+        tmp_path,
+        {
+            "version": 1,
+            "accounts": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "provider": "gmail",
+                    "email": "alice@gmail.example",
+                    "realName": "Alice",
+                    "password": "aaaa bbbb cccc dddd",
+                }
+            ],
+        },
+        name="idfail2.json",
+    )
+    assert (
+        kp.provision(
+            config_path=without_alias,
+            config_dir=cfg_dir,
+            state_file=state_file,
+            prune=True,
+            akonadi=akonadi,
+            keychain=keychain,
+            gpg_runner=lambda _a: "",
+        )
+        == kp.EXIT_OK
+    )
+    mt = kp.KConfigFile.load(cfg_dir / "mailtransports")
+    assert f"Transport {kp.stable_transport_id('ephemeral_smtp')}" not in mt.groups()

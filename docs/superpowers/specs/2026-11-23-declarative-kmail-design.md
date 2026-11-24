@@ -252,7 +252,7 @@ Two binaries built in one derivation (`pkgs/kmail-provision/default.nix`):
   };
   ```
 - Config (active per user only when `config.plasma.enable && cfg.enable && cfg.configFile != null`):
-  - Adds `kmail-provision` to `home-manager.users.${user}.home.packages` so the user can run `kmail-provision --dry-run` or re-run manually anytime.
+  - Adds `kmail-provision` to `home-manager.users.${user}.home.packages` so the user can run `kmail-provision --config /run/agenix/joel-kmail.json --dry-run` (substituting their configured `configFile` path) or re-run manually anytime.
   - Defines `home-manager.users.${user}.systemd.user.services.kmail-provision`:
     - `Unit`: `Description = "Provision declarative KMail accounts"`, `After = ["graphical-session.target" "plasma-kwallet-pam.service"]`, `PartOf = ["graphical-session.target"]`, `ConditionPathExists = toString cfg.configFile`, `StartLimitIntervalSec = 0`
     - `Service`: `Type = "oneshot"`, `Restart = "no"`, `RestartForceExitStatus = [2]`, `RestartSec = "60s"`, `ExecStart = "${kmailProvision}/bin/kmail-provision --config ${escapeSystemdArg (toString cfg.configFile)}${lib.optionalString cfg.prune " --prune"}"` (systemd-quoted with `\`, `"`, `%`, and `$` escaped; omits `RemainAfterExit=true` so `systemd.user.paths` re-triggers on secret updates)

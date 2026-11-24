@@ -96,6 +96,31 @@ int main(int argc, char *argv[]) {
     return exitCodeForKeychainError(writeJob.error());
   }
 
+  // Confirm the backend persisted the exact credential before reporting "updated"
+  // (QtKeychain's KWallet handler can complete with NoError if the wallet closed mid-write).
+  QKeychain::ReadPasswordJob verifyJob(service);
+  verifyJob.setAutoDelete(false);
+  verifyJob.setKey(key);
+  {
+    QEventLoop loop;
+    QObject::connect(&verifyJob, &QKeychain::Job::finished, &loop, &QEventLoop::quit);
+    verifyJob.start();
+    loop.exec();
+  }
+
+  if (verifyJob.error() != QKeychain::NoError) {
+    std::cerr << "kmail-keychain-set: write verification failed: "
+              << verifyJob.errorString().toStdString() << "\n";
+    if (verifyJob.error() == QKeychain::EntryNotFound) {
+      return 3;
+    }
+    return exitCodeForKeychainError(verifyJob.error());
+  }
+  if (verifyJob.textData() != password) {
+    std::cerr << "kmail-keychain-set: write verification failed: stored credential does not match expected value\n";
+    return 3;
+  }
+
   std::cout << "updated\n";
   return 0;
 }
