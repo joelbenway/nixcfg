@@ -236,6 +236,7 @@ in {
       enable = true;
       domain = "notify.benway.me";
       environmentFile = config.age.secrets.ntfy-server-env.path;
+      admin.passwordFile = config.age.secrets.joel-passphrase.path;
     };
     client = {
       urls = [

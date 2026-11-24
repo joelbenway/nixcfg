@@ -15,6 +15,80 @@
 
   fleetNotifyPkg = import (lib.custom.relativeToRoot "pkgs/fleet-notify") {inherit pkgs;};
   dataDirMountUnit = "${utils.escapeSystemdPath cfgServer.dataDir}.mount";
+  useAdminPasswordFile = cfgServer.admin.passwordFile != null;
+  runtimeEnvDir = "/run/ntfy-sh";
+  runtimeEnvPath = "${runtimeEnvDir}/env";
+
+  renderNtfyEnvScript = pkgs.writeScriptBin "ntfy-sh-render-env" ''
+    #!${pkgs.python3.withPackages (ps: [ps.bcrypt])}/bin/python3
+    import grp
+    import os
+    import pwd
+    import sys
+    import tempfile
+    from pathlib import Path
+    import bcrypt
+
+    admin_user = ${builtins.toJSON cfgServer.admin.username}
+    pw_path = Path(${builtins.toJSON (toString cfgServer.admin.passwordFile)})
+    base_env_path = ${
+      if cfgServer.environmentFile != null
+      then "Path(${builtins.toJSON (toString cfgServer.environmentFile)})"
+      else "None"
+    }
+    out_dir = Path(${builtins.toJSON runtimeEnvDir})
+    out_path = Path(${builtins.toJSON runtimeEnvPath})
+
+    pw = pw_path.read_text(encoding="utf-8").strip()
+    if not pw or "\n" in pw or "\r" in pw:
+        print("ntfy-sh-render-env: admin password file must contain a single non-empty line", file=sys.stderr)
+        sys.exit(1)
+
+    pw_hash = bcrypt.hashpw(
+        pw.encode("utf-8"),
+        bcrypt.gensalt(rounds=10, prefix=b"2a"),
+    ).decode("ascii")
+    admin_entry = f"{admin_user}:{pw_hash}:admin"
+
+    lines = []
+    if base_env_path is not None and base_env_path.exists():
+        lines = base_env_path.read_text(encoding="utf-8").splitlines()
+
+    updated_lines = []
+    found_users = False
+    for line in lines:
+        if line.startswith("NTFY_AUTH_USERS="):
+            found_users = True
+            raw_val = line.split("=", 1)[1]
+            entries = [e for e in raw_val.split(",") if e.strip()]
+            filtered = [e for e in entries if e.split(":", 1)[0] != admin_user]
+            updated_lines.append("NTFY_AUTH_USERS=" + ",".join([admin_entry] + filtered))
+        else:
+            updated_lines.append(line)
+
+    if not found_users:
+        updated_lines.append(f"NTFY_AUTH_USERS={admin_entry}")
+
+    uid = pwd.getpwnam("ntfy-sh").pw_uid
+    gid = grp.getgrnam("ntfy-sh").gr_gid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(out_dir, 0o750)
+    os.chown(out_dir, 0, gid)
+
+    fd, tmp_name = tempfile.mkstemp(prefix=".env.", dir=str(out_dir))
+    try:
+        os.fchmod(fd, 0o400)
+        os.fchown(fd, uid, gid)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(updated_lines) + "\n")
+        os.replace(tmp_name, out_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+  '';
 
   clientConfigJson = builtins.toJSON {
     host = hostname;
@@ -63,6 +137,20 @@ in {
         type = lib.types.nullOr lib.types.path;
         default = null;
         description = "Path to agenix env file with NTFY_AUTH_USERS and NTFY_AUTH_TOKENS.";
+      };
+
+      admin = {
+        username = lib.mkOption {
+          type = lib.types.str;
+          default = "joel";
+          description = "Administrator username whose password is synced from admin.passwordFile.";
+        };
+
+        passwordFile = lib.mkOption {
+          type = with lib.types; nullOr (either path str);
+          default = null;
+          description = "Optional plaintext password file (e.g. agenix joel-passphrase) bcrypt-hashed into volatile /run/ntfy-sh/env before ntfy-sh starts.";
+        };
       };
 
       cacheDuration = lib.mkOption {
@@ -148,7 +236,10 @@ in {
 
       services.ntfy-sh = {
         enable = true;
-        environmentFile = cfgServer.environmentFile;
+        environmentFile =
+          if useAdminPasswordFile
+          then runtimeEnvPath
+          else cfgServer.environmentFile;
         settings =
           {
             base-url = "https://${cfgServer.domain}";
@@ -176,9 +267,24 @@ in {
           // cfgServer.extraSettings;
       };
 
+      systemd.services.ntfy-sh-env = lib.mkIf useAdminPasswordFile {
+        description = "Render runtime ntfy-sh environment with bcrypt-hashed admin password";
+        after = ["agenix.service"];
+        wants = ["agenix.service"];
+        serviceConfig = {
+          Type = "oneshot";
+          User = "root";
+          Group = "root";
+          ExecStart = "${renderNtfyEnvScript}/bin/ntfy-sh-render-env";
+        };
+      };
+
       systemd.services.ntfy-sh = {
-        after = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
+        after =
+          lib.optionals (config.impermanence.enable or false) [dataDirMountUnit]
+          ++ lib.optional useAdminPasswordFile "ntfy-sh-env.service";
         wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
+        requires = lib.optional useAdminPasswordFile "ntfy-sh-env.service";
         serviceConfig = {
           DynamicUser = lib.mkForce false;
           PrivateUsers = lib.mkForce false;
