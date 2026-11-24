@@ -165,9 +165,9 @@ in {
             keepalive-interval = "45s";
           }
           // lib.optionalAttrs (cfgServer.environmentFile != null) {
+            # Admin users (joel) have global rw implicitly; ntfy rejects ACL rules on admin users.
             auth-access =
               [
-                "joel:*:rw"
                 "fleet-pub:fleet-*:wo"
                 "fleet-sub:fleet-*:ro"
               ]
