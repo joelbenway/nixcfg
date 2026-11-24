@@ -13,9 +13,11 @@
   beszelHubKeySecret = lib.custom.relativeToRoot "secrets/beszel-hub-key.age";
   beszelHubEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hub.env.age";
   beszelHermesEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hermes.env.age";
+  ntfyServerEnvSecret = lib.custom.relativeToRoot "secrets/ntfy-server.env.age";
   hasBeszelHubKey = builtins.pathExists beszelHubKeySecret;
   hasBeszelHubEnv = builtins.pathExists beszelHubEnvSecret;
   hasBeszelHermesEnv = builtins.pathExists beszelHermesEnvSecret;
+  hasNtfyServerEnv = builtins.pathExists ntfyServerEnvSecret;
 in {
   imports = [
     (modulesPath + "/installer/scan/not-detected.nix")
@@ -110,6 +112,15 @@ in {
           mode = "400";
           owner = "hermes";
           group = "hermes";
+        };
+      }
+      // lib.optionalAttrs hasNtfyServerEnv {
+        ntfy-server-env = {
+          file = ntfyServerEnvSecret;
+          name = "ntfy-server.env";
+          mode = "400";
+          owner = "ntfy-sh";
+          group = "ntfy-sh";
         };
       }; # secrets
   }; # age
@@ -220,6 +231,27 @@ in {
     environmentFile = config.age.secrets.vaultwarden-env.path;
   };
 
+  notify = {
+    server = lib.mkIf hasNtfyServerEnv {
+      enable = true;
+      domain = "notify.benway.me";
+      environmentFile = config.age.secrets.ntfy-server-env.path;
+    };
+    client = {
+      urls = [
+        "http://127.0.0.1:${toString ports.ntfy.internal}"
+        "https://notify.benway.me"
+        "https://zita.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale}"
+      ];
+      onFailureUnits = [
+        "caddy"
+        "beszel-hub"
+        "vaultwarden"
+        "forgejo"
+      ];
+    };
+  };
+
   beszel = {
     agent = {
       gpuCollectors = ["nvidia-smi"];
@@ -285,6 +317,7 @@ in {
       ports.forgejo.tailscale
       ports.vaultwarden.tailscale
       ports.beszel.tailscale
+      ports.ntfy.tailscale
     ];
   };
 
@@ -349,6 +382,13 @@ in {
         reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
       }
 
+      notify.benway.me {
+        tls {
+          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        }
+        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
+      }
+
       ${hostname}.${config.tailscale.tailnet} {
         redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
       }
@@ -376,6 +416,10 @@ in {
 
       ${hostname}.${config.tailscale.tailnet}:${toString ports.beszel.tailscale} {
         reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
+      }
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
       }
     '';
   };
@@ -453,17 +497,19 @@ in {
       enable = true;
       hosts = ["michael" "francis" "agnes" "jerome"];
     };
-    canary.services = [
-      "harmonia.socket"
-      "caddy"
-      "samba-smbd"
-      "container@copyparty"
-      "hermes-agent"
-      "smartd"
-      "forgejo"
-      "vaultwarden"
-      "beszel-hub"
-    ];
+    canary.services =
+      [
+        "harmonia.socket"
+        "caddy"
+        "samba-smbd"
+        "container@copyparty"
+        "hermes-agent"
+        "smartd"
+        "forgejo"
+        "vaultwarden"
+        "beszel-hub"
+      ]
+      ++ lib.optional hasNtfyServerEnv "ntfy-sh";
     # Zita uses initrd SSH unlock from Michael (no TPM 2.0); let Michael unlock Zita on scheduled reboots
     reboot = {
       enable = true;

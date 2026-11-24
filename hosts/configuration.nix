@@ -13,6 +13,8 @@
 }: let
   nixAccessTokensFile = lib.custom.relativeToRoot "secrets/nix-access-tokens.conf.age";
   hasNixAccessTokens = builtins.pathExists nixAccessTokensFile;
+  fleetNotifyPubTokenFile = lib.custom.relativeToRoot "secrets/fleet-notify-pub.token.age";
+  hasFleetNotifyPubToken = builtins.pathExists fleetNotifyPubTokenFile;
 in {
   imports = [
     inputs.agenix.nixosModules.default
@@ -21,15 +23,25 @@ in {
     }
   ];
 
-  age.secrets = lib.mkIf hasNixAccessTokens {
-    nix-access-tokens = {
-      file = nixAccessTokensFile;
-      name = "nix-access-tokens.conf";
-      mode = "0440";
-      owner = "root";
-      group = "wheel";
+  age.secrets =
+    lib.optionalAttrs hasNixAccessTokens {
+      nix-access-tokens = {
+        file = nixAccessTokensFile;
+        name = "nix-access-tokens.conf";
+        mode = "0440";
+        owner = "root";
+        group = "wheel";
+      };
+    }
+    // lib.optionalAttrs hasFleetNotifyPubToken {
+      fleet-notify-pub-token = {
+        file = fleetNotifyPubTokenFile;
+        name = "fleet-notify-pub.token";
+        mode = "0440";
+        owner = "root";
+        group = "wheel";
+      };
     };
-  };
 
   nixpkgs.hostPlatform = platform;
 
@@ -111,6 +123,11 @@ in {
   }; # services
 
   smartd.enable = true;
+
+  notify.client = {
+    enable = true;
+    publishTokenFile = lib.mkIf hasFleetNotifyPubToken config.age.secrets.fleet-notify-pub-token.path;
+  };
 
   beszel.agent = {
     enable = true;

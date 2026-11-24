@@ -56,7 +56,8 @@ Action-oriented runbooks for operating and deploying hosts:
 * [How to Bootstrap a New Host](./howto/bootstrap-new-host.md) (`type: howto`): End-to-end walkthrough for building the `therese` ISO, booting bare metal, and deploying remotely via `install_host`.
 * [TPM2 Enrollment & Re-enrollment](./howto/tpm-enrollment.md) (`type: howto`): Automating LUKS enrollment against hardware PCRs, inspecting tokens, and using the `tpm-reenroll` CLI.
 * [Remote LUKS Unlocking over SSH](./howto/remote-luks-unlock.md) (`type: howto`): Remotely unlocking `michael` during initrd boot over an encrypted SSH connection.
-* [Beszel Fleet Telemetry & Hermes Setup](./howto/beszel-hermes-prompt.md) (`type: howto`): One-time Agenix secret bootstrap, Beszel alert policy configuration, and paste-ready Hermes self-configuration prompt for Signal alerting.
+* [Beszel Fleet Telemetry & Hermes Setup](./howto/beszel-hermes-prompt.md) (`type: howto`): One-time Agenix secret bootstrap, Beszel alert policy pushing directly to loopback `ntfy`, and read-only `beszel-query` check prompt for Hermes.
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](./howto/fleet-notify.md) (`type: howto`): Secret bootstrap for self-hosted `ntfy-sh` on `zita`, Android `ntfy` app setup, Beszel loopback alerting, and developer guide for wiring services and desktop environments.
 
 ---
 
