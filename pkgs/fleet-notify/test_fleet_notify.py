@@ -250,3 +250,164 @@ def test_stdin_message_and_priority_aliases(
     assert sent[0]["priority"] == 5
     assert sent[0]["message"] == "body from stdin\nline 2"
     assert sent[0]["title"] == "[francis] Notification"
+
+
+def test_stream_ignores_non_message_events_dedups_and_persists_0600_cursor(
+    tmp_path: Path,
+) -> None:
+    import fleet_notify_desktop as fnd
+
+    cursor_path = tmp_path / "state" / "cursor.json"
+    dispatched: list[dict[str, Any]] = []
+    lines = [
+        json.dumps({"id": "o1", "time": 100, "event": "open", "topic": "fleet-alerts"}).encode(),
+        json.dumps({"id": "k1", "time": 101, "event": "keepalive", "topic": "fleet-alerts"}).encode(),
+        json.dumps(
+            {
+                "id": "m1",
+                "time": 102,
+                "event": "message",
+                "topic": "fleet-alerts",
+                "title": "[zita] Alert 1",
+                "message": "First",
+                "priority": 5,
+                "tags": ["rotating_light"],
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "id": "m1",
+                "time": 102,
+                "event": "message",
+                "topic": "fleet-alerts",
+                "title": "[zita] Alert 1",
+                "message": "First duplicate",
+                "priority": 5,
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "id": "m2",
+                "time": 105,
+                "event": "message",
+                "topic": "fleet-updates",
+                "title": "[francis] Reboot",
+                "message": "Kernel updated",
+                "priority": 3,
+                "tags": ["arrows_counterclockwise"],
+            }
+        ).encode(),
+        json.dumps({"id": "p1", "time": 106, "event": "poll_request", "topic": "fleet-alerts"}).encode(),
+    ]
+
+    last_id = fnd.process_stream(
+        lines,
+        cursor_path,
+        seen_id=None,
+        dispatch_fn=lambda ev: (dispatched.append(ev) or True),
+    )
+
+    assert last_id == "m2"
+    assert [d["id"] for d in dispatched] == ["m1", "m2"]
+    assert cursor_path.exists()
+    assert (cursor_path.stat().st_mode & 0o777) == 0o600
+    saved = json.loads(cursor_path.read_text(encoding="utf-8"))
+    assert saved["last_id"] == "m2"
+    assert saved["last_time"] == 105
+
+
+def test_corrupt_cursor_file_falls_back_to_10m_since(tmp_path: Path) -> None:
+    import fleet_notify_desktop as fnd
+
+    cursor_path = tmp_path / "cursor.json"
+    cursor_path.write_text("{corrupt json", encoding="utf-8")
+    assert fnd.load_cursor(cursor_path) == {}
+    url = fnd.build_stream_url(
+        "https://notify.example",
+        ["fleet-alerts", "fleet-updates"],
+        since=fnd.load_cursor(cursor_path).get("last_id") or "10m",
+    )
+    assert url == "https://notify.example/fleet-alerts,fleet-updates/json?since=10m"
+
+
+def test_priority_urgency_and_tag_icon_mapping() -> None:
+    import fleet_notify_desktop as fnd
+
+    assert fnd.priority_to_urgency(5) == "critical"
+    assert fnd.priority_to_urgency(4) == "critical"
+    assert fnd.priority_to_urgency(3) == "normal"
+    assert fnd.priority_to_urgency(2) == "low"
+    assert fnd.priority_to_urgency(1) == "low"
+
+    assert fnd.tags_to_icon(["rotating_light", "nix"]) == "dialog-error"
+    assert fnd.tags_to_icon(["warning"]) == "dialog-error"
+    assert fnd.tags_to_icon(["arrows_counterclockwise"]) == "system-reboot"
+    assert fnd.tags_to_icon(["cd"]) == "drive-harddisk"
+    assert fnd.tags_to_icon([]) == "dialog-information"
+
+
+def test_dispatch_notification_passes_double_dash_and_handles_timeout() -> None:
+    import fleet_notify_desktop as fnd
+
+    recorded: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        recorded.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    ok = fnd.dispatch_notification(
+        {
+            "id": "m9",
+            "topic": "fleet-alerts",
+            "title": "--leading-hyphen-title",
+            "message": "--leading-hyphen-body",
+            "priority": 4,
+            "tags": ["warning"],
+        },
+        runner=fake_run,
+    )
+    assert ok is True
+    assert recorded[0][:4] == [
+        "notify-send",
+        "--app-name=NixOS Fleet",
+        "--urgency=critical",
+        "--icon=dialog-error",
+    ]
+    assert recorded[0][4:] == ["--", "--leading-hyphen-title", "--leading-hyphen-body"]
+
+    def timeout_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=args, timeout=10)
+
+    assert (
+        fnd.dispatch_notification(
+            {"id": "m10", "title": "T", "message": "M", "priority": 3},
+            runner=timeout_run,
+        )
+        is False
+    )
+
+
+def test_missing_subscribe_token_sleeps_with_backoff_without_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fleet_notify_desktop as fnd
+
+    cfg_path = _write_cfg(tmp_path, sub_token=None)
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    raw["subscribeTokenFile"] = str(tmp_path / "missing-sub.token")
+    cfg_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    slept: list[float] = []
+    stop_after = [2]
+
+    def fake_sleep(sec: float) -> None:
+        slept.append(sec)
+        stop_after[0] -= 1
+        if stop_after[0] <= 0:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(fnd.time, "sleep", fake_sleep)
+    rc = fnd.main(["--config", str(cfg_path), "--cursor", str(tmp_path / "cursor.json")])
+    assert rc == 0
+    assert len(slept) == 2
+    assert slept[1] > slept[0]
