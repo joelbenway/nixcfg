@@ -100,7 +100,7 @@ Because mobile delivery targets Android over LAN/Tailscale, `upstream-base-url` 
 1. Install the official **`ntfy`** app (F-Droid or Google Play).
 2. Open **Settings → Manage users → Add new user**:
    - **Service URL:** `https://notify.benway.me` (or `https://zita.gentoo-humboldt.ts.net:2587` if away from LAN without split DNS)
-   - **Auth:** Access token (`<ADMIN_TOKEN>` for `joel`, or username/password for `joel`)
+   - **Username / Password:** `joel` and `joel`'s password (whose bcrypt hash is stored in `NTFY_AUTH_USERS` inside `secrets/ntfy-server.env.age`)
 3. Optionally set **Default server** to `https://notify.benway.me`.
 4. Tap **+** to subscribe to:
    - `fleet-alerts`
