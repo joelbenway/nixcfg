@@ -5,7 +5,7 @@ description: "Router and perimeter firewall profile for michael, an HP Slim i3-1
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - host
   - router
@@ -76,8 +76,9 @@ tags:
 
 * **[Declarative Firewall & NAT (`routing.nix`)](../../hosts/michael/routing.nix)**: Built using modern Linux kernel packet filtering. Enforces strict inter-VLAN boundary rules, stateful connection tracking, and NAT masquerading for outbound traffic.
 * **[CAKE Smart Queue Management (`cake-sqm.nix`)](../../modules/cake-sqm.nix)**: Utilizes the Common Applications Kept Enhanced (CAKE) qdisc on the WAN interface to completely eliminate bufferbloat, guaranteeing rock-bottom gaming latencies and crystal-clear voice calls even during heavy downloads.
-* **[Network-Wide Ad Blocking & DNS (`dns.nix`)](../../hosts/michael/dns.nix)**: Runs Pi-hole with custom VLAN group policies ([`pihole-groups.nix`](../../hosts/michael/pihole-groups.nix)) allowing granular filtering per device category, combined with local unbound DNS resolution and Handshake DNS (`hnsd`).
-* **[Initrd Network & Remote LUKS Unlock (`remote-unlock.nix`)](../../hosts/michael/remote-unlock.nix)**: When `michael` reboots after an update or power outage, the initrd initializes the network and starts a lightweight Dropbear SSH server. The admin can SSH in remotely to unseal the encrypted root drive.
+* **[Network-Wide Ad Blocking & DNS (`dns.nix`)](../../hosts/michael/dns.nix)**: Runs Pi-hole with custom VLAN group policies ([`pihole-groups.nix`](../../hosts/michael/pihole-groups.nix)) allowing granular filtering per device category, local LAN service CNAMEs (`files`/`budget`/`jellyfin`/`git`/`vault`/`metrics`/`notify.benway.me` → `zita.skylab.home`), local Unbound DNSSEC resolution, and Handshake DNS (`hnsd`).
+* **[Initrd Network & Remote LUKS Unlock (`remote-unlock.nix`)](../../hosts/michael/remote-unlock.nix)**: When `michael` reboots after an update or power outage, the initrd initializes the network and starts a lightweight Dropbear SSH server. Once unlocked, `michael` also automatically unlocks `zita` over initrd SSH.
+* **Distributed Build Server, Telemetry & Alerting**: Serves as the high-IPC Alder Lake remote Nix builder ([`data/builders.nix`](../../data/builders.nix)), runs the Beszel telemetry agent and hardware-watchdog-guarded `auto-update`, and wires `pihole-ftl` and `unbound` into `notify.client.onFailureUnits` for instant crash alerts via `zita`'s `ntfy` bus.
 
 ---
 
@@ -85,5 +86,6 @@ tags:
 * [Home Network Topology & Infrastructure](../architecture/network-architecture.md)
 * [Interactive Network Explorer (HTML)](../architecture/network-diagram.html)
 * [Network Routing & Perimeter Defense](../architecture/network-routing.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
 * [Remote LUKS Unlocking over SSH](../howto/remote-luks-unlock.md)
 * [Fleet Overview & Ethos](../architecture/fleet-overview.md)

@@ -6,7 +6,7 @@ description: "Open Knowledge Format (OKF) index for Joel's NixOS homelab fleet, 
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - nixos
   - homelab
@@ -42,7 +42,7 @@ High-level architecture specifications detailing how the fleet functions as an i
 Deep dives into the individual machines comprising the homelab:
 
 * [francis](./hosts/francis.md) (`type: concept`): HP ProDesk 600 G4 Desktop Mini (i5-8500T, 32GB RAM, 1TB NVMe)—generously gifted by a LINUX Unplugged listener and reborn as a silent desktop powerhouse.
-* [zita](./hosts/zita.md) (`type: concept`): HP z620 workstation (dual 8-core Xeon E5-2667v2, 128GB ECC RAM, Quadro M2000)—the heavy lifter running 24TB tiered storage, Jellyfin NVENC, Actual Budget, Samba, Copyparty, Hermes Signal bot, and local binary cache.
+* [zita](./hosts/zita.md) (`type: concept`): HP z620 workstation (dual 8-core Xeon E5-2667v2, 128GB ECC RAM, Quadro M2000)—the heavy lifter running 24TB tiered storage, Jellyfin NVENC, Actual Budget, Samba, Copyparty, Forgejo, Vaultwarden, Beszel Hub, self-hosted `ntfy`, Hermes Signal agent, and Harmonia binary cache.
 * [michael](./hosts/michael.md) (`type: concept`): HP Slim desktop (i3-12100, dual 2.5GbE NIC)—the perimeter gatekeeper, VLAN router, CAKE traffic shaper, and dropbear initrd remote LUKS unlocker.
 * [agnes & jerome](./hosts/agnes-and-jerome.md) (`type: concept`): Dell Latitude E7270 & E7470 laptops—MIL-STD 810G Tri-metal chassis, E-Port docking stations, 32GB RAM upgrades, FHD IPS panels, and ME-cleaned daily drivers.
 * [therese](./hosts/therese.md) (`type: concept`): Minimalist, zero-trust bootstrap installer ISO built inside a container, joining Tailnet as an ephemeral bootstrap node for unattended `nixos-anywhere` deployments.
@@ -58,6 +58,7 @@ Action-oriented runbooks for operating and deploying hosts:
 * [Remote LUKS Unlocking over SSH](./howto/remote-luks-unlock.md) (`type: howto`): Remotely unlocking `michael` during initrd boot over an encrypted SSH connection.
 * [Beszel Fleet Telemetry & Hermes Setup](./howto/beszel-hermes-prompt.md) (`type: howto`): One-time Agenix secret bootstrap, Beszel alert policy pushing directly to loopback `ntfy`, and read-only `beszel-query` check prompt for Hermes.
 * [Fleet Notification Bus (ntfy + Desktop Subscribers)](./howto/fleet-notify.md) (`type: howto`): Secret bootstrap for self-hosted `ntfy-sh` on `zita`, Android `ntfy` app setup, Beszel loopback alerting, and developer guide for wiring services and desktop environments.
+* [Declarative KMail Account Provisioning](./howto/declarative-kmail.md) (`type: howto`): Agenix-encrypted setup and verification guide for declarative KMail IMAP/SMTP accounts, Send-As aliases, Kleopatra GPG bindings, and QtKeychain credentials.
 
 ---
 

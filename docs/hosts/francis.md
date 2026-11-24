@@ -5,7 +5,7 @@ description: "Workstation profile for francis, a 1-liter desktop mini gifted by 
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - host
   - workstation
@@ -44,7 +44,7 @@ Rescued from corporate obsolescence and brought into the homelab fold, `francis`
 
 Within the homelab ecosystem, `francis` serves as a dedicated desktop workstation:
 * **Interactive Development**: Serves as a responsive, dedicated workstation for coding, compiling, and testing NixOS configurations without heating up the room or spinning loud fans.
-* **Distributed Build Node**: Cooperates with `zita` and the laptops in the fleet via [`distributed-builds.nix`](../architecture/fleet-overview.md#distributed-builds), offloading heavy compilation tasks or contributing local compute.
+* **Distributed Build Client**: Offloads heavy Nix compilation to `michael` and `zita` over Tailscale via [`distributed-builds.nix`](../architecture/fleet-overview.md#distributed-compilation-infrastructure) and pulls prebuilt closures from `zita`'s Harmonia binary cache.
 * **Peripherals & Workstation Audio**: Configured with declarative PipeWire audio stack, Alice75 mechanical keyboard mapping, R1 Pro mouse profiles, and CUPS network printing.
 * **Continuous File Synchronization**: Keeps workspace trees, project assets, and documents in sync with other nodes across the Tailnet via `syncthing`.
 
@@ -67,8 +67,8 @@ Within the homelab ecosystem, `francis` serves as a dedicated desktop workstatio
    * **Lanzaboote**: Full UEFI Secure Boot integration signed with custom platform keys.
    * **TPM2 Auto-Unlock**: LUKS volume automatically unseals on boot against system PCRs via [`modules/tpm.nix`](../../modules/tpm.nix), requiring no manual passphrase entry during normal power cycles.
 
-4. **Mesh Networking & Telemetry**:
-   Seamlessly integrated into the private Tailscale mesh network with automated OAuth key enrollment and headless remote management.
+4. **Mesh Networking, Telemetry & Notifications**:
+   Seamlessly integrated into the private Tailscale mesh network with automated OAuth enrollment, Beszel agent telemetry, declarative KMail account/GPG provisioning ([`modules/kmail.nix`](../../modules/kmail.nix)), and real-time fleet alerts streamed from `zita`'s `ntfy` bus to KDE Plasma via `fleet-notify-desktop` ([`modules/plasma.nix`](../../modules/plasma.nix)).
 
 ---
 
@@ -82,6 +82,8 @@ St. Francis of Assisi is remembered for radical humility and rebuilding that whi
 
 ## Related Documents
 * [Fleet Overview & Ethos](../architecture/fleet-overview.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
+* [Declarative KMail Account Provisioning](../howto/declarative-kmail.md)
 * [How to Bootstrap a New Host](../howto/bootstrap-new-host.md)
 * [TPM2 Enrollment & Re-enrollment](../howto/tpm-enrollment.md)
 * [ADR 0001: Impermanence with Root-on-Tmpfs/Btrfs](../decisions/0001-impermanence-and-btrfs.md)

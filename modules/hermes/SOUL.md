@@ -126,6 +126,7 @@ You have read-only access to fleet-wide telemetry from Beszel Hub on `zita` (`ht
 
 ### Operational Notes
 - Access is **strictly read-only** (`readonly` Beszel role) and never triggers active S.M.A.R.T. disk refreshes, respecting `zita`'s 24TB HDD standby spindown.
+- **Alerting boundary:** Automated alerts from Beszel, `auto-update`, `smartd`, and systemd `OnFailure=` push directly to the self-hosted **`ntfy`** fleet notification bus on `zita` (`https://notify.benway.me`, topics `fleet-alerts` and `fleet-updates`) with zero LLM dependency. Do **not** run a Beszel alert webhook listener; stay quiet unless the user asks a question on Signal, and use `beszel-query` for on-demand diagnostics.
 - `agnes`, `jerome`, and `francis` are laptops/workstations that sleep and roam normally—treat them being `down` as expected unless the user asks about them. `zita` and `michael` are always-on infrastructure servers.
 
 

@@ -5,7 +5,7 @@ description: "Comprehensive fleet topology, corporate e-waste salvage philosophy
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - architecture
   - fleet
@@ -40,7 +40,7 @@ Instead of spending thousands of dollars on disposable, locked-down consumer gad
         |                                                           |
         +---> zita (HP z620 Server)                                 |
         |     Dual Xeon E5-2667v2 (32T), 128GB ECC, 24TB + SSD      +--- (All Hosts)
-        |     Jellyfin NVENC, Samba, Actual, Nix Binary Cache       |
+        |     Jellyfin, Forgejo, Vaultwarden, Beszel, ntfy, Hermes  |
         |                                                           |
         +---> francis (HP ProDesk 600 G4 Mini) <--------------------+
         |     i5-8500T, 32GB RAM, 1TB NVMe                          |
@@ -81,27 +81,19 @@ Every node in the fleet is named after a Catholic Saint whose life story and spi
 
 Compiling large packages or kernel builds on 15W dual-core laptops (`agnes` and `jerome`) would take hours and drain batteries. To solve this, the fleet implements transparent **Distributed Nix Compilation** via [`modules/distributed-builds.nix`](../../modules/distributed-builds.nix):
 
-1. **Remote Builders Registry**: Laptops and smaller workstations register `zita` as an authorized builder in `/etc/nix/machines`:
-   ```nix
-   nix.buildMachines = [
-     {
-       hostName = "zita";
-       system = "x86_64-linux";
-       maxJobs = 16;
-       speedFactor = 4;
-       supportedFeatures = [ "nixos-test" "benchmark" "big-parallel" "kvm" ];
-     }
-   ];
-   ```
-2. **Cryptographic Binary Cache**: `zita` runs a local [`binary-cache`](../../modules/binary-cache.nix) server (`nix-serve`). Any package compiled once on `zita` is immediately signed with an ed25519 key and shared to `francis`, `jerome`, and `agnes` over the local 2.5GbE network at full line rate.
+1. **Remote Builders Registry**: Workstations and laptops (`francis`, `agnes`, `jerome`) distribute builds over Tailscale `ssh-ng` to both always-on servers declared in [`data/builders.nix`](../../data/builders.nix):
+   * **`michael`** (`i3-12100`, Alder Lake): `maxJobs = 8`, `speedFactor = 4` (high single-thread IPC)
+   * **`zita`** (Dual Xeon E5-2667 v2, Ivy Bridge): `maxJobs = 16`, `speedFactor = 3` (massive parallel throughput)
+2. **Cryptographic Binary Cache**: `zita` runs a local [Harmonia](../../modules/binary-cache.nix) (`services.harmonia.cache`) binary cache server. Any package compiled once on `zita` is signed with an ed25519 key and served to `michael`, `francis`, `jerome`, and `agnes` over LAN/Tailscale.
 
 ---
 
-## Automated Updates & Fleet Maintenance
+## Automated Updates & Fleet Notification Bus
 
-The entire fleet runs an automated, non-disruptive update schedule ([`modules/auto-update.nix`](../../modules/auto-update.nix)):
-* **Non-Interactive Updates**: Flakes are updated and system closures built during the early morning hours with randomized jitter.
-* **Plasma Desktop Notifications**: On workstations (`francis`, `jerome`, `agnes`), user-space updates apply live, while kernel updates trigger a gentle desktop notification in KDE Plasma indicating that a reboot is ready whenever convenient.
+The entire fleet runs an automated, canary-verified update schedule ([`modules/auto-update.nix`](../../modules/auto-update.nix)) wired into a unified, desktop-agnostic notification bus ([`modules/notify.nix`](../../modules/notify.nix)):
+* **Non-Interactive Updates**: Flakes are updated and system closures built during the early morning hours with randomized jitter, automatic post-boot canary verification (`boot-verify`), and unattended rollback on server failures.
+* **Self-Hosted `ntfy` Bus on `zita`**: `auto-update`, `smartd` drive alerts, Beszel telemetry alerts, and systemd `OnFailure=` crashes all publish to `https://notify.benway.me` (`fleet-alerts` & `fleet-updates`) for instant push delivery to Android and desktop sessions.
+* **Desktop-Owned Subscribers**: `modules/notify.nix` has zero desktop coupling. KDE Plasma workstations (`francis`, `jerome`, `agnes`) stream alerts to native desktop notifications via `fleet-notify-desktop` wired strictly inside [`modules/plasma.nix`](../../modules/plasma.nix), keeping workstations ready to switch desktop environments cleanly.
 
 ---
 
@@ -109,4 +101,6 @@ The entire fleet runs an automated, non-disruptive update schedule ([`modules/au
 * [Storage Architecture & Tiering](./storage-tiering.md)
 * [Network Routing & Perimeter Defense](./network-routing.md)
 * [Security, Cryptography & Bootstrapping](./security-model.md)
+* [Hermes Autonomous Agent & Signal Gateway](./hermes-agent.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
 * [Host Profile: francis](../hosts/francis.md)

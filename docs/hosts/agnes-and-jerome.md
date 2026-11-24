@@ -5,7 +5,7 @@ description: "Mobile workstation profiles for agnes (Dell E7270) and jerome (Del
 status: active
 trust: verified
 owner: joel
-timestamp: "2026-11-12"
+timestamp: "2026-11-24"
 tags:
   - host
   - laptop
@@ -54,14 +54,17 @@ Both laptops have been heavily customized beyond their original factory configur
 ## Desktop Environment & Software Stack
 
 Both laptops run an identical, fully declarative mobile workstation configuration:
-* **KDE Plasma 6 + [Plasma-Manager](../../modules/plasma.nix)**: Declarative panel layouts, keyboard shortcuts, window behavior, and Breeze Dark styling.
+* **KDE Plasma 6 + [Plasma-Manager](../../modules/plasma.nix)**: Declarative panel layouts, keyboard shortcuts, window behavior, Breeze Dark styling, and real-time `fleet-notify-desktop` SSE notifications streamed from `zita`'s `ntfy` bus.
+* **[Declarative KMail](../../modules/kmail.nix)**: Agenix-encrypted IMAP/SMTP provisioning, Send-As aliases, Kleopatra GPG bindings, and QtKeychain credentials.
 * **[Hardened Firefox](../../modules/firefox.nix)**: Ephemeral session profiles, telemetry stripped, custom user.js, and automated extension provisioning (uBlock Origin, Bitwarden, etc.).
-* **Security & Storage**: Disko-provisioned LUKS2 with Btrfs, Impermanence root-wiping, Lanzaboote Secure Boot, and automatic TPM2 auto-unlocking.
+* **Security, Telemetry & Storage**: Disko-provisioned LUKS2 with Btrfs, Impermanence root-wiping, Lanzaboote Secure Boot, automatic TPM2 auto-unlocking, and Beszel agent telemetry (with sleep/roaming-aware alert rules).
 * **Agentic Development**: Outfitted with Google Antigravity (`agy` CLI + IDE) and OpenCode for on-the-go pairing with AI models.
 
 ---
 
 ## Related Documents
 * [Fleet Overview & Ethos](../architecture/fleet-overview.md)
+* [Fleet Notification Bus (ntfy + Desktop Subscribers)](../howto/fleet-notify.md)
+* [Declarative KMail Account Provisioning](../howto/declarative-kmail.md)
 * [Security, Cryptography & Bootstrapping](../architecture/security-model.md)
 * [ADR 0001: Impermanence with Root-on-Tmpfs/Btrfs](../decisions/0001-impermanence-and-btrfs.md)

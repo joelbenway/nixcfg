@@ -44,7 +44,9 @@ Zita is an HP z620 workstation. It has dual 8-core Xeon E5-2667v2 CPUs and 128 G
 * [Drive Health](./modules/smartd.nix) Fleet-wide S.M.A.R.T. monitoring daemon with automated daily short and weekly long self-tests, temperature alerting, and a unified `disk-health` CLI utility.
 * [Forgejo](./modules/forgejo.nix) Self-hosted software forge (`git.benway.me`) backed by SQLite and a dedicated SSH server on port 2220, featuring built-in CI/CD with `forgejo-runner` leveraging Zita's 32 cores.
 * [Vaultwarden](./modules/vaultwarden.nix) Self-hosted Bitwarden-compatible password manager (`vault.benway.me`) backed by SQLite with automated daily persistent backups, WebSocket sync, and Caddy reverse proxy.
-* [Beszel Telemetry](./modules/beszel.nix) Lightweight fleet-wide monitoring hub (`metrics.benway.me` on `zita`) and agents across all hosts tracking CPU, RAM, thermals, standby-aware S.M.A.R.T. health, `systemd` units/logs, and Quadro GPU stats, paired with a read-only `beszel-query` CLI for Hermes Signal alerting ([Setup & Hermes Prompt](./docs/howto/beszel-hermes-prompt.md)).
+* [Beszel Telemetry](./modules/beszel.nix) Lightweight fleet-wide monitoring hub (`metrics.benway.me` on `zita`) and agents across all hosts tracking CPU, RAM, thermals, standby-aware S.M.A.R.T. health, `systemd` units/logs, and Quadro GPU stats—pushing alerts directly to loopback `ntfy`, paired with a read-only `beszel-query` CLI for on-demand Hermes Signal queries ([Setup & Hermes Prompt](./docs/howto/beszel-hermes-prompt.md)).
+* [Fleet Notification Bus](./modules/notify.nix) Desktop-agnostic fleet notification bus backed by self-hosted `ntfy-sh` on `zita` (`notify.benway.me`), unifying `auto-update`, `smartd`, Beszel, and systemd `OnFailure=` alerts across Android and desktop sessions (KDE Plasma SSE subscriber lives strictly in [`modules/plasma.nix`](./modules/plasma.nix)) ([Setup & Developer Guide](./docs/howto/fleet-notify.md)).
+* [Declarative KMail](./modules/kmail.nix) Agenix-encrypted declarative provisioning for KMail IMAP/SMTP accounts, Gmail Send-As aliases, Kleopatra GPG key bindings, and QtKeychain credentials ([Setup Guide](./docs/howto/declarative-kmail.md)).
 * [Hermes](./modules/hermes.nix) My Hermes module features a unique architecture: on an otherwise immutable NixOS system, Hermes can provision its own tools from nixpkgs and adjust runtime settings via a sandboxed leaf module (`agent-env.nix`) and a privilege-separated `rebuild-agent-env` script.
 
 ## Documentation
@@ -57,7 +59,7 @@ In-depth technical architecture, hardware specifications, operational runbooks, 
 * [Agentic AI Development](./docs/architecture/ai-development.md)
 * [Hermes Autonomous Agent Architecture](./docs/architecture/hermes-agent.md)
 * [Host Hardware Profiles](./docs/index.md#host-concepts--hardware-profiles) (`francis`, `zita`, `michael`, `agnes`, `jerome`, `therese`)
-* [Operational How-To Guides](./docs/index.md#operational-how-to-guides) (Bootstrapping, TPM2, Remote LUKS Unlock)
+* [Operational How-To Guides](./docs/index.md#operational-how-to-guides) (Bootstrapping, TPM2, Remote LUKS Unlock, Beszel Telemetry, Fleet Notifications, Declarative KMail)
 * [Architectural Decision Records](./docs/index.md#architectural-decision-records-adrs)
 
 ## Get Started
