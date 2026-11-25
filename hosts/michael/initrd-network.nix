@@ -31,7 +31,8 @@ in {
         hostKeys = [
           "/persist/etc/ssh/initrd_host_ed25519_key"
         ];
-        ignoreEmptyHostKeys = true;
+        # Fail boot-loader assembly rather than silently booting an unlockable initrd if the key is missing
+        ignoreEmptyHostKeys = false;
       };
     };
     systemd.network = {
