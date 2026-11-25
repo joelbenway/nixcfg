@@ -60,21 +60,33 @@ Options:
   --timeout SECS       Max seconds to wait for reboot to complete (default: 180)
   -h, --help           Show this help message
 EOF
-  exit 0
+  exit "${1:-0}"
 }
 
 # Parse CLI options
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -t | --target)
+      [[ $# -ge 2 ]] || {
+        error "Option $1 requires an argument."
+        usage 1
+      }
       TARGET_ADDRESS="$2"
       shift 2
       ;;
     -u | --user)
+      [[ $# -ge 2 ]] || {
+        error "Option $1 requires an argument."
+        usage 1
+      }
       REMOTE_USER="$2"
       shift 2
       ;;
     -p | --port)
+      [[ $# -ge 2 ]] || {
+        error "Option $1 requires an argument."
+        usage 1
+      }
       INITRD_PORT="$2"
       shift 2
       ;;
@@ -87,15 +99,19 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --timeout)
+      [[ $# -ge 2 ]] || {
+        error "Option $1 requires an argument."
+        usage 1
+      }
       TIMEOUT="$2"
       shift 2
       ;;
     -h | --help)
-      usage
+      usage 0
       ;;
     -*)
       echo "Unknown option: $1" >&2
-      usage
+      usage 1
       ;;
     *)
       if [[ -z "$TARGET_HOST" ]]; then
@@ -103,7 +119,7 @@ while [[ $# -gt 0 ]]; do
         shift
       else
         echo "Unexpected argument: $1" >&2
-        usage
+        usage 1
       fi
       ;;
   esac
@@ -111,7 +127,7 @@ done
 
 if [[ -z "$TARGET_HOST" ]]; then
   error "Missing required target hostname."
-  usage
+  usage 1
 fi
 
 if [[ -z "$TARGET_ADDRESS" ]]; then
@@ -138,9 +154,9 @@ init_sudo() {
 
 run_ssh_sudo() {
   if [[ -n "$SUDO_PW" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "echo \"$SUDO_PW\" | sudo -S $*"
+    printf '%s\n' "$SUDO_PW" | ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "sudo -S -p '' -- $*"
   else
-    ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo $*"
+    ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo -- $*"
   fi
 }
 
@@ -299,8 +315,9 @@ while true; do
 
   # Check Stage-2 SSH (port 22)
   if nc -z -w 1 "${TARGET_ADDRESS}" 22 2>/dev/null; then
-    if run_ssh "systemctl is-system-running 2>/dev/null" &>/dev/null; then
-      success "${TARGET_HOST} is back online in stage-2!"
+    STAGE2_STATE=$(run_ssh "systemctl is-system-running 2>/dev/null" || true)
+    if [[ "$STAGE2_STATE" == "running" || "$STAGE2_STATE" == "degraded" ]]; then
+      success "${TARGET_HOST} is back online in stage-2 (${STAGE2_STATE})!"
       break
     fi
   fi
@@ -325,7 +342,7 @@ echo -e "   Systemd State: ${SYSTEM_STATUS}"
 if run_ssh "command -v tpm-reenroll &>/dev/null"; then
   echo ""
   info "Post-reboot TPM status:"
-  run_ssh "sudo tpm-reenroll --status" | grep -E "Device:|SLOT|Enrolled PCRs" || true
+  run_ssh_sudo "tpm-reenroll --status" 2>/dev/null | grep -E "Device:|SLOT|Enrolled PCRs" || true
 fi
 
 echo ""
