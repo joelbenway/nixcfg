@@ -188,8 +188,8 @@ def cmd_switch_apply(args, cfg: Dict[str, Any]):
                 current_ip = fallback_ip
                 break
         else:
-            print(f"[!] Switch is not responding to ping at {current_ip}.")
-            return
+            print(f"[!] Switch is not responding to ping at {current_ip}.", file=sys.stderr)
+            sys.exit(1)
 
     if requests is None:
         print("[!] Python 'requests' module is required for KeepLINK switch provisioning.", file=sys.stderr)

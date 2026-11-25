@@ -19,11 +19,11 @@ When a task requires a utility (e.g. `ffmpeg`, `poppler_utils`, `imagemagick`, `
    Update `/home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` by adding the Nixpkgs package to `extraPackages`.
    - *Note*: Overwrite the file in-place (e.g. using `cat <<'EOF' > /home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` or direct write). Do not attempt to rename or remove the file itself, as the parent directory is write-protected.
 2. **Rebuild the Environment**:
-   Run the rebuild script (works with or without sudo):
+   Run the rebuild script via `sudo`:
    ```bash
    sudo /run/current-system/sw/bin/rebuild-agent-env
    ```
-   *(or simply `rebuild-agent-env`)*
+   *(or `sudo rebuild-agent-env`)*
 3. **Automated Pipeline Execution**:
    The rebuild script will:
    - Version-control your leaf file changes to GitOps tracking (if repository is writable).
@@ -90,9 +90,8 @@ To update your models, edit `/home/joel/Projects/nixcfg/modules/hermes/agent-env
 ### Applying Changes
 After editing `agent-env.nix`, simply execute:
 ```bash
-rebuild-agent-env
+sudo rebuild-agent-env
 ```
-*(or `sudo rebuild-agent-env`)*
 
 The script automatically:
 1. Validates the Nix syntax.

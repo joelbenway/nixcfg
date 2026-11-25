@@ -141,9 +141,11 @@ run_ssh() {
 }
 
 SUDO_PW="${SUDO_PASSWORD:-}"
+SUDO_NOPASSWD=false
 
 init_sudo() {
   if run_ssh "sudo -n true" &>/dev/null; then
+    SUDO_NOPASSWD=true
     return 0
   fi
   if [[ -z "$SUDO_PW" && -t 0 ]]; then
@@ -153,7 +155,9 @@ init_sudo() {
 }
 
 run_ssh_sudo() {
-  if [[ -n "$SUDO_PW" ]]; then
+  if [[ "$SUDO_NOPASSWD" == true ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "sudo -n -- $*"
+  elif [[ -n "$SUDO_PW" ]]; then
     printf '%s\n' "$SUDO_PW" | ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_TARGET}" "sudo -S -p '' -- $*"
   else
     ssh -t -o ConnectTimeout=10 "${SSH_TARGET}" "sudo -- $*"
@@ -231,7 +235,7 @@ fi
 
 # Fallback: check remote decrypted secret if not locally decrypted
 if [[ -z "$PASSPHRASE" ]]; then
-  REMOTE_PASSPHRASE=$(run_ssh_sudo "cat /run/agenix/${TARGET_HOST}-luks-passphrase.txt 2>/dev/null" || true)
+  REMOTE_PASSPHRASE=$(run_ssh_sudo "cat /run/agenix/${TARGET_HOST}-luks-passphrase.txt 2>/dev/null" | tr -d '\r\n' || true)
   if [[ -n "$REMOTE_PASSPHRASE" ]]; then
     PASSPHRASE="$REMOTE_PASSPHRASE"
   fi
@@ -297,7 +301,7 @@ while true; do
     info "Initrd SSH detected on port ${INITRD_PORT}!"
     if [[ "$AUTO_UNLOCK" == true && -n "$PASSPHRASE" && "$UNLOCKED" == false ]]; then
       info "Transmitting LUKS passphrase to initrd..."
-      if echo "$PASSPHRASE" | ssh -o StrictHostKeyChecking=accept-new \
+      if printf '%s\n' "$PASSPHRASE" | ssh -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile=/dev/null \
         -o LogLevel=ERROR \
         -o ConnectTimeout=5 \

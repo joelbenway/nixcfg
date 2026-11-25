@@ -44,7 +44,7 @@ in {
               EnvironmentFile = toString cfg.envFile;
               ExecStart = toString (pkgs.writeShellScript "loadkeys-import-${user}" ''
                 vars=()
-                while IFS='=' read -r key _; do
+                while IFS='=' read -r key _ || [ -n "$key" ]; do
                   key="''${key%%#*}"
                   key="''${key// /}"
                   [ -n "$key" ] && vars+=("$key")
