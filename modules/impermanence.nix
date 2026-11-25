@@ -54,6 +54,13 @@
     };
   });
 
+  normalizeDir = p: let
+    parts = lib.filter (part: part != "") (lib.splitString "/" (toString p));
+  in
+    "/" + (lib.concatStringsSep "/" parts);
+
+  escapeTmpfilesPath = path: "\"${lib.replaceStrings ["\\" "\"" "%" "\n" "\r" "\t"] ["\\\\" "\\\"" "%%" "\\n" "\\r" "\\t"] path}\"";
+
   resolveUser = name: svc:
     if svc.user != null
     then svc.user
@@ -68,8 +75,36 @@
     then svc.group
     else u;
 
+  baseDirs = [
+    "/var/lib/bluetooth"
+    "/var/lib/nixos"
+    "/var/lib/systemd"
+    {
+      directory = "/var/lib/sbctl";
+      mode = "0700";
+    }
+    "/var/lib/tailscale"
+    "/etc/NetworkManager/system-connections"
+    "/var/cache/huggingface"
+  ];
+
+  extractDir = entry:
+    normalizeDir (
+      if builtins.isAttrs entry
+      then entry.directory
+      else entry
+    );
+
+  existingDirs = map extractDir (baseDirs ++ cfg.directories);
+
+  persistentServiceDirs = lib.unique (
+    lib.filter (d: !(builtins.elem d existingDirs)) (
+      lib.mapAttrsToList (_: svc: normalizeDir svc.directory) cfg.persistentServices
+    )
+  );
+
   createdUserEntries = lib.filterAttrs (_: svc: svc.createUser) cfg.persistentServices;
-  tmpfilesEntries = lib.filterAttrs (name: svc: (resolveUser name svc) != null) cfg.persistentServices;
+  tmpfilesEntries = lib.filterAttrs (name: svc: (resolveUser name svc) != null || (resolveGroup name svc) != null) cfg.persistentServices;
 in {
   imports = [
     inputs.impermanence.nixosModules.impermanence
@@ -133,9 +168,17 @@ in {
         createdUserEntries);
 
       systemd.tmpfiles.rules = lib.mapAttrsToList (name: svc: let
-        u = resolveUser name svc;
-        g = resolveGroup name svc;
-      in "d ${svc.directory} ${svc.mode} ${u} ${g} -")
+        resolvedUser = resolveUser name svc;
+        resolvedGroup = resolveGroup name svc;
+        u =
+          if resolvedUser != null
+          then resolvedUser
+          else "-";
+        g =
+          if resolvedGroup != null
+          then resolvedGroup
+          else "-";
+      in "d ${escapeTmpfilesPath svc.directory} ${svc.mode} ${u} ${g} -")
       tmpfilesEntries;
     }
 
@@ -192,21 +235,7 @@ in {
 
       environment.persistence."/persist" = {
         hideMounts = true;
-        directories =
-          [
-            "/var/lib/bluetooth"
-            "/var/lib/nixos"
-            "/var/lib/systemd"
-            {
-              directory = "/var/lib/sbctl";
-              mode = "0700";
-            }
-            "/var/lib/tailscale"
-            "/etc/NetworkManager/system-connections"
-            "/var/cache/huggingface"
-          ]
-          ++ cfg.directories
-          ++ (lib.mapAttrsToList (_: svc: svc.directory) cfg.persistentServices); # directories
+        directories = baseDirs ++ cfg.directories ++ persistentServiceDirs; # directories
         files =
           [
             "/etc/machine-id"
@@ -219,12 +248,12 @@ in {
       systemd.services = lib.mkMerge (
         lib.mapAttrsToList (
           _: svc: let
-            mountUnit = "${utils.escapeSystemdPath svc.directory}.mount";
+            mountUnit = "${utils.escapeSystemdPath (normalizeDir svc.directory)}.mount";
             targets = [svc.service] ++ svc.extraServices;
           in
             lib.genAttrs targets (_: {
               after = [mountUnit];
-              wants = [mountUnit];
+              requires = [mountUnit];
             })
         )
         cfg.persistentServices

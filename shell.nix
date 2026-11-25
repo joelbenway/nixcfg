@@ -15,11 +15,20 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    HOOK_DIR="$(git rev-parse --git-path hooks 2>/dev/null || true)"
-    if [ -n "$HOOK_DIR" ] && [ -d "$HOOK_DIR" ]; then
-      PRE_COMMIT="$HOOK_DIR/pre-commit"
-      cat > "$PRE_COMMIT" << 'HOOK'
+    CUSTOM_HOOKS_PATH="$(git config --get core.hooksPath 2>/dev/null || true)"
+    if [ -n "$CUSTOM_HOOKS_PATH" ]; then
+      echo "Skipping pre-commit hook install (custom core.hooksPath is configured: $CUSTOM_HOOKS_PATH)"
+    else
+      GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+      HOOK_DIR="''${GIT_COMMON_DIR:+$GIT_COMMON_DIR/hooks}"
+      if [ -n "$HOOK_DIR" ] && [ -d "$HOOK_DIR" ]; then
+        PRE_COMMIT="$HOOK_DIR/pre-commit"
+        if [ -e "$PRE_COMMIT" ] && ! grep -qE 'nixcfg-managed-pre-commit|Scanning for secrets with trufflehog' "$PRE_COMMIT" 2>/dev/null; then
+          echo "Skipping pre-commit hook install (unmanaged pre-commit hook already exists at $PRE_COMMIT)"
+        else
+          cat > "$PRE_COMMIT" << 'HOOK'
     #!/usr/bin/env bash
+    # nixcfg-managed-pre-commit
     set -euo pipefail
 
     echo "Processing... (skip with git commit --no-verify)"
@@ -27,23 +36,25 @@ pkgs.mkShell {
 
     export PATH="${pkgs.alejandra}/bin:${pkgs.trufflehog}/bin:$PATH"
 
-    mapfile -t nix_files < <(git diff --cached --name-only --diff-filter=ACMR -- '*.nix')
+    mapfile -d "" -t nix_files < <(git diff --cached -z --name-only --diff-filter=ACMR -- '*.nix')
     if [ "''${#nix_files[@]}" -gt 0 ]; then
-      alejandra --quiet "''${nix_files[@]}"
+      alejandra --quiet -- "''${nix_files[@]}"
       git add -- "''${nix_files[@]}"
     fi
 
     echo "Scanning for secrets with trufflehog..."
-    mapfile -t staged_files < <(git diff --cached --name-only --diff-filter=ACMR)
+    mapfile -d "" -t staged_files < <(git diff --cached -z --name-only --diff-filter=ACMR)
     if [ "''${#staged_files[@]}" -gt 0 ]; then
-      if ! trufflehog filesystem "''${staged_files[@]}" --log-level=-1 --fail; then
+      if ! trufflehog filesystem --log-level=-1 --fail -- "''${staged_files[@]}"; then
         echo "Secrets detected! Commit blocked."
         exit 1
       fi
     fi
     HOOK
-      chmod +x "$PRE_COMMIT"
-      echo "Git pre-commit hook installed"
+          chmod +x "$PRE_COMMIT"
+          echo "Git pre-commit hook installed"
+        fi
+      fi
     fi
 
     if [ -d ".git" ]; then
