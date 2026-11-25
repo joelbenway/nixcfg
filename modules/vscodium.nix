@@ -56,34 +56,46 @@ in {
             profiles = {
               default = {
                 enableMcpIntegration = userConfig.ai;
-                extensions = with pkgs.vscode-extensions;
-                  [
-                    # ms-vscode-remote.remote-ssh
-                    # ms-vscode-remote.remote-ssh-edit
-                    mkhl.direnv
-                  ]
-                  ++ lib.optionals userConfig.cpp [
-                    llvm-vs-code-extensions.vscode-clangd
-                    ms-vscode.cmake-tools
-                    ms-vscode.cpptools
-                  ]
-                  ++ lib.optionals userConfig.flutter [
-                    dart-code.dart-code
-                    dart-code.flutter
-                  ]
-                  ++ lib.optionals userConfig.nix [
-                    jnoortheen.nix-ide
-                  ]
-                  ++ lib.optionals userConfig.python [
-                    ms-python.python
-                  ]
-                  ++ lib.optionals userConfig.shell [
-                    mads-hartmann.bash-ide-vscode
-                    # mkhl.shfmt
-                  ]
-                  ++ lib.optionals userConfig.ai [
-                    # continue.continue
-                    # Google.gemini-cli-vscode-ide-companion
+                extensions =
+                  (with pkgs.vscode-extensions;
+                    [
+                      mkhl.direnv
+                    ]
+                    ++ lib.optionals userConfig.cpp [
+                      llvm-vs-code-extensions.vscode-clangd
+                      ms-vscode.cmake-tools
+                      ms-vscode.cpptools
+                    ]
+                    ++ lib.optionals userConfig.flutter [
+                      dart-code.dart-code
+                      dart-code.flutter
+                    ]
+                    ++ lib.optionals userConfig.nix [
+                      jnoortheen.nix-ide
+                    ]
+                    ++ lib.optionals userConfig.python [
+                      ms-python.python
+                    ]
+                    ++ lib.optionals userConfig.shell [
+                      mads-hartmann.bash-ide-vscode
+                      # mkhl.shfmt
+                    ]
+                    ++ lib.optionals userConfig.ai [
+                      # continue.continue
+                      # Google.gemini-cli-vscode-ide-companion
+                    ])
+                  ++ [
+                    (pkgs.vscode-utils.buildVscodeMarketplaceExtension {
+                      mktplcRef = {
+                        publisher = "jeanp413";
+                        name = "open-remote-ssh";
+                        version = "0.6.2";
+                      };
+                      vsix = pkgs.fetchurl {
+                        url = "https://open-vsx.org/api/jeanp413/open-remote-ssh/0.6.2/file/jeanp413.open-remote-ssh-0.6.2.vsix";
+                        hash = "sha256-DvlV63bVU2Y74W4noYFPpOyl+XYMvHyVh05IXH8zYkg=";
+                      };
+                    })
                   ]
                   ++ lib.optionals userConfig.ai (pkgs.vscode-utils.extensionsFromVscodeMarketplace [
                     {

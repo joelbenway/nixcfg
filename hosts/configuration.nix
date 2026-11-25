@@ -117,6 +117,8 @@ in {
     wget
   ];
 
+  programs.nix-ld.enable = true;
+
   services = {
     libinput.enable = true;
     pcscd.enable = true;
