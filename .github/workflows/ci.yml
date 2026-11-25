@@ -8,6 +8,7 @@ on:
       - dev
       - 'feat/**'
       - 'fix/**'
+      - 'refactor/**'
   pull_request:
     branches:
       - master
@@ -52,10 +53,16 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Check formatting with Alejandra
-        run: nix run nixpkgs#alejandra -- --check .
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(nix eval --impure --raw --expr '(builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.nixpkgs.locked.rev')
+          nix run "github:nixos/nixpkgs/${nixpkgs_rev}#alejandra" -- --check .
 
       - name: Lint with Statix
-        run: nix run nixpkgs#statix -- check .
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(nix eval --impure --raw --expr '(builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.nixpkgs.locked.rev')
+          nix run "github:nixos/nixpkgs/${nixpkgs_rev}#statix" -- check .
 
   lint-shell:
     name: Shell Script Linting (ShellCheck & Shfmt)
@@ -69,11 +76,50 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
+      - name: Discover shell scripts
+        id: scripts
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(
+            while IFS= read -r f; do
+              if [[ "$f" == *.sh ]]; then
+                printf '%s\n' "$f"
+              elif head -n 1 "$f" | grep -qE '^#![[:space:]]*(/[^[:space:]]*/)?(env[[:space:]]+)?(ba|da|k|z)?sh([[:space:]]|$)'; then
+                printf '%s\n' "$f"
+              elif sed -n '2p' "$f" | grep -qE '^#![[:space:]]*nix-shell[[:space:]]+.*-i[[:space:]]+(ba|da|k|z)?sh([[:space:]]|$)'; then
+                printf '%s\n' "$f"
+              fi
+            done < <(git ls-files 'scripts/' 'pkgs/') | sort -u
+          )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No shell scripts found!" >&2
+            exit 1
+          fi
+          printf 'Discovered %d shell scripts:\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run ShellCheck
-        run: nix run nixpkgs#shellcheck -- scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host scripts/reboot_host scripts/sync_agent pkgs/auto-update/auto-update.sh pkgs/auto-update/boot-verify.sh pkgs/auto-update/canary.sh pkgs/auto-update/write-status.sh pkgs/disk-health/disk-health.sh
+        env:
+          FILES: ${{ steps.scripts.outputs.files }}
+        run: |
+          set -euo pipefail
+          mapfile -t files <<< "$FILES"
+          nixpkgs_rev=$(nix eval --impure --raw --expr '(builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.nixpkgs.locked.rev')
+          nix run "github:nixos/nixpkgs/${nixpkgs_rev}#shellcheck" -- "${files[@]}"
 
       - name: Check Shell Formatting with Shfmt
-        run: nix run nixpkgs#shfmt -- -d -i 2 -ci scripts/build_iso scripts/install_host scripts/generate_syncthing_keys scripts/deploy_host scripts/reboot_host scripts/sync_agent pkgs/auto-update/auto-update.sh pkgs/auto-update/boot-verify.sh pkgs/auto-update/canary.sh pkgs/auto-update/write-status.sh pkgs/disk-health/disk-health.sh
+        env:
+          FILES: ${{ steps.scripts.outputs.files }}
+        run: |
+          set -euo pipefail
+          mapfile -t files <<< "$FILES"
+          nixpkgs_rev=$(nix eval --impure --raw --expr '(builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.nixpkgs.locked.rev')
+          nix run "github:nixos/nixpkgs/${nixpkgs_rev}#shfmt" -- -d -i 2 -ci "${files[@]}"
 
   lint-workflows:
     name: Workflow Linting (Actionlint)
@@ -88,7 +134,10 @@ jobs:
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Run Actionlint
-        run: nix run nixpkgs#actionlint
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(nix eval --impure --raw --expr '(builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.nixpkgs.locked.rev')
+          nix run "github:nixos/nixpkgs/${nixpkgs_rev}#actionlint"
 
   flake-check:
     name: Flake Check
@@ -100,45 +149,9 @@ jobs:
           persist-credentials: false
 
       - name: Initialize secrets submodule or placeholders
-        env:
-          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-        run: |
-          if [ -n "$SSH_KEY" ]; then
-            echo "Initializing private secrets submodule via SSH key..."
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
-            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
-            git submodule update --init --recursive
-          else
-            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
-            git rm --cached secrets 2>/dev/null || true
-            rm -rf secrets && mkdir -p secrets
-            sed -i '/self.submodules = true;/d' flake.nix
-            # Dynamically discover all secret filenames referenced across the codebase
-            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
-              touch "secrets/$f"
-            done
-
-            # Expand templates with ${hostname} and ${username}
-            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for h in agnes francis jerome michael zita; do
-                touch "secrets/${h}${suffix}"
-              done
-            done
-
-            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for u in joel katy; do
-                touch "secrets/${u}${suffix}"
-              done
-            done
-
-            touch secrets/secrets.nix secrets/agenix-rules.nix
-            git config user.name "CI"
-            git config user.email "ci@local"
-            git add -f secrets flake.nix
-          fi
+        uses: ./.github/actions/setup-secrets
+        with:
+          ssh-key: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
 
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
@@ -157,6 +170,7 @@ jobs:
           - francis
           - jerome
           - michael
+          - therese
           - zita
     steps:
       - name: Checkout repository
@@ -165,48 +179,20 @@ jobs:
           persist-credentials: false
 
       - name: Initialize secrets submodule or placeholders
-        env:
-          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-        run: |
-          if [ -n "$SSH_KEY" ]; then
-            echo "Initializing private secrets submodule via SSH key..."
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
-            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
-            git submodule update --init --recursive
-          else
-            echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
-            git rm --cached secrets 2>/dev/null || true
-            rm -rf secrets && mkdir -p secrets
-            sed -i '/self.submodules = true;/d' flake.nix
-            # Dynamically discover all secret filenames referenced across the codebase
-            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
-              touch "secrets/$f"
-            done
-
-            # Expand templates with ${hostname} and ${username}
-            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for h in agnes francis jerome michael zita; do
-                touch "secrets/${h}${suffix}"
-              done
-            done
-
-            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for u in joel katy; do
-                touch "secrets/${u}${suffix}"
-              done
-            done
-
-            touch secrets/secrets.nix secrets/agenix-rules.nix
-            git config user.name "CI"
-            git config user.email "ci@local"
-            git add -f secrets flake.nix
-          fi
+        uses: ./.github/actions/setup-secrets
+        with:
+          ssh-key: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
 
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Evaluate host system derivation
-        run: nix eval .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel.drvPath
+        env:
+          HOST: ${{ matrix.host }}
+        run: |
+          set -euo pipefail
+          if [ "$HOST" = "therese" ]; then
+            nix eval ".#nixosConfigurations.${HOST}.config.system.build.isoImage.drvPath"
+          else
+            nix eval ".#nixosConfigurations.${HOST}.config.system.build.toplevel.drvPath"
+          fi
