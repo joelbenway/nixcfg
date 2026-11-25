@@ -71,19 +71,6 @@ in {
                       apiKey = "{env:KILO_GATEWAY_API_KEY}";
                     }; # options
                   }; # kilo
-                  "llama.cpp" = lib.mkIf config.llm.enable {
-                    npm = "@ai-sdk/openai-compatible";
-                    name = "llama-server (local)";
-                    options = {
-                      apiKey = "none";
-                      baseURL = "http://localhost:${config.llm.llamaPort}/v1";
-                    }; # options
-                    models = lib.listToAttrs (map (m: {
-                        name = m.id;
-                        value = {name = "${m.id} (local)";};
-                      })
-                      config.llm.models);
-                  }; # "llama.cpp"
                   meta = {
                     options = {
                       apiKey = "{env:META_API_KEY}";

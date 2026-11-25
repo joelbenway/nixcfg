@@ -113,9 +113,6 @@ in {
       credentialsFile = config.age.secrets.pia-env.path;
       region = "us_chicago";
     };
-    providers.proton = {
-      enable = false;
-    };
   };
 
   secureboot.enable = true;
