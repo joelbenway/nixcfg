@@ -16,7 +16,9 @@ in
     packages = with pkgs; [
       gcompris
     ];
-    extraConfig = {
-      plasma.users.eliza.discover = true;
+    extraConfig = {config, ...}: {
+      plasma.users = lib.mkIf (config.eliza.desktop && config.plasma.enable) {
+        eliza.discover = true;
+      };
     }; # extraConfig
   }

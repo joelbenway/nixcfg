@@ -10,6 +10,7 @@
   authorizedKeys ? [],
   extraGroups ? [],
   desktop ? true,
+  dev ? null,
   packages ? [],
   homePackages ? [],
   homeImports ? [],
@@ -44,15 +45,6 @@
     then pfpPng
     else pfpJpg;
 in {
-  options.${username} = {
-    enable = lib.mkEnableOption "Enables user ${username}";
-    desktop = lib.mkOption {
-      type = lib.types.bool;
-      default = desktop;
-      description = "Enable this users desktop environment.";
-    }; # desktop
-  }; # options.${username}
-
   imports = [
     ({
       config,
@@ -72,8 +64,25 @@ in {
       resolvedExtraHomeConfig = resolve extraHomeConfig;
       resolvedPackages = resolve packages;
       resolvedHomePackages = resolve homePackages;
-    in
-      lib.mkIf config.${username}.enable (lib.mkMerge [
+    in {
+      options.${username} = {
+        enable = lib.mkEnableOption "Enables user ${username}";
+        desktop = lib.mkOption {
+          type = lib.types.bool;
+          default = desktop;
+          description = "Enable this user's desktop environment integration.";
+        }; # desktop
+        dev = lib.mkOption {
+          type = lib.types.bool;
+          default =
+            if dev != null
+            then dev
+            else config.${username}.desktop;
+          description = "Enable this user's developer and AI tooling stack.";
+        }; # dev
+      }; # options.${username}
+
+      config = lib.mkIf config.${username}.enable (lib.mkMerge [
         {
           age.secrets =
             (lib.optionalAttrs hasPassphrase {
@@ -88,7 +97,7 @@ in {
                 group = "users";
               };
             })
-            // (lib.optionalAttrs hasPfp {
+            // (lib.optionalAttrs (hasPfp && config.${username}.desktop) {
               "${username}s-pfp" = {
                 file = pfpFile;
                 path = "/home/${username}/.face.icon";
@@ -97,7 +106,7 @@ in {
                 group = "users";
               };
             })
-            // {
+            // (lib.optionalAttrs config.${username}.desktop {
               bypass-paywalls-firefox = {
                 file = relativeToRoot "secrets/bypass_paywalls_clean-latest.xpi.age";
                 name = "bypass_paywalls_clean-latest.xpi";
@@ -112,7 +121,7 @@ in {
                 owner = "root";
                 group = "users";
               };
-            };
+            });
 
           system.activationScripts = lib.mkIf hasPassphrase {
             users.deps = ["${username}-password-hash"];
@@ -140,8 +149,7 @@ in {
             ]
             ++ lib.optional (builtins.hasAttr "/storage" config.fileSystems) "d /storage/users/${username} 0700 ${username} users -";
 
-          plasma = lib.mkIf config.${username}.desktop {
-            enable = true;
+          plasma = lib.mkIf (config.${username}.desktop && config.plasma.enable) {
             users.${username} = {
               theme = "org.kde.breezedark.desktop";
             };
@@ -255,7 +263,7 @@ in {
                 }; # git
               }; # programs
             }
-            (lib.mkIf config.${username}.desktop {
+            (lib.mkIf (config.${username}.desktop && config.plasma.enable) {
               xdg.dataFile =
                 lib.mapAttrs' (_key: share: {
                   name = "remoteview/${storageServer}-${share.name}.desktop";
@@ -291,7 +299,6 @@ in {
                     "${storageServer} ${capitalizedUser}"
                     (storageConfig.userShares.desktop.icon or "folder-remote")
                   ];
-                sharesJson = builtins.toJSON sharesList;
               in
                 inputs.home-manager.lib.hm.dag.entryAfter ["writeBoundary"] ''
                                   ${pkgs.python3}/bin/python3 -c '
@@ -358,6 +365,7 @@ in {
           ];
         }
         resolvedExtraConfig
-      ]))
+      ]);
+    })
   ];
 }
