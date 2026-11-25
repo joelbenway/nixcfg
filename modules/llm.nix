@@ -177,7 +177,7 @@
         systemd.user.services.llama-swap = {
           Unit = {
             Description = "llama-swap - Reliable model swapping for any local AI server";
-            After = ["network.target" "loadkeys-import-${config.home.username}.service"];
+            After = ["network.target" "loadkeys-import.service"];
           };
           Install = {
             WantedBy = ["default.target"];

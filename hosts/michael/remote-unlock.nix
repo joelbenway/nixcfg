@@ -7,6 +7,33 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  initrdPort = toString ports.initrdSsh.ssh;
+
+  zitaUnlockPkg = pkgs.writeShellApplication {
+    name = "zita-unlock";
+    runtimeInputs = with pkgs; [openssh netcat];
+    text = ''
+      target="''${1:-zita.home}"
+      port="''${2:-${initrdPort}}"
+      keyfile="${config.age.secrets.zita-luks-passphrase.path}"
+
+      if [ ! -r "$keyfile" ]; then
+        echo "Error: Passphrase file $keyfile is not readable." >&2
+        exit 1
+      fi
+
+      echo "Attempting to unlock Zita initrd ($target:$port)..."
+      ssh -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          -o ConnectTimeout=5 \
+          -i /etc/ssh/ssh_host_ed25519_key \
+          -p "$port" \
+          root@"$target" \
+          "systemd-tty-ask-password-agent" < "$keyfile"
+      echo "Passphrase successfully transmitted to Zita."
+    '';
+  };
 in {
   age.secrets.zita-luks-passphrase = {
     file = lib.custom.relativeToRoot "secrets/zita-luks-passphrase.age";
@@ -16,37 +43,11 @@ in {
     group = "root";
   };
 
-  environment.systemPackages = [
-    (pkgs.writeShellApplication {
-      name = "zita-unlock";
-      runtimeInputs = with pkgs; [openssh netcat];
-      text = ''
-        target="''${1:-zita.home}"
-        port="''${2:-${toString ports.initrdSsh.ssh}}"
-        keyfile="${config.age.secrets.zita-luks-passphrase.path}"
-
-        if [ ! -r "$keyfile" ]; then
-          echo "Error: Passphrase file $keyfile is not readable." >&2
-          exit 1
-        fi
-
-        echo "Attempting to unlock Zita initrd ($target:$port)..."
-        ssh -o StrictHostKeyChecking=accept-new \
-            -o UserKnownHostsFile=/dev/null \
-            -o LogLevel=ERROR \
-            -o ConnectTimeout=5 \
-            -i /etc/ssh/ssh_host_ed25519_key \
-            -p "$port" \
-            root@"$target" \
-            "systemd-tty-ask-password-agent" < "$keyfile"
-        echo "Passphrase successfully transmitted to Zita."
-      '';
-    })
-  ];
+  environment.systemPackages = [zitaUnlockPkg];
 
   systemd.services.zita-auto-unlock = {
     description = "Probe and auto-unlock Zita initrd LUKS";
-    path = with pkgs; [openssh netcat];
+    path = with pkgs; [netcat];
     serviceConfig = {
       Type = "oneshot";
       ExecStart = pkgs.writeShellScript "zita-auto-unlock-probe" ''
@@ -56,16 +57,9 @@ in {
         fi
 
         for target in "zita.home" "192.168.77.20"; do
-          if nc -z -w 2 "$target" 2222 2>/dev/null; then
-            echo "Detected Zita initrd SSH at $target:2222. Transmitting LUKS passphrase..."
-            ssh -o StrictHostKeyChecking=accept-new \
-                -o UserKnownHostsFile=/dev/null \
-                -o LogLevel=ERROR \
-                -o ConnectTimeout=5 \
-                -i /etc/ssh/ssh_host_ed25519_key \
-                -p 2222 \
-                root@"$target" \
-                "systemd-tty-ask-password-agent" < "$KEYFILE" && echo "Unlock command sent." || true
+          if nc -z -w 2 "$target" ${initrdPort} 2>/dev/null; then
+            echo "Detected Zita initrd SSH at $target:${initrdPort}. Transmitting LUKS passphrase..."
+            ${zitaUnlockPkg}/bin/zita-unlock "$target" ${initrdPort} || true
             break
           fi
         done
