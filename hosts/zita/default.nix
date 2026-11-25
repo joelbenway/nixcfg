@@ -340,53 +340,50 @@ in {
     };
     environmentFile = config.age.secrets.cloudflare-api-env.path;
     extraConfig = ''
-      files.benway.me {
+      # Skip local port-53 DNS-01 self-checks: michael enforces Pi-hole/Unbound (cache-min-ttl=300s),
+      # which caches NXDOMAIN past Caddy's default propagation timeout. Wait 15s for Cloudflare and
+      # let Let's Encrypt's authoritative validators verify the TXT record directly.
+      (cf_tls) {
         tls {
           dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+          propagation_delay 15s
+          propagation_timeout -1
         }
+      }
+
+      files.benway.me {
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
       }
 
       budget.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         header Cross-Origin-Resource-Policy cross-origin
         reverse_proxy 127.0.0.1:${toString ports.actual.internal}
       }
 
       jellyfin.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
       }
 
       git.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
       }
 
       vault.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
       }
 
       metrics.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
       }
 
       notify.benway.me {
-        tls {
-          dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-        }
+        import cf_tls
         reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
       }
 
