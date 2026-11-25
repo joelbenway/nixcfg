@@ -92,6 +92,8 @@ in {
       keyFile = config.age.secrets.nix-builder-ssh.path;
     };
 
+    plasma.enable = lib.mkDefault true;
+
     joel.enable = true;
 
     networkstack = {

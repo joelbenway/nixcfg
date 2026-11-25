@@ -66,7 +66,12 @@
     ...
   } @ inputs: let
     supportedSystems = ["x86_64-linux" "aarch64-linux"];
-    forEachSupportedSystem = f: nixpkgs.lib.genAttrs supportedSystems (system: f {pkgs = import nixpkgs {inherit system;};});
+    forEachSupportedSystem = f:
+      nixpkgs.lib.genAttrs supportedSystems (system:
+        f {
+          inherit system;
+          pkgs = import nixpkgs {inherit system;};
+        });
     lib = nixpkgs.lib.extend (_: super: {
       custom = import ./lib {lib = super;};
     });
@@ -102,8 +107,20 @@
           ++ extraModules;
       };
   in {
-    devShells = forEachSupportedSystem ({pkgs}: {
+    devShells = forEachSupportedSystem ({pkgs, ...}: {
       default = import ./shell.nix {inherit pkgs;};
+    });
+
+    packages = forEachSupportedSystem ({pkgs, ...}: {
+      beszel-query = import ./pkgs/beszel-query {inherit pkgs;};
+      fleet-notify = import ./pkgs/fleet-notify {inherit pkgs;};
+      kmail-provision = import ./pkgs/kmail-provision {inherit pkgs;};
+    });
+
+    checks = forEachSupportedSystem ({system, ...}: {
+      beszel-query = self.packages.${system}.beszel-query;
+      fleet-notify = self.packages.${system}.fleet-notify;
+      kmail-provision = self.packages.${system}.kmail-provision;
     });
 
     nixosConfigurations = {

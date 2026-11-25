@@ -221,6 +221,8 @@ in {
     };
   }; # jellyfin
 
+  podman.enable = true;
+
   forgejo = {
     enable = true;
     admin.passwordFile = config.age.secrets.joel-passphrase.path;

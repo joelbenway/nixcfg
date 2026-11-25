@@ -1,0 +1,83 @@
+name: Setup Secrets Submodule or Placeholders
+description: Initializes the private secrets submodule via SSH key, or populates placeholder files for Nix evaluation.
+
+inputs:
+  ssh-key:
+    description: SSH private key with read access to the private secrets submodule
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Initialize secrets submodule or placeholders
+      shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-key }}
+      run: |
+        set -euo pipefail
+        if [ -n "$SSH_KEY" ]; then
+          echo "Initializing private secrets submodule via SSH key..."
+          key_file="$(mktemp)"
+          known_hosts="$(mktemp)"
+          trap 'rm -f "$key_file" "$known_hosts"' EXIT
+          chmod 600 "$key_file"
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          {
+            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg="
+          } > "$known_hosts"
+          GIT_SSH_COMMAND="ssh -i ${key_file} -o IdentitiesOnly=yes -o UserKnownHostsFile=${known_hosts} -o StrictHostKeyChecking=yes" \
+            git submodule update --init --recursive
+        else
+          echo "Secrets SSH key not configured; populating dummy secret placeholders for Nix evaluation..."
+          git rm --cached secrets 2>/dev/null || true
+          rm -rf secrets && mkdir -p secrets
+          sed -i '/self.submodules = true;/d' flake.nix
+
+          # Discover all literal secret filenames referenced across the codebase
+          (grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null || true) | sed 's|^secrets/||' | sort -u | while IFS= read -r f; do
+            if [ -n "$f" ]; then
+              touch "secrets/$f"
+            fi
+          done
+
+          # Dynamically discover hosts (excluding common/ and therese/) and users (excluding default.nix)
+          hosts=()
+          for d in hosts/*/; do
+            [ -d "$d" ] || continue
+            h="$(basename "$d")"
+            case "$h" in
+              common|therese) continue ;;
+            esac
+            hosts+=("$h")
+          done
+
+          users=()
+          for f in users/*.nix; do
+            [ -e "$f" ] || continue
+            u="$(basename "$f" .nix)"
+            [ "$u" = "default" ] && continue
+            users+=("$u")
+          done
+
+          # Expand templates with ${hostname} and ${username}
+          (grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null || true) | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+            [ -z "$suffix" ] && continue
+            for h in "${hosts[@]}"; do
+              touch "secrets/${h}${suffix}"
+            done
+          done
+
+          (grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null || true) | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
+            [ -z "$suffix" ] && continue
+            for u in "${users[@]}"; do
+              touch "secrets/${u}${suffix}"
+            done
+          done
+
+          touch secrets/secrets.nix secrets/agenix-rules.nix
+          git config user.name "CI"
+          git config user.email "ci@local"
+          git add -f secrets flake.nix
+        fi
