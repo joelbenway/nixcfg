@@ -188,136 +188,109 @@ def cmd_switch_apply(args, cfg: Dict[str, Any]):
                 current_ip = fallback_ip
                 break
         else:
-            print(f"[!] Switch is not responding to ping at {current_ip}.")
-            return
+            print(f"[!] Switch is not responding to ping at {current_ip}.", file=sys.stderr)
+            sys.exit(1)
+
+    if requests is None:
+        print("[!] Python 'requests' module is required for KeepLINK switch provisioning.", file=sys.stderr)
+        sys.exit(1)
 
     # KeepLINK authentication uses MD5(username + password) in cookie and form body
     resp_hash = hashlib.md5(f"{username}{password}".encode()).hexdigest()
-    headers = {
+    session = requests.Session()
+    session.headers.update({
         "Cookie": f"admin={resp_hash}",
         "Connection": "close",
-    }
+    })
+
+    def switch_post(url: str, data: Dict[str, Any], timeout: float = 5.0) -> None:
+        resp = session.post(url, data=data, timeout=timeout)
+        resp.raise_for_status()
 
     # 1. Authenticate via login.cgi
     try:
-        subprocess.run(
-            [
-                "curl", "-s", "-m", "5",
-                "-b", f"admin={resp_hash}",
-                "-d", f"username={username}&password={password}&Response={resp_hash}",
-                "-X", "POST", f"http://{current_ip}/login.cgi",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
+        switch_post(
+            f"http://{current_ip}/login.cgi",
+            {"username": username, "password": password, "Response": resp_hash},
         )
         print("[+] Successfully authenticated to KeepLINK switch firmware.")
-    except Exception as e:
-        print(f"[!] Login error: {e}")
-        return
+    except requests.RequestException as e:
+        print(f"[!] Login error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # 2. Configure 802.1Q VLANs
     print("[*] Configuring 802.1Q VLANs...")
-    for v_key, v in vlans.items():
-        vid = v.get("id")
-        vname = v.get("name", v_key)
-        vlan_data = [f"vid={vid}", f"name={vname}"]
+    try:
+        for v_key, v in vlans.items():
+            vid = v.get("id")
+            vname = v.get("name", v_key)
+            vlan_data: Dict[str, Any] = {"vid": vid, "name": vname}
+            for p_idx in range(9):
+                p_num = str(p_idx + 1)
+                p_cfg = ports.get(p_num, {})
+                tagged_vlans = p_cfg.get("taggedVlans", [])
+                native_vlan = p_cfg.get("nativeVlan", 1)
+
+                if vid in tagged_vlans:
+                    val = 1  # Tagged
+                elif vid == native_vlan and p_cfg.get("mode") in ("access", "trunk"):
+                    val = 0  # Untagged / native on trunk
+                else:
+                    val = 2  # Not Member
+                vlan_data[f"vlanPort_{p_idx}"] = val
+
+            switch_post(f"http://{current_ip}/vlan.cgi?page=static", vlan_data)
+            print(f"  • VLAN {vid} ({vname}) configured.")
+
+        # Adjust VLAN 1 (default) to only trunk ports 1 and 2
+        vlan1_data: Dict[str, Any] = {"vid": 1, "name": "default"}
         for p_idx in range(9):
             p_num = str(p_idx + 1)
             p_cfg = ports.get(p_num, {})
-            tagged_vlans = p_cfg.get("taggedVlans", [])
-            native_vlan = p_cfg.get("nativeVlan", 1)
+            vlan1_data[f"vlanPort_{p_idx}"] = 0 if p_cfg.get("nativeVlan", 1) == 1 else 2
+        switch_post(f"http://{current_ip}/vlan.cgi?page=static", vlan1_data)
 
-            if vid in tagged_vlans:
-                val = 1  # Tagged
-            elif vid == native_vlan and p_cfg.get("mode") == "access":
-                val = 0  # Untagged
-            elif vid == native_vlan and p_cfg.get("mode") == "trunk":
-                val = 0  # Native untagged on trunk
-            else:
-                val = 2  # Not Member
-            vlan_data.append(f"vlanPort_{p_idx}={val}")
+        # 3. Configure Port PVIDs
+        print("[*] Setting Port PVIDs...")
+        for p_idx in range(9):
+            p_num = str(p_idx + 1)
+            p_cfg = ports.get(p_num, {})
+            pvid = p_cfg.get("nativeVlan", 1)
+            switch_post(
+                f"http://{current_ip}/vlan.cgi?page=port_based",
+                {"ports": p_idx, "pvid": pvid, "vlan_accept_frame_type": 0},
+            )
 
-        post_body = "&".join(vlan_data)
-        subprocess.run(
-            [
-                "curl", "-s", "-m", "5",
-                "-b", f"admin={resp_hash}",
-                "-d", post_body,
-                "-X", "POST", f"http://{current_ip}/vlan.cgi?page=static",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f"  • VLAN {vid} ({vname}) configured.")
+        # 4. Update IP Address if needed
+        if current_ip != target_ip:
+            print(f"[*] Updating switch management IP from {current_ip} to {target_ip}...")
+            netmask = switch_cfg.get("subnet", "255.255.255.0")
+            gateway = switch_cfg.get("gateway", "192.168.1.1")
+            try:
+                switch_post(
+                    f"http://{current_ip}/ip.cgi",
+                    {
+                        "dhcp_state": 0,
+                        "ip": target_ip,
+                        "netmask": netmask,
+                        "gateway": gateway,
+                        "cmd": "ip",
+                    },
+                    timeout=3.0,
+                )
+            except requests.RequestException:
+                # Switch often drops the old IP immediately upon applying the new address
+                pass
+            time.sleep(2)
+            current_ip = target_ip
 
-    # Adjust VLAN 1 (default) to only trunk ports 1 and 2
-    vlan1_data = ["vid=1", "name=default"]
-    for p_idx in range(9):
-        p_num = str(p_idx + 1)
-        p_cfg = ports.get(p_num, {})
-        if p_cfg.get("nativeVlan", 1) == 1:
-            vlan1_data.append(f"vlanPort_{p_idx}=0")
-        else:
-            vlan1_data.append(f"vlanPort_{p_idx}=2")
-    subprocess.run(
-        [
-            "curl", "-s", "-m", "5",
-            "-b", f"admin={resp_hash}",
-            "-d", "&".join(vlan1_data),
-            "-X", "POST", f"http://{current_ip}/vlan.cgi?page=static",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+        # 5. Save Configuration to Flash
+        print("[*] Committing configuration to switch NVRAM flash...")
+        switch_post(f"http://{current_ip}/save.cgi", {"cmd": "save"})
+    except requests.RequestException as e:
+        print(f"[!] Switch provisioning failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    # 3. Configure Port PVIDs
-    print("[*] Setting Port PVIDs...")
-    for p_idx in range(9):
-        p_num = str(p_idx + 1)
-        p_cfg = ports.get(p_num, {})
-        pvid = p_cfg.get("nativeVlan", 1)
-        subprocess.run(
-            [
-                "curl", "-s", "-m", "5",
-                "-b", f"admin={resp_hash}",
-                "-d", f"ports={p_idx}&pvid={pvid}&vlan_accept_frame_type=0",
-                "-X", "POST", f"http://{current_ip}/vlan.cgi?page=port_based",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-    # 4. Update IP Address if needed
-    if current_ip != target_ip:
-        print(f"[*] Updating switch management IP from {current_ip} to {target_ip}...")
-        netmask = switch_cfg.get("subnet", "255.255.255.0")
-        gateway = switch_cfg.get("gateway", "192.168.1.1")
-        subprocess.run(
-            [
-                "curl", "-s", "-m", "3",
-                "-b", f"admin={resp_hash}",
-                "-d", f"dhcp_state=0&ip={target_ip}&netmask={netmask}&gateway={gateway}&cmd=ip",
-                "-X", "POST", f"http://{current_ip}/ip.cgi",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(2)
-        current_ip = target_ip
-
-    # 5. Save Configuration to Flash
-    print("[*] Committing configuration to switch NVRAM flash...")
-    subprocess.run(
-        [
-            "curl", "-s", "-m", "5",
-            "-b", f"admin={resp_hash}",
-            "-d", "cmd=save",
-            "-X", "POST", f"http://{current_ip}/save.cgi",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
     print(f"[+] KeepLINK switch provisioning complete and saved to flash at http://{target_ip}!")
 
 
@@ -336,22 +309,31 @@ def cmd_switch_cycle_poe(args, cfg: Dict[str, Any]):
         print(f"[!] Port '{args.port}' must be an integer between 1 and 8.")
         sys.exit(1)
 
+    if requests is None:
+        print("[!] Python 'requests' module is required for PoE control.", file=sys.stderr)
+        sys.exit(1)
+
     port_idx = port_num - 1
     resp_hash = hashlib.md5(f"{username}{password}".encode()).hexdigest()
     print(f"[*] Power cycling PoE on switch port {port_num} at http://{switch_ip}...")
 
+    session = requests.Session()
+    session.headers.update({
+        "Cookie": f"admin={resp_hash}",
+        "Connection": "close",
+    })
+
     def set_poe_state(state: int) -> bool:
-        res = subprocess.run(
-            [
-                "curl", "-s", "-f", "-m", "5",
-                "-b", f"admin={resp_hash}",
-                "-d", f"portid={port_idx}&state={state}",
-                "-X", "POST", f"http://{switch_ip}/pse_port.cgi",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return res.returncode == 0
+        try:
+            resp = session.post(
+                f"http://{switch_ip}/pse_port.cgi",
+                data={"portid": port_idx, "state": state},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            return True
+        except requests.RequestException:
+            return False
 
     if not set_poe_state(0):
         print(f"[!] Failed to disable PoE on port {port_num} (switch unreachable or HTTP request failed).")
@@ -449,34 +431,26 @@ def build_ap_commands(cfg: Dict[str, Any], mode: str = "test", env_file: Optiona
         commands.append("  qos wmm")
         commands.append("exit")
 
-    # 3. Radio slot bindings
-    # Slot 1: 2.4 GHz (skylab, skynet, iot)
-    # Slot 2: 5 GHz (skylab, skynet)
-    # Slot 3: 6 GHz (skylab, skynet)
+    # 3. Radio slot bindings derived from each SSID's configured band
+    # Slot 1: 2.4 GHz, Slot 2: 5 GHz, Slot 3: 6 GHz
+    def _ssid_on_band(band_spec: Any, slot_band: str) -> bool:
+        b = str(band_spec or "all").strip().lower()
+        if b in ("all", "tri", "triband", "tri-band"):
+            return True
+        if b in ("dual", "dualband", "dual-band"):
+            return slot_band in ("2.4", "5")
+        tokens = [t.strip() for t in re.split(r"[,+/\s]+", b) if t.strip()]
+        return any(t == slot_band or t.startswith(f"{slot_band}g") for t in tokens)
+
     commands.append("! --- Radio Slot Mappings ---")
-    commands.append("wlan slot1")
-    idx = 1
-    for s_name in ["skylab", "skynet", "iot"]:
-        if s_name in ssids:
-            commands.append(f"  ssid profile {idx} {s_name}")
-            idx += 1
-    commands.append("exit")
-
-    commands.append("wlan slot2")
-    idx = 1
-    for s_name in ["skylab", "skynet"]:
-        if s_name in ssids:
-            commands.append(f"  ssid profile {idx} {s_name}")
-            idx += 1
-    commands.append("exit")
-
-    commands.append("wlan slot3")
-    idx = 1
-    for s_name in ["skylab", "skynet"]:
-        if s_name in ssids:
-            commands.append(f"  ssid profile {idx} {s_name}")
-            idx += 1
-    commands.append("exit")
+    for slot_name, slot_band in (("wlan slot1", "2.4"), ("wlan slot2", "5"), ("wlan slot3", "6")):
+        commands.append(slot_name)
+        idx = 1
+        for s_name, s in ssids.items():
+            if _ssid_on_band(s.get("band", "all"), slot_band):
+                commands.append(f"  ssid profile {idx} {s_name}")
+                idx += 1
+        commands.append("exit")
 
     commands.append("exit")
     commands.append("write")
@@ -532,7 +506,11 @@ def cmd_ap_apply(args, cfg: Dict[str, Any]):
         cmd_ap_generate(args, cfg)
         return
 
-    commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    try:
+        commands = build_ap_commands(cfg, mode=mode, env_file=args.env_file)
+    except ValueError as e:
+        print(f"[!] Error: {e}", file=sys.stderr)
+        sys.exit(1)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:

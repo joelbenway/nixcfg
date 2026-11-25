@@ -73,12 +73,16 @@
     }; # programs.firefox
 
     home-manager.sharedModules = [
-      ({config, ...}: {
+      ({
+        config,
+        lib,
+        ...
+      }: {
         home.activation = {
-          createFirefoxDir = ''
+          createFirefoxDir = lib.hm.dag.entryBefore ["checkLinkTargets"] ''
             mkdir -p "${config.xdg.configHome}/mozilla/firefox"
           '';
-          cleanupFirefoxSymlinks = ''
+          cleanupFirefoxSymlinks = lib.hm.dag.entryBefore ["checkLinkTargets"] ''
             if [ -L "${config.xdg.configHome}/mozilla/firefox/hardened" ]; then
               rm "${config.xdg.configHome}/mozilla/firefox/hardened"
             fi
@@ -210,7 +214,7 @@
                 "security.OCSP.require" = true;
                 "security.cert_pinning.enforcement_level" = 2;
                 "security.remote_settings.crlite_filters.enabled" = true;
-                "security.pki.crlite_mode" = "2";
+                "security.pki.crlite_mode" = 2;
                 # Headers / referers
                 "network.http.referer.XOriginPolicy" = 2;
                 "network.http.referer.XOriginTrimmingPolicy" = 2;

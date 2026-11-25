@@ -268,11 +268,19 @@ in {
     })
 
     (lib.mkIf cfg.gitMirror.enable {
-      networking.firewall.interfaces."tailscale0".allowedTCPPorts = [9418];
-      networking.firewall.extraInputRules = ''
-        iifname "tailscale0" tcp dport 9418 accept
-        ip saddr 192.168.0.0/16 tcp dport 9418 accept
-      '';
+      networking.firewall = {
+        interfaces."tailscale0".allowedTCPPorts = [9418];
+        extraInputRules = lib.mkIf config.networking.nftables.enable ''
+          iifname "tailscale0" tcp dport 9418 accept
+          ip saddr 192.168.77.0/24 tcp dport 9418 accept
+        '';
+        extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -A nixos-fw -s 192.168.77.0/24 -p tcp --dport 9418 -j nixos-fw-accept
+        '';
+        extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -D nixos-fw -s 192.168.77.0/24 -p tcp --dport 9418 -j nixos-fw-accept 2>/dev/null || true
+        '';
+      };
 
       systemd.services.nixos-auto-update-git-mirror = {
         description = "Read-only Git daemon serving nixcfg and nixos-secrets on Tailscale";

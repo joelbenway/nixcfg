@@ -13,11 +13,11 @@
   # Script to merge leaf module extraSettings into Hermes's runtime config.yaml
   syncConfig = pkgs.writeScriptBin "sync-hermes-config" ''
     #!${pkgs.python3.withPackages (ps: [ps.ruamel-yaml])}/bin/python3
-    import copy
     import json
     import os
     from pathlib import Path
     import sys
+    import tempfile
     from ruamel.yaml import YAML
 
     if len(sys.argv) < 3:
@@ -69,36 +69,45 @@
         print("==> Hermes configuration is already up to date.")
         sys.exit(0)
 
-    tmp_path = config_path.with_suffix(".tmp")
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        yaml.dump(merged, f)
+    fd, tmp_name = tempfile.mkstemp(prefix=".config.", dir=str(config_path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(merged, f)
+            f.flush()
 
-    if config_path.exists():
-        st = config_path.stat()
-        try:
-            os.chmod(tmp_path, st.st_mode)
-        except Exception:
-            pass
-        try:
-            os.chown(tmp_path, st.st_uid, st.st_gid)
-        except Exception:
-            pass
-    else:
-        try:
-            os.chmod(tmp_path, 0o660)
-        except Exception:
-            pass
-        if os.geteuid() == 0:
-            import pwd, grp
-            try:
-                uid = pwd.getpwnam("hermes").pw_uid
-                gid = grp.getgrnam("hermes").gr_gid
-                os.chown(tmp_path, uid, gid)
-            except Exception:
-                pass
+            if config_path.exists():
+                st = config_path.stat()
+                try:
+                    os.fchmod(f.fileno(), st.st_mode)
+                except Exception:
+                    pass
+                try:
+                    os.fchown(f.fileno(), st.st_uid, st.st_gid)
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.fchmod(f.fileno(), 0o660)
+                except Exception:
+                    pass
+                if os.geteuid() == 0:
+                    import pwd, grp
+                    try:
+                        uid = pwd.getpwnam("hermes").pw_uid
+                        gid = grp.getgrnam("hermes").gr_gid
+                        os.fchown(f.fileno(), uid, gid)
+                    except Exception:
+                        pass
 
-    tmp_path.replace(config_path)
+        tmp_path.replace(config_path)
+    except BaseException:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     print(f"==> Hermes configuration updated successfully at {config_path}")
     sys.exit(42)
   '';
@@ -115,6 +124,7 @@
       coreutils
       findutils
       gnugrep
+      util-linux
     ];
     text = ''
       set -euo pipefail
@@ -126,9 +136,14 @@
       REPO_PATH_SET=0
       HOST_NAME_SET=0
 
+      CALLER_USER="''${SUDO_USER:-$(id -un)}"
       for arg in "$@"; do
         case "$arg" in
           --system)
+            if [ "$CALLER_USER" = "hermes" ]; then
+              echo "ERROR: --system is not permitted for the hermes user." >&2
+              exit 1
+            fi
             FULL_SYSTEM=1
             ;;
           --restart)
@@ -136,8 +151,13 @@
             ;;
           -*)
             echo "Unknown flag: $arg" >&2
+            exit 1
             ;;
           *)
+            if [ "$CALLER_USER" = "hermes" ]; then
+              echo "ERROR: Custom repo/host arguments are not permitted for the hermes user." >&2
+              exit 1
+            fi
             if [ "$REPO_PATH_SET" -eq 0 ]; then
               REPO_PATH="$arg"
               REPO_PATH_SET=1
@@ -157,33 +177,45 @@
 
       echo "==> [Agentic GitOps] Initiating environment rebuild for Hermes Agent..."
 
-      # Bootstrap runtime leaf from baseline if missing
+      run_as_hermes() {
+        if [ "$(id -u)" -eq 0 ]; then
+          runuser -u "''${HERMES_USER}" -- "$@"
+        else
+          "$@"
+        fi
+      }
+
+      # Reject symlinks and perform all leaf file operations strictly as unprivileged hermes
+      if [ -L "''${RUNTIME_LEAF}" ] || [ -L "''${REPO_LEAF}" ]; then
+        echo "ERROR: Symlink detected at agent-env leaf path; refusing to proceed." >&2
+        exit 1
+      fi
+
+      # Bootstrap runtime leaf from baseline if missing (runs as hermes so root never writes agent-writable paths)
       if [ ! -f "''${RUNTIME_LEAF}" ]; then
         if [ -f "''${REPO_LEAF}" ]; then
-          cp "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+          run_as_hermes cp --remove-destination "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
         else
-          cp "${./agent-env.nix}" "''${RUNTIME_LEAF}"
+          run_as_hermes cp --remove-destination "${./agent-env.nix}" "''${RUNTIME_LEAF}"
         fi
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+        run_as_hermes chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
       fi
 
       # If the agent edited REPO_LEAF more recently than RUNTIME_LEAF, copy REPO_LEAF -> RUNTIME_LEAF;
-      # otherwise copy RUNTIME_LEAF -> REPO_LEAF so both stay identical.
+      # otherwise copy RUNTIME_LEAF -> REPO_LEAF so both stay identical (all writes run as hermes).
       if [ -f "''${REPO_LEAF}" ] && [ "''${REPO_LEAF}" -nt "''${RUNTIME_LEAF}" ]; then
-        cp "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+        run_as_hermes cp --remove-destination "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+        run_as_hermes chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
       elif [ -d "''${REPO_PATH}/modules/hermes" ]; then
-        cp "''${RUNTIME_LEAF}" "''${REPO_LEAF}"
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${REPO_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
+        run_as_hermes cp "''${RUNTIME_LEAF}" "''${REPO_LEAF}"
+        run_as_hermes chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
       fi
 
       LEAF_FILE="''${RUNTIME_LEAF}"
 
-      if ! nix-instantiate --parse "''${LEAF_FILE}" >/dev/null; then
-        echo "ERROR: Syntax error in ' ''${LEAF_FILE}'!" >&2
+      # Evaluate agent-controlled Nix expressions strictly as the unprivileged hermes user
+      if ! run_as_hermes nix-instantiate --parse "''${LEAF_FILE}" >/dev/null; then
+        echo "ERROR: Syntax error in '''''${LEAF_FILE}'!" >&2
         exit 1
       fi
 
@@ -196,9 +228,7 @@
 
         export GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0="safe.directory"
-        export GIT_CONFIG_VALUE_0="*"
-        git config --global --add safe.directory "''${REPO_PATH}" 2>/dev/null || true
-        git config --global --add safe.directory '*' 2>/dev/null || true
+        export GIT_CONFIG_VALUE_0="''${REPO_PATH}"
 
         if [ -w "''${REPO_PATH}/.git" ]; then
           (
@@ -218,38 +248,34 @@
             fi
           )
         else
-          echo "==> [GitOps] Leaf config ' ''${LEAF_FILE}' updated (skipping git commit: repository owned by host user)."
+          echo "==> [GitOps] Leaf config '''''${LEAF_FILE}' updated (skipping git commit: repository owned by host user)."
         fi
       fi
 
-      # 2. Build declarative package environment from leaf config
-      echo "==> [1/3] Building declarative package environment from leaf config..."
-      ENV_OUT=$(nix-build --no-out-link -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in pkgs.buildEnv { name = \"hermes-agent-env\"; paths = (agentEnv.extraPackages or []); }")
+      # 2. Build declarative package environment from leaf config (as unprivileged hermes user)
+      echo "==> [1/4] Building declarative package environment from leaf config..."
+      ENV_OUT=$(run_as_hermes nix-build --no-out-link -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in pkgs.buildEnv { name = \"hermes-agent-env\"; paths = (agentEnv.extraPackages or []); }")
 
       echo "==> Built environment derivation: ''${ENV_OUT}"
 
-      # 3. Atomically activate new profile generation
-      echo "==> [2/3] Activating new environment generation in ''${PROFILE_PATH}..."
-      mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
-      nix-env -p "''${PROFILE_PATH}" --set "''${ENV_OUT}"
-
-      if [ "$(id -u)" -eq 0 ]; then
-        chown -h -R "''${HERMES_USER}:''${HERMES_USER}" "''${HERMES_HOME}/.local" "''${HERMES_HOME}/.nix-profile" "''${PROFILE_PATH}"* 2>/dev/null || true
-      fi
+      # 3. Atomically activate new profile generation (as unprivileged hermes user)
+      echo "==> [2/4] Activating new environment generation in ''${PROFILE_PATH}..."
+      run_as_hermes mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
+      run_as_hermes nix-env -p "''${PROFILE_PATH}" --set "''${ENV_OUT}"
 
       if [ "$FULL_SYSTEM" -eq 1 ]; then
         echo "==> Full system switch requested (--system)..."
         nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
       fi
 
-      # 4. Sync declarative runtime settings (extraSettings) into config.yaml
+      # 4. Sync declarative runtime settings (extraSettings) into config.yaml (strictly as unprivileged hermes user)
       echo "==> [3/4] Syncing declarative settings into config.yaml..."
       CONFIG_CHANGED=0
       CONFIG_FILE="''${HERMES_HOME}/.hermes/config.yaml"
-      EXTRA_JSON=$(nix-instantiate --eval --strict --json -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in (agentEnv.extraSettings or {})" 2>/dev/null || echo "{}")
+      EXTRA_JSON=$(run_as_hermes nix-instantiate --eval --strict --json -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in (agentEnv.extraSettings or {})" 2>/dev/null || echo "{}")
 
       SYNC_STATUS=0
-      sync-hermes-config "''${CONFIG_FILE}" "''${EXTRA_JSON}" || SYNC_STATUS=$?
+      run_as_hermes sync-hermes-config "''${CONFIG_FILE}" "''${EXTRA_JSON}" || SYNC_STATUS=$?
 
       if [ "$SYNC_STATUS" -eq 42 ]; then
         CONFIG_CHANGED=1
@@ -266,13 +292,14 @@
 
       if [ "$CONFIG_CHANGED" -eq 1 ] || [ "$RESTART_REQUESTED" -eq 1 ]; then
         echo "==> Model/runtime configuration changed (or --restart requested)."
-        echo "==> Scheduling detached background service restart in 2 seconds..."
         if [ "$(id -u)" -eq 0 ]; then
+          echo "==> Scheduling detached background service restart in 2 seconds..."
           systemd-run --on-active=2s systemctl restart hermes-agent
+          echo "==> Service restart scheduled. Active conversation turn will complete cleanly."
         else
-          sudo systemd-run --on-active=2s systemctl restart hermes-agent
+          echo "ERROR: Restart requires root privileges. Run 'sudo rebuild-agent-env --restart'." >&2
+          exit 1
         fi
-        echo "==> Service restart scheduled. Active conversation turn will complete cleanly."
       fi
 
       echo "==> [Agentic GitOps] Environment successfully updated and verified active!"
@@ -321,7 +348,6 @@ in {
     environment.systemPackages = [
       rebuildScript
       syncConfig
-      pkgs.signal-cli
       pkgs.qrencode
       (pkgs.writeShellScriptBin "hermes-chat" ''
         exec sudo -u hermes hermes chat "$@"
@@ -382,30 +408,6 @@ in {
               command = "/run/current-system/sw/bin/rebuild-agent-env";
               options = ["NOPASSWD"];
             }
-            {
-              command = "/run/current-system/sw/bin/systemctl restart hermes-agent";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "/run/current-system/sw/bin/systemctl restart hermes-agent.service";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "${pkgs.systemd}/bin/systemctl restart hermes-agent";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "${pkgs.systemd}/bin/systemctl restart hermes-agent.service";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "${pkgs.systemd}/bin/systemd-run";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "/run/current-system/sw/bin/systemd-run";
-              options = ["NOPASSWD"];
-            }
           ];
         }
         {
@@ -420,21 +422,8 @@ in {
         }
       ];
       extraConfig = ''
-        Defaults:hermes !authenticate
         Defaults:hermes timestamp_timeout=0
       '';
-    };
-
-    # System-wide git safe.directory trust to avoid libgit2 ownership rejections across users
-    programs.git = {
-      enable = true;
-      config = {
-        safe = {
-          directory = [
-            "*"
-          ];
-        };
-      };
     };
 
     services.hermes-agent = {
@@ -584,17 +573,6 @@ in {
       after = ["signal-cli.service"];
       wants = ["signal-cli.service"];
 
-      # Directly inject extraPackages and runtime tools to service PATH
-      path =
-        agentEnv.extraPackages
-        ++ (with pkgs; [
-          nix
-          git
-          coreutils
-          bashInteractive
-          systemd
-        ]);
-
       environment.PATH = lib.mkForce (lib.concatStringsSep ":" [
         "/var/lib/hermes/.nix-profile/bin"
         "/var/lib/hermes/.local/bin"
@@ -607,6 +585,7 @@ in {
             git
             coreutils
             bashInteractive
+            systemd
           ])
         ))
       ]);

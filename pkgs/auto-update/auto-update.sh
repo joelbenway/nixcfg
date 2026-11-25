@@ -181,17 +181,6 @@ if [ "$GIT_MIRROR_ENABLE" = "true" ]; then
   fi
 fi
 
-# Also configure 'zita' remote on interactive workstation/server repo (/home/joel/Projects/nixcfg) if present
-INTERACTIVE_REPO="/home/joel/Projects/nixcfg"
-if [ -d "${INTERACTIVE_REPO}/.git" ]; then
-  git -C "${INTERACTIVE_REPO}" remote set-url zita "ssh://joel@${ZITA_HOST}${INTERACTIVE_REPO}" 2>/dev/null ||
-    git -C "${INTERACTIVE_REPO}" remote add zita "ssh://joel@${ZITA_HOST}${INTERACTIVE_REPO}" 2>/dev/null || true
-  if [ -d "${INTERACTIVE_REPO}/secrets/.git" ] || [ -f "${INTERACTIVE_REPO}/secrets/.git" ]; then
-    git -C "${INTERACTIVE_REPO}/secrets" remote set-url zita "$ZITA_SECRETS_URL" 2>/dev/null ||
-      git -C "${INTERACTIVE_REPO}/secrets" remote add zita "$ZITA_SECRETS_URL" 2>/dev/null || true
-  fi
-fi
-
 # Stage Hermes runtime leaf on Zita (if enabled) before evaluating flake
 if [ "$HERMES_ENABLE" = "true" ]; then
   RUNTIME_LEAF="$HERMES_RUNTIME_LEAF"
@@ -223,7 +212,7 @@ rollback() {
   nix-env -p /nix/var/nix/profiles/system --set "${PREV_SYSTEM}" 2>/dev/null || true
   if "${PREV_SYSTEM}/bin/switch-to-configuration" switch; then
     report_status \
-      "rollback_failed" \
+      "update_failed" \
       "critical" \
       "Update rolled back on ${HOST_NAME}" \
       "Failed to activate or pass canaries for ${NEW_SYSTEM}; rolled back to ${PREV_SYSTEM}."
@@ -327,26 +316,34 @@ if [ "$REBOOT_ENABLE" != "true" ]; then
 fi
 
 # Stage safe oneshot boot entry so a panic/watchdog reset falls back to the currently booted generation
-if command -v bootctl >/dev/null 2>&1; then
-  BOOT_LIST=$(bootctl list --json=short 2>/dev/null || echo "[]")
-  BOOTED_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isSelected == true) | .id' | head -n1 || true)
-  TARGET_ID=$(echo "$BOOT_LIST" | jq -r --arg sys "$NEW_SYSTEM" '.[] | select((.options // "") | contains("init=" + $sys + "/init")) | .id' | head -n1 || true)
-  if [ -z "$TARGET_ID" ]; then
-    TARGET_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isDefault == true) | .id' | head -n1 || true)
-  fi
-  if [ -z "$BOOTED_ID" ] || [ -z "$TARGET_ID" ] || [ "$BOOTED_ID" = "$TARGET_ID" ] ||
-    ! bootctl set-default "$BOOTED_ID" ||
-    ! bootctl set-oneshot "$TARGET_ID"; then
-    echo "WARNING: Could not establish bootctl oneshot fallback guard (booted=${BOOTED_ID:-none}, target=${TARGET_ID:-none}); skipping unattended reboot!" >&2
-    report_status \
-      "reboot_required_attended" \
-      "critical" \
-      "${HOST_NAME} requires an attended reboot (boot guard setup failed)" \
-      "Could not configure bootctl default/oneshot entries for ${NEW_SYSTEM}."
-    exit 0
-  fi
-  echo "==> [Boot-Guard] Set known-good booted entry ($BOOTED_ID) as default and new entry ($TARGET_ID) as oneshot."
+if ! command -v bootctl >/dev/null 2>&1; then
+  echo "WARNING: bootctl not available; refusing unattended reboot without oneshot fallback guard!" >&2
+  report_status \
+    "reboot_required_attended" \
+    "critical" \
+    "${HOST_NAME} requires an attended reboot (bootctl unavailable)" \
+    "Cannot establish oneshot fallback guard for ${NEW_SYSTEM}."
+  exit 0
 fi
+
+BOOT_LIST=$(bootctl list --json=short 2>/dev/null || echo "[]")
+BOOTED_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isSelected == true) | .id' | head -n1 || true)
+TARGET_ID=$(echo "$BOOT_LIST" | jq -r --arg sys "$NEW_SYSTEM" '.[] | select((.options // "") | contains("init=" + $sys + "/init")) | .id' | head -n1 || true)
+if [ -z "$TARGET_ID" ]; then
+  TARGET_ID=$(echo "$BOOT_LIST" | jq -r '.[] | select(.isDefault == true) | .id' | head -n1 || true)
+fi
+if [ -z "$BOOTED_ID" ] || [ -z "$TARGET_ID" ] || [ "$BOOTED_ID" = "$TARGET_ID" ] ||
+  ! bootctl set-default "$BOOTED_ID" ||
+  ! bootctl set-oneshot "$TARGET_ID"; then
+  echo "WARNING: Could not establish bootctl oneshot fallback guard (booted=${BOOTED_ID:-none}, target=${TARGET_ID:-none}); skipping unattended reboot!" >&2
+  report_status \
+    "reboot_required_attended" \
+    "critical" \
+    "${HOST_NAME} requires an attended reboot (boot guard setup failed)" \
+    "Could not configure bootctl default/oneshot entries for ${NEW_SYSTEM}."
+  exit 0
+fi
+echo "==> [Boot-Guard] Set known-good booted entry ($BOOTED_ID) as default and new entry ($TARGET_ID) as oneshot."
 
 jq -n \
   --arg target "$(readlink -f /run/current-system)" \
@@ -355,7 +352,17 @@ jq -n \
   '{targetSystem: $target, previousSystem: $previous, scheduledAt: $scheduledAt}' >"${STATE_DIR}/pending-reboot.json"
 
 echo "==> [Auto-Update] Scheduling maintenance reboot at ${REBOOT_WINDOW}..."
-shutdown -r "${REBOOT_WINDOW}" "NixOS auto-update scheduled kernel reboot" || true
+if ! shutdown -r "${REBOOT_WINDOW}" "NixOS auto-update scheduled kernel reboot"; then
+  echo "ERROR: Failed to schedule reboot at ${REBOOT_WINDOW}!" >&2
+  rm -f "${STATE_DIR}/pending-reboot.json"
+  report_status \
+    "reboot_required_attended" \
+    "critical" \
+    "${HOST_NAME} failed to schedule maintenance reboot" \
+    "shutdown -r ${REBOOT_WINDOW} failed for ${CURRENT_KERNEL}."
+  exit 1
+fi
+
 report_status \
   "reboot_scheduled" \
   "info" \

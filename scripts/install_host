@@ -243,7 +243,7 @@ fi
 
 DISK_ENCRYPTION_KEYS=(--disk-encryption-keys /tmp/secret.key "$LUKS_KEY_STAGED")
 
-# Stage storage LUKS passphrase and initrd host key if host is zita
+# Stage storage LUKS passphrase if host is zita
 if [[ "$TARGET_HOST" == "zita" ]]; then
   STORAGE_SECRET="${SECRET_DIR}/storage-luks-passphrase.age"
   STORAGE_KEY_STAGED="${TEMP_DIR}/storage-secret.key"
@@ -257,7 +257,10 @@ if [[ "$TARGET_HOST" == "zita" ]]; then
   else
     echo "WARNING: Could not decrypt storage LUKS passphrase for '${TARGET_HOST}'."
   fi
+fi
 
+# Generate dedicated initrd SSH host key for hosts with initrd remote LUKS unlock
+if [[ "$TARGET_HOST" == "zita" || "$TARGET_HOST" == "michael" ]]; then
   if [[ ! -f "${PERSIST_SSH_DIR}/initrd_host_ed25519_key" ]]; then
     echo ">>> Generating initrd SSH host key for ${TARGET_HOST}..."
     ssh-keygen -t ed25519 -N "" -f "${PERSIST_SSH_DIR}/initrd_host_ed25519_key" >/dev/null

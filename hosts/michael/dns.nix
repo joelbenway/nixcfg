@@ -249,7 +249,7 @@ in {
     description = "Weekly update of Pi-hole blocklist domains";
     wantedBy = ["timers.target"];
     timerConfig = {
-      OnCalendar = "Sun *-*-* 03:30:00";
+      OnCalendar = "Sun *-*-* 04:30:00";
       Persistent = true;
       RandomizedDelaySec = "30m";
     };

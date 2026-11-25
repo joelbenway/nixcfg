@@ -68,7 +68,13 @@ if [ -f "$PENDING_BOOT_FILE" ]; then
         "bootctl set-default @current failed on ${BOOTED_SYS}. Pending reboot record retained."
     fi
   else
-    echo "WARNING: Pending reboot target (${TARGET_SYS}) does not match booted system (${BOOTED_SYS}); skipping promotion." >&2
+    echo "WARNING: Pending reboot target (${TARGET_SYS}) does not match booted system (${BOOTED_SYS}); clearing pending reboot and alerting." >&2
+    rm -f "$PENDING_BOOT_FILE"
+    nixos-auto-update-write-status \
+      "boot_verify_failed" \
+      "critical" \
+      "${HOST_NAME} fell back to previous generation after scheduled kernel reboot" \
+      "Expected ${TARGET_SYS} but booted ${BOOTED_SYS} (possible kernel panic or watchdog reset)."
   fi
 elif [ -f "$STATUS_FILE" ]; then
   CUR_STATUS=$(jq -r '.status // "healthy"' "$STATUS_FILE" 2>/dev/null || echo "healthy")
