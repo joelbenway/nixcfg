@@ -125,6 +125,7 @@ jobs:
       - update-flake
       - verify-flake-check
       - verify-eval-hosts
+    if: needs.update-flake.outputs.pr-number != ''
     runs-on: ubuntu-latest
     steps:
       - name: Merge Pull Request

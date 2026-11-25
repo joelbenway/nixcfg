@@ -78,17 +78,18 @@ in {
             if dev != null
             then dev
             else config.${username}.desktop;
+          defaultText = lib.literalExpression "config.<username>.desktop";
           description = "Enable this user's developer and AI tooling stack.";
         }; # dev
       }; # options.${username}
 
       config = lib.mkIf config.${username}.enable (lib.mkMerge [
         {
-          age.secrets =
-            (lib.optionalAttrs hasPassphrase {
+          age.secrets = lib.mkMerge [
+            (lib.mkIf hasPassphrase {
               "${username}-passphrase".file = passphraseFile;
             })
-            // (lib.optionalAttrs hasSshKey {
+            (lib.mkIf hasSshKey {
               "${username}-ssh" = {
                 file = sshKeyFile;
                 path = "/home/${username}/.ssh/id_ed25519";
@@ -97,7 +98,7 @@ in {
                 group = "users";
               };
             })
-            // (lib.optionalAttrs (hasPfp && config.${username}.desktop) {
+            (lib.mkIf (hasPfp && config.${username}.desktop) {
               "${username}s-pfp" = {
                 file = pfpFile;
                 path = "/home/${username}/.face.icon";
@@ -106,7 +107,7 @@ in {
                 group = "users";
               };
             })
-            // (lib.optionalAttrs config.${username}.desktop {
+            (lib.mkIf config.${username}.desktop {
               bypass-paywalls-firefox = {
                 file = relativeToRoot "secrets/bypass_paywalls_clean-latest.xpi.age";
                 name = "bypass_paywalls_clean-latest.xpi";
@@ -121,7 +122,8 @@ in {
                 owner = "root";
                 group = "users";
               };
-            });
+            })
+          ];
 
           system.activationScripts = lib.mkIf hasPassphrase {
             users.deps = ["${username}-password-hash"];

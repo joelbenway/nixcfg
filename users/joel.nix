@@ -169,7 +169,7 @@ in
         gpgFile = config.age.secrets."${username}-gpg-keys-asc".path;
       }; # gpg
 
-      vscodium = lib.mkIf config.${username}.desktop {
+      vscodium = lib.mkIf (config.${username}.desktop && config.${username}.dev) {
         enable = true;
         users.${username} = {
           cpp = true;
@@ -182,9 +182,9 @@ in
       };
 
       antigravity = {
-        ide.enable = lib.mkIf config.${username}.desktop true;
+        ide.enable = lib.mkIf (config.${username}.desktop && config.${username}.dev) true;
         agy.enable = lib.mkIf config.${username}.dev true;
-        users = lib.mkIf (config.${username}.desktop || config.${username}.dev) {
+        users = lib.mkIf config.${username}.dev {
           ${username} = {
             cpp = true;
             flutter = true;

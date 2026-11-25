@@ -57,14 +57,19 @@ in {
       lib.mapAttrs (
         _: cfg:
           lib.mkIf cfg.enable {
-            programs.hex = {
-              inherit (cfg) enable autostart installModel model shortcut language settings;
-            };
-            # KDE's portal leaves new shortcut ids unbound until approved in Settings,
-            # so seed the action declaratively. Keep in sync with programs.hex.shortcut.
-            programs.plasma = lib.mkIf (config.plasma.enable && cfg.shortcut == "control+alt+space") {
-              shortcuts."anomaly.hex"."dictation-CTRL-ALT-space" = "Ctrl+Alt+Space";
-            };
+            programs =
+              {
+                hex = {
+                  inherit (cfg) enable autostart installModel model shortcut language settings;
+                };
+              }
+              // lib.optionalAttrs (config.plasma.enable && cfg.shortcut == "control+alt+space") {
+                # KDE's portal leaves new shortcut ids unbound until approved in Settings,
+                # so seed the action declaratively. Keep in sync with programs.hex.shortcut.
+                plasma = {
+                  shortcuts."anomaly.hex"."dictation-CTRL-ALT-space" = "Ctrl+Alt+Space";
+                };
+              };
           }
       )
       config.hex.users;
