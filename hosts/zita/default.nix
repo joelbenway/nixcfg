@@ -13,6 +13,13 @@
   servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   serviceList = builtins.attrValues servicesCatalog;
   defaultRedirectSvc = lib.findFirst (s: s.defaultTailscaleRedirect or false) servicesCatalog.copyparty serviceList;
+  renderCaddyBody = svc: let
+    extraLines = lib.filter (line: line != "") (lib.splitString "\n" (svc.extraCaddyConfig or ""));
+  in
+    lib.concatStringsSep "\n" (
+      (map (line: "  ${line}") extraLines)
+      ++ ["  reverse_proxy 127.0.0.1:${toString svc.internalPort}"]
+    );
   beszelHubKeySecret = lib.custom.relativeToRoot "secrets/beszel-hub-key.age";
   beszelHubEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hub.env.age";
   beszelHermesEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hermes.env.age";
@@ -315,7 +322,7 @@ in {
       ${lib.concatMapStringsSep "\n" (svc: ''
           ${svc.domain} {
             import cf_tls
-            ${svc.extraCaddyConfig or ""}reverse_proxy 127.0.0.1:${toString svc.internalPort}
+          ${renderCaddyBody svc}
           }
         '')
         serviceList}
@@ -326,7 +333,7 @@ in {
 
       ${lib.concatMapStringsSep "\n" (svc: ''
           ${hostname}.${config.tailscale.tailnet}:${toString svc.tailscalePort} {
-            ${svc.extraCaddyConfig or ""}reverse_proxy 127.0.0.1:${toString svc.internalPort}
+          ${renderCaddyBody svc}
           }
         '')
         serviceList}

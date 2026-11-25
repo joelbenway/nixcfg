@@ -101,35 +101,36 @@ in {
 
   config = lib.mkMerge [
     {
-      users.users = lib.mapAttrs' (name: svc: let
-        u = resolveUser name svc;
-        g = resolveGroup name svc;
-      in
-        lib.nameValuePair u {
-          isSystemUser = true;
-          group = g;
-          home = svc.directory;
-          inherit (svc) description;
+      users.users = lib.mkMerge (lib.mapAttrsToList (name: svc: let
+          u = resolveUser name svc;
+          g = resolveGroup name svc;
+        in {
+          ${u} = {
+            isSystemUser = true;
+            group = g;
+            home = svc.directory;
+            inherit (svc) description;
+          };
         })
-      createdUserEntries;
+        createdUserEntries);
 
-      users.groups = lib.mapAttrs' (name: svc:
-        lib.nameValuePair (resolveGroup name svc) {})
-      createdUserEntries;
+      users.groups = lib.mkMerge (lib.mapAttrsToList (name: svc: {
+          ${resolveGroup name svc} = {};
+        })
+        createdUserEntries);
 
-      systemd.services = lib.mapAttrs' (name: svc: let
-        u = resolveUser name svc;
-        g = resolveGroup name svc;
-      in
-        lib.nameValuePair svc.service {
-          serviceConfig = {
+      systemd.services = lib.mkMerge (lib.mapAttrsToList (name: svc: let
+          u = resolveUser name svc;
+          g = resolveGroup name svc;
+        in {
+          ${svc.service}.serviceConfig = {
             DynamicUser = lib.mkForce false;
             PrivateUsers = lib.mkForce false;
             User = u;
             Group = g;
           };
         })
-      createdUserEntries;
+        createdUserEntries);
 
       systemd.tmpfiles.rules = lib.mapAttrsToList (name: svc: let
         u = resolveUser name svc;

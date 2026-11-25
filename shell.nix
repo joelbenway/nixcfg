@@ -46,10 +46,10 @@ pkgs.mkShell {
       echo "Git pre-commit hook installed"
     fi
 
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [ -d ".git" ]; then
       git config submodule.recurse true
       repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-      if [ -d "$repo_root/secrets" ]; then
+      if [ -e "$repo_root/secrets/.git" ]; then
         git config --unset-all url."$repo_root/secrets".insteadOf 2>/dev/null || true
         git config url."$repo_root/secrets".insteadOf "git@github.com:joelbenway/nixos-secrets.git"
         git config --add url."$repo_root/secrets".insteadOf "ssh://git@github.com/joelbenway/nixos-secrets.git"
