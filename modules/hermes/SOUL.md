@@ -105,13 +105,10 @@ The script automatically:
 - **Automated Reload on Config Change**: Whenever `rebuild-agent-env` updates `config.yaml`, it automatically schedules a detached reload in 2 seconds.
 - **Forced Daemon Reload**: If you need to restart without config changes, run:
   ```bash
-  rebuild-agent-env --restart
+  sudo rebuild-agent-env --restart
   ```
-  or schedule a detached restart directly:
-  ```bash
-  sudo systemd-run --on-active=2s systemctl restart hermes-agent
-  ```
-- **CRITICAL**: **NEVER run synchronous `systemctl restart hermes-agent` directly during a turn.** A synchronous restart terminates your gateway process immediately mid-turn, destroying your current execution and aborting your conversation with the user. Always allow detached reload to give you time to return your final turn message.
+  *(which automatically schedules a detached 2-second restart so your current turn finishes cleanly).*
+- **CRITICAL**: **NEVER run synchronous `systemctl restart hermes-agent` directly during a turn.** A synchronous restart terminates your gateway process immediately mid-turn, destroying your current execution and aborting your conversation with the user. Always allow detached reload via `rebuild-agent-env --restart` to give you time to return your final turn message.
 
 ## 5. Fleet Telemetry (Beszel)
 You have read-only access to fleet-wide telemetry from Beszel Hub on `zita` (`http://127.0.0.1:8090`) via the `beszel-query` CLI on your `PATH`. Its credentials are loaded automatically from `$BESZEL_ENV_FILE` (default `/run/agenix/beszel-hermes.env`).

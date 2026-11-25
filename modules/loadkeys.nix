@@ -30,38 +30,33 @@ in {
   }; # options.loadkeys
 
   config = {
-    systemd.user.services =
-      lib.concatMapAttrs (
-        user: cfg:
-          lib.optionalAttrs cfg.enable {
-            "loadkeys-import-${user}" = lib.mkIf (cfg.envFile != null) {
-              description = "Service to load session keys for ${user}";
-              wantedBy = ["default.target"];
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                EnvironmentFile = cfg.envFile;
-                ExecStart = pkgs.writeShellScript "loadkeys-import" ''
-                  retries=30
-                  while [ ! -f "${cfg.envFile}" ] && [ $retries -gt 0 ]; do
-                    retries=$((retries - 1))
-                    sleep 1
-                  done
-                  if [ ! -f "${cfg.envFile}" ]; then
-                    echo "ERROR: ${cfg.envFile} not found after 30s" >&2
-                    exit 1
-                  fi
-                  vars=()
-                  while IFS='=' read -r key _; do
-                    key="''${key%%#*}"
-                    key="''${key// /}"
-                    [ -n "$key" ] && vars+=("$key")
-                  done < "${cfg.envFile}"
-                  exec ${pkgs.systemd}/bin/systemctl --user import-environment "''${vars[@]}"
-                '';
-              }; # serviceConfig
+    home-manager.users =
+      lib.mapAttrs (
+        user: cfg: {
+          systemd.user.services.loadkeys-import = lib.mkIf (cfg.enable && cfg.envFile != null) {
+            Unit = {
+              Description = "Service to load session keys for ${user}";
+              ConditionPathExists = toString cfg.envFile;
             };
-          }
+            Service = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              EnvironmentFile = toString cfg.envFile;
+              ExecStart = toString (pkgs.writeShellScript "loadkeys-import-${user}" ''
+                vars=()
+                while IFS='=' read -r key _; do
+                  key="''${key%%#*}"
+                  key="''${key// /}"
+                  [ -n "$key" ] && vars+=("$key")
+                done < "${toString cfg.envFile}"
+                if [ "''${#vars[@]}" -gt 0 ]; then
+                  exec ${pkgs.systemd}/bin/systemctl --user import-environment "''${vars[@]}"
+                fi
+              '');
+            };
+            Install.WantedBy = ["default.target"];
+          };
+        }
       )
       config.loadkeys.users;
   }; # config

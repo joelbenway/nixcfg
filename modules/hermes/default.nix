@@ -126,9 +126,14 @@
       REPO_PATH_SET=0
       HOST_NAME_SET=0
 
+      CALLER_USER="''${SUDO_USER:-$(id -un)}"
       for arg in "$@"; do
         case "$arg" in
           --system)
+            if [ "$CALLER_USER" = "hermes" ]; then
+              echo "ERROR: --system is not permitted for the hermes user." >&2
+              exit 1
+            fi
             FULL_SYSTEM=1
             ;;
           --restart)
@@ -136,8 +141,13 @@
             ;;
           -*)
             echo "Unknown flag: $arg" >&2
+            exit 1
             ;;
           *)
+            if [ "$CALLER_USER" = "hermes" ]; then
+              echo "ERROR: Custom repo/host arguments are not permitted for the hermes user." >&2
+              exit 1
+            fi
             if [ "$REPO_PATH_SET" -eq 0 ]; then
               REPO_PATH="$arg"
               REPO_PATH_SET=1
@@ -321,7 +331,6 @@ in {
     environment.systemPackages = [
       rebuildScript
       syncConfig
-      pkgs.signal-cli
       pkgs.qrencode
       (pkgs.writeShellScriptBin "hermes-chat" ''
         exec sudo -u hermes hermes chat "$@"
@@ -398,14 +407,6 @@ in {
               command = "${pkgs.systemd}/bin/systemctl restart hermes-agent.service";
               options = ["NOPASSWD"];
             }
-            {
-              command = "${pkgs.systemd}/bin/systemd-run";
-              options = ["NOPASSWD"];
-            }
-            {
-              command = "/run/current-system/sw/bin/systemd-run";
-              options = ["NOPASSWD"];
-            }
           ];
         }
         {
@@ -420,21 +421,8 @@ in {
         }
       ];
       extraConfig = ''
-        Defaults:hermes !authenticate
         Defaults:hermes timestamp_timeout=0
       '';
-    };
-
-    # System-wide git safe.directory trust to avoid libgit2 ownership rejections across users
-    programs.git = {
-      enable = true;
-      config = {
-        safe = {
-          directory = [
-            "*"
-          ];
-        };
-      };
     };
 
     services.hermes-agent = {
@@ -584,17 +572,6 @@ in {
       after = ["signal-cli.service"];
       wants = ["signal-cli.service"];
 
-      # Directly inject extraPackages and runtime tools to service PATH
-      path =
-        agentEnv.extraPackages
-        ++ (with pkgs; [
-          nix
-          git
-          coreutils
-          bashInteractive
-          systemd
-        ]);
-
       environment.PATH = lib.mkForce (lib.concatStringsSep ":" [
         "/var/lib/hermes/.nix-profile/bin"
         "/var/lib/hermes/.local/bin"
@@ -607,6 +584,7 @@ in {
             git
             coreutils
             bashInteractive
+            systemd
           ])
         ))
       ]);

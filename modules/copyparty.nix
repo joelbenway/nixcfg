@@ -87,8 +87,6 @@ in {
       cfg.users);
   in
     lib.mkIf cfg.enable {
-      networking.firewall.allowedTCPPorts = [cfg.port];
-
       containers.copyparty = {
         autoStart = true;
 
@@ -150,12 +148,6 @@ in {
               }
               // userVolumes;
           };
-
-          users.users.copyparty = {
-            isSystemUser = true;
-            group = "copyparty";
-          };
-          users.groups.copyparty = {};
 
           system.stateVersion = "24.11";
         };
