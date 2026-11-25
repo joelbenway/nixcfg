@@ -8,7 +8,6 @@
   pkgs,
   ...
 }: let
-  hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
   servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
@@ -30,117 +29,93 @@ in {
     ./storage.nix
   ]; # imports
 
-  age = {
-    identityPaths = ["/persist${hostKeyPath}"];
-    secrets =
-      {
-        wifi-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        wifi-guest-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        tailscale-oauth-env = {
-          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-          name = "tailscale.env";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        storage-luks-passphrase = {
-          file = lib.custom.relativeToRoot "secrets/storage-luks-passphrase.age";
-        };
-        hermes-env = {
-          file = lib.custom.relativeToRoot "secrets/hermes.env.age";
-          name = "hermes.env";
-          mode = "440";
-          owner = "root";
-          group = "root";
-        }; # hermes-env
-        cloudflare-api-env = {
-          file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
-          name = "cloudflare.env";
-          mode = "440";
-          owner = "caddy";
-          group = "caddy";
-        };
-        nix-builder-ssh = {
-          file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-          path = "/root/.ssh/nix-builder";
-          mode = "600";
-          owner = "root";
-          group = "root";
-        };
-        zita-cache-priv-key = {
-          file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        vaultwarden-env = {
-          file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
-          name = "vaultwarden.env";
-          mode = "400";
-          owner = "vaultwarden";
-          group = "vaultwarden";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHubKey {
-        beszel-hub-key = {
-          file = beszelHubKeySecret;
-          name = "beszel-hub-key";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHubEnv {
-        beszel-hub-env = {
-          file = beszelHubEnvSecret;
-          name = "beszel-hub.env";
-          mode = "400";
-          owner = "beszel-hub";
-          group = "beszel-hub";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHermesEnv {
-        beszel-hermes-env = {
-          file = beszelHermesEnvSecret;
-          name = "beszel-hermes.env";
-          mode = "400";
-          owner = "hermes";
-          group = "hermes";
-        };
-      }
-      // lib.optionalAttrs hasNtfyServerEnv {
-        ntfy-server-env = {
-          file = ntfyServerEnvSecret;
-          name = "ntfy-server.env";
-          mode = "400";
-          owner = "ntfy-sh";
-          group = "ntfy-sh";
-        };
-      }; # secrets
-  }; # age
+  age.secrets =
+    {
+      wifi-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      };
+      wifi-guest-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      };
+      hermes-env = {
+        file = lib.custom.relativeToRoot "secrets/hermes.env.age";
+        name = "hermes.env";
+        mode = "440";
+        owner = "root";
+        group = "root";
+      }; # hermes-env
+      cloudflare-api-env = {
+        file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
+        name = "cloudflare.env";
+        mode = "440";
+        owner = "caddy";
+        group = "caddy";
+      };
+      zita-cache-priv-key = {
+        file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+      vaultwarden-env = {
+        file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
+        name = "vaultwarden.env";
+        mode = "400";
+        owner = "vaultwarden";
+        group = "vaultwarden";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHubKey {
+      beszel-hub-key = {
+        file = beszelHubKeySecret;
+        name = "beszel-hub-key";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHubEnv {
+      beszel-hub-env = {
+        file = beszelHubEnvSecret;
+        name = "beszel-hub.env";
+        mode = "400";
+        owner = "beszel-hub";
+        group = "beszel-hub";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHermesEnv {
+      beszel-hermes-env = {
+        file = beszelHermesEnvSecret;
+        name = "beszel-hermes.env";
+        mode = "400";
+        owner = "hermes";
+        group = "hermes";
+      };
+    }
+    // lib.optionalAttrs hasNtfyServerEnv {
+      ntfy-server-env = {
+        file = ntfyServerEnvSecret;
+        name = "ntfy-server.env";
+        mode = "400";
+        owner = "ntfy-sh";
+        group = "ntfy-sh";
+      };
+    }; # age.secrets
 
-  impermanence = {
-    enable = true;
-    device = "cryptroot";
-    directories = [
-      "/var/lib/samba"
-      "/var/lib/containers"
-      "/var/lib/hermes"
-      "/var/lib/signal-cli"
-      "/var/lib/private/actual"
-      "/var/lib/caddy"
-    ];
-  }; # impermanence
+  impermanence.directories = [
+    "/var/lib/samba"
+    "/var/lib/containers"
+    "/var/lib/hermes"
+    "/var/lib/signal-cli"
+    "/var/lib/private/actual"
+    "/var/lib/caddy"
+  ];
 
   systemd.tmpfiles.rules = [
     "d /var/lib/private 0700 root root -"
@@ -155,15 +130,7 @@ in {
     fi
   '';
 
-  openssh = {
-    enable = true;
-    inherit hostKeyPath;
-  };
-
-  distributed-builds = {
-    enable = true;
-    keyFile = config.age.secrets.nix-builder-ssh.path;
-  };
+  distributed-builds.enable = true;
 
   binary-cache.server = {
     enable = true;
@@ -189,11 +156,6 @@ in {
       config.age.secrets.wifi-guest-environment-variables.path
     ];
   }; # networkstack
-
-  tailscale = {
-    enable = true;
-    envFile = config.age.secrets.tailscale-oauth-env.path;
-  }; # tailscale
 
   services.tailscale.extraSetFlags = ["--operator=caddy"];
   systemd.services.tailscaled.environment.TS_PERMIT_CERT_UID = "caddy";
@@ -377,7 +339,6 @@ in {
   };
 
   boot = {
-    enableContainers = true;
     extraModulePackages = [];
     initrd = {
       availableKernelModules = [
@@ -432,8 +393,6 @@ in {
   }; # boot
 
   disko.devices = (import ./disks.nix {inherit lib;}).disko.devices;
-
-  fileSystems."/var/log".neededForBoot = true;
 
   auto-update = {
     enable = true;

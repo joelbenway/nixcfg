@@ -7,7 +7,6 @@
   modulesPath,
   ...
 }: let
-  hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   fleetNotifySubTokenFile = lib.custom.relativeToRoot "secrets/fleet-notify-sub.token.age";
   hasFleetNotifySubToken = builtins.pathExists fleetNotifySubTokenFile;
 in {
@@ -19,66 +18,46 @@ in {
     (lib.custom.relativeToRoot "hardware/r1pro.nix")
   ];
 
-  impermanence = {
-    enable = true;
-    device = "cryptroot";
-  };
-
-  age = {
-    identityPaths = ["/persist${hostKeyPath}"];
-    secrets =
-      {
-        wifi-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        wifi-guest-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        tailscale-oauth-env = {
-          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-          name = "tailscale.env";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        luks-passphrase = {
-          file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
-          name = "${hostname}-luks-passphrase.txt";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        nix-builder-ssh = {
-          file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-          path = "/root/.ssh/nix-builder";
-          mode = "600";
-          owner = "root";
-          group = "root";
-        };
-      }
-      // lib.optionalAttrs hasFleetNotifySubToken {
-        fleet-notify-sub-token = {
-          file = fleetNotifySubTokenFile;
-          name = "fleet-notify-sub.token";
-          mode = "0440";
-          owner = "root";
-          group = "users";
-        };
+  age.secrets =
+    {
+      wifi-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
       };
-  };
+      wifi-guest-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      };
+      luks-passphrase = {
+        file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
+        name = "${hostname}-luks-passphrase.txt";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+      nix-builder-ssh = {
+        file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
+        path = "/root/.ssh/nix-builder";
+        mode = "600";
+        owner = "root";
+        group = "root";
+      };
+    }
+    // lib.optionalAttrs hasFleetNotifySubToken {
+      fleet-notify-sub-token = {
+        file = fleetNotifySubTokenFile;
+        name = "fleet-notify-sub.token";
+        mode = "0440";
+        owner = "root";
+        group = "users";
+      };
+    };
 
   notify.client.subscribeTokenFile = lib.mkIf hasFleetNotifySubToken config.age.secrets.fleet-notify-sub-token.path;
-
-  openssh = {
-    enable = true;
-    inherit hostKeyPath;
-  };
 
   distributed-builds = {
     enable = true;
@@ -97,11 +76,7 @@ in {
     ];
   };
 
-  tailscale = {
-    enable = true;
-    acceptDns = true;
-    envFile = config.age.secrets.tailscale-oauth-env.path;
-  };
+  tailscale.acceptDns = true;
 
   syncthing.enable = true;
 
@@ -110,7 +85,6 @@ in {
   secureboot.enable = true;
 
   boot = {
-    enableContainers = true;
     extraModulePackages = [];
     initrd = {
       availableKernelModules = [
@@ -134,8 +108,6 @@ in {
       "tpm_tis.interrupts=0"
     ];
   };
-
-  fileSystems."/var/log".neededForBoot = true;
 
   tpm = {
     enable = true;

@@ -11,6 +11,7 @@
   platform,
   ...
 }: let
+  hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   nixAccessTokensFile = lib.custom.relativeToRoot "secrets/nix-access-tokens.conf.age";
   hasNixAccessTokens = builtins.pathExists nixAccessTokensFile;
   fleetNotifyPubTokenFile = lib.custom.relativeToRoot "secrets/fleet-notify-pub.token.age";
@@ -23,25 +24,54 @@ in {
     }
   ];
 
-  age.secrets =
-    lib.optionalAttrs hasNixAccessTokens {
-      nix-access-tokens = {
-        file = nixAccessTokensFile;
-        name = "nix-access-tokens.conf";
-        mode = "0440";
-        owner = "root";
-        group = "wheel";
+  age = {
+    identityPaths = lib.mkDefault ["/persist${hostKeyPath}"];
+    secrets =
+      {
+        tailscale-oauth-env = {
+          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
+          name = "tailscale.env";
+          mode = "400";
+          owner = "root";
+          group = "root";
+        };
+      }
+      // lib.optionalAttrs hasNixAccessTokens {
+        nix-access-tokens = {
+          file = nixAccessTokensFile;
+          name = "nix-access-tokens.conf";
+          mode = "0440";
+          owner = "root";
+          group = "wheel";
+        };
+      }
+      // lib.optionalAttrs hasFleetNotifyPubToken {
+        fleet-notify-pub-token = {
+          file = fleetNotifyPubTokenFile;
+          name = "fleet-notify-pub.token";
+          mode = "0440";
+          owner = "root";
+          group = "wheel";
+        };
       };
-    }
-    // lib.optionalAttrs hasFleetNotifyPubToken {
-      fleet-notify-pub-token = {
-        file = fleetNotifyPubTokenFile;
-        name = "fleet-notify-pub.token";
-        mode = "0440";
-        owner = "root";
-        group = "wheel";
-      };
-    };
+  };
+
+  impermanence = {
+    enable = lib.mkDefault true;
+    device = lib.mkDefault "cryptroot";
+  };
+
+  openssh = {
+    enable = lib.mkDefault true;
+    hostKeyPath = lib.mkDefault hostKeyPath;
+  };
+
+  tailscale = {
+    enable = lib.mkDefault true;
+    envFile = lib.mkDefault config.age.secrets.tailscale-oauth-env.path;
+  };
+
+  fileSystems."/var/log".neededForBoot = true;
 
   nixpkgs.hostPlatform = platform;
 
@@ -88,7 +118,15 @@ in {
     }; # gc
   }; # nix
 
-  boot.loader.systemd-boot.configurationLimit = 20;
+  boot = {
+    enableContainers = lib.mkDefault true;
+    loader.systemd-boot.configurationLimit = 20;
+  };
+
+  services.btrfs.autoScrub = {
+    enable = lib.mkDefault true;
+    interval = lib.mkDefault "monthly";
+  };
 
   # Set your time zone.
   time.timeZone = "America/Chicago";
