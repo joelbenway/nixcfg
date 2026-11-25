@@ -79,10 +79,10 @@
         ...
       }: {
         home.activation = {
-          createFirefoxDir = lib.hm.dag.entryBefore ["checkLinkGeneration"] ''
+          createFirefoxDir = lib.hm.dag.entryBefore ["checkLinkTargets"] ''
             mkdir -p "${config.xdg.configHome}/mozilla/firefox"
           '';
-          cleanupFirefoxSymlinks = lib.hm.dag.entryBefore ["checkLinkGeneration"] ''
+          cleanupFirefoxSymlinks = lib.hm.dag.entryBefore ["checkLinkTargets"] ''
             if [ -L "${config.xdg.configHome}/mozilla/firefox/hardened" ]; then
               rm "${config.xdg.configHome}/mozilla/firefox/hardened"
             fi

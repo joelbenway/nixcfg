@@ -17,7 +17,7 @@ To provision new command-line tools, Python libraries, runtime options, or MCP s
 When a task requires a utility (e.g. `ffmpeg`, `poppler_utils`, `imagemagick`, `pandoc`):
 1. **Edit the Leaf File**:
    Update `/home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` by adding the Nixpkgs package to `extraPackages`.
-   - *Note*: Overwrite the file in-place (e.g. using `cat <<'EOF' > /home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` or direct write). Do not attempt to rename or remove the file itself, as the parent directory is write-protected.
+   - *Note*: Overwrite `agent-env.nix` in-place (e.g. using `cat <<'EOF' > /home/joel/Projects/nixcfg/modules/hermes/agent-env.nix` or direct write). The systemd sandbox limits runtime writes to `agent-env.nix` and `/var/lib/hermes`, even though `/home/joel/Projects/nixcfg/modules/hermes` is group-writable (`2775`) so `rebuild-agent-env` can sync the leaf file cleanly. Do not modify other files in that directory.
 2. **Rebuild the Environment**:
    Run the rebuild script via `sudo`:
    ```bash

@@ -75,30 +75,31 @@
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(merged, f)
+            f.flush()
 
-        if config_path.exists():
-            st = config_path.stat()
-            try:
-                os.chmod(tmp_path, st.st_mode)
-            except Exception:
-                pass
-            try:
-                os.chown(tmp_path, st.st_uid, st.st_gid)
-            except Exception:
-                pass
-        else:
-            try:
-                os.chmod(tmp_path, 0o660)
-            except Exception:
-                pass
-            if os.geteuid() == 0:
-                import pwd, grp
+            if config_path.exists():
+                st = config_path.stat()
                 try:
-                    uid = pwd.getpwnam("hermes").pw_uid
-                    gid = grp.getgrnam("hermes").gr_gid
-                    os.chown(tmp_path, uid, gid)
+                    os.fchmod(f.fileno(), st.st_mode)
                 except Exception:
                     pass
+                try:
+                    os.fchown(f.fileno(), st.st_uid, st.st_gid)
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.fchmod(f.fileno(), 0o660)
+                except Exception:
+                    pass
+                if os.geteuid() == 0:
+                    import pwd, grp
+                    try:
+                        uid = pwd.getpwnam("hermes").pw_uid
+                        gid = grp.getgrnam("hermes").gr_gid
+                        os.fchown(f.fileno(), uid, gid)
+                    except Exception:
+                        pass
 
         tmp_path.replace(config_path)
     except BaseException:
@@ -184,33 +185,30 @@
         fi
       }
 
-      # Reject symlinks on agent-writable leaf paths before root file operations
+      # Reject symlinks and perform all leaf file operations strictly as unprivileged hermes
       if [ -L "''${RUNTIME_LEAF}" ] || [ -L "''${REPO_LEAF}" ]; then
         echo "ERROR: Symlink detected at agent-env leaf path; refusing to proceed." >&2
         exit 1
       fi
 
-      # Bootstrap runtime leaf from baseline if missing
+      # Bootstrap runtime leaf from baseline if missing (runs as hermes so root never writes agent-writable paths)
       if [ ! -f "''${RUNTIME_LEAF}" ]; then
         if [ -f "''${REPO_LEAF}" ]; then
-          cp --no-dereference "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+          run_as_hermes cp --remove-destination "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
         else
-          cp "${./agent-env.nix}" "''${RUNTIME_LEAF}"
+          run_as_hermes cp --remove-destination "${./agent-env.nix}" "''${RUNTIME_LEAF}"
         fi
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+        run_as_hermes chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
       fi
 
       # If the agent edited REPO_LEAF more recently than RUNTIME_LEAF, copy REPO_LEAF -> RUNTIME_LEAF;
-      # otherwise copy RUNTIME_LEAF -> REPO_LEAF so both stay identical.
+      # otherwise copy RUNTIME_LEAF -> REPO_LEAF so both stay identical (all writes run as hermes).
       if [ -f "''${REPO_LEAF}" ] && [ "''${REPO_LEAF}" -nt "''${RUNTIME_LEAF}" ]; then
-        cp --no-dereference "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${RUNTIME_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
+        run_as_hermes cp --remove-destination "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
+        run_as_hermes chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
       elif [ -d "''${REPO_PATH}/modules/hermes" ]; then
-        cp --no-dereference "''${RUNTIME_LEAF}" "''${REPO_LEAF}"
-        chown "''${HERMES_USER}:''${HERMES_USER}" "''${REPO_LEAF}" 2>/dev/null || true
-        chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
+        run_as_hermes cp --remove-destination "''${RUNTIME_LEAF}" "''${REPO_LEAF}" 2>/dev/null || true
+        run_as_hermes chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
       fi
 
       LEAF_FILE="''${RUNTIME_LEAF}"
@@ -260,12 +258,9 @@
 
       echo "==> Built environment derivation: ''${ENV_OUT}"
 
-      # 3. Atomically activate new profile generation
+      # 3. Atomically activate new profile generation (as unprivileged hermes user)
       echo "==> [2/4] Activating new environment generation in ''${PROFILE_PATH}..."
-      mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
-      if [ "$(id -u)" -eq 0 ]; then
-        chown -h -R "''${HERMES_USER}:''${HERMES_USER}" "''${HERMES_HOME}/.local" "''${HERMES_HOME}/.nix-profile" "''${PROFILE_PATH}"* 2>/dev/null || true
-      fi
+      run_as_hermes mkdir -p "''${HERMES_HOME}/.local/state/nix/profiles"
       run_as_hermes nix-env -p "''${PROFILE_PATH}" --set "''${ENV_OUT}"
 
       if [ "$FULL_SYSTEM" -eq 1 ]; then
@@ -273,14 +268,14 @@
         nixos-rebuild switch --flake "''${REPO_PATH}#''${HOST_NAME}"
       fi
 
-      # 4. Sync declarative runtime settings (extraSettings) into config.yaml (evaluated as unprivileged hermes user)
+      # 4. Sync declarative runtime settings (extraSettings) into config.yaml (strictly as unprivileged hermes user)
       echo "==> [3/4] Syncing declarative settings into config.yaml..."
       CONFIG_CHANGED=0
       CONFIG_FILE="''${HERMES_HOME}/.hermes/config.yaml"
       EXTRA_JSON=$(run_as_hermes nix-instantiate --eval --strict --json -I nixpkgs=${pkgs.path} -E "let pkgs = import <nixpkgs> {}; agentEnv = import ''${LEAF_FILE} { inherit pkgs; }; in (agentEnv.extraSettings or {})" 2>/dev/null || echo "{}")
 
       SYNC_STATUS=0
-      sync-hermes-config "''${CONFIG_FILE}" "''${EXTRA_JSON}" || SYNC_STATUS=$?
+      run_as_hermes sync-hermes-config "''${CONFIG_FILE}" "''${EXTRA_JSON}" || SYNC_STATUS=$?
 
       if [ "$SYNC_STATUS" -eq 42 ]; then
         CONFIG_CHANGED=1

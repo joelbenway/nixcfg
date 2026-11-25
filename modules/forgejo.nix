@@ -349,14 +349,15 @@ in {
     ];
 
     # Ensure backup directory and state directory permissions exist
-    systemd.tmpfiles.rules = [
-      "d ${cfg.dataDir} 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/custom 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/custom/conf 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/data 0750 forgejo forgejo -"
-      "z ${cfg.dataDir} 0750 forgejo forgejo -"
-      "d ${cfg.backupDir} 0750 forgejo forgejo -"
-      "d /var/lib/forgejo-runner 0750 forgejo-runner forgejo-runner -"
-    ];
+    systemd.tmpfiles.rules =
+      [
+        "d ${cfg.dataDir} 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/custom 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/custom/conf 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/data 0750 forgejo forgejo -"
+        "z ${cfg.dataDir} 0750 forgejo forgejo -"
+        "d ${cfg.backupDir} 0750 forgejo forgejo -"
+      ]
+      ++ lib.optional cfg.runner.enable "d /var/lib/forgejo-runner 0750 forgejo-runner forgejo-runner -";
   };
 }

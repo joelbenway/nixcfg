@@ -345,9 +345,16 @@ if [ -z "$BOOTED_ID" ] || [ -z "$TARGET_ID" ] || [ "$BOOTED_ID" = "$TARGET_ID" ]
 fi
 echo "==> [Boot-Guard] Set known-good booted entry ($BOOTED_ID) as default and new entry ($TARGET_ID) as oneshot."
 
+jq -n \
+  --arg target "$(readlink -f /run/current-system)" \
+  --arg previous "$(readlink -f /run/booted-system)" \
+  --arg scheduledAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{targetSystem: $target, previousSystem: $previous, scheduledAt: $scheduledAt}' >"${STATE_DIR}/pending-reboot.json"
+
 echo "==> [Auto-Update] Scheduling maintenance reboot at ${REBOOT_WINDOW}..."
 if ! shutdown -r "${REBOOT_WINDOW}" "NixOS auto-update scheduled kernel reboot"; then
   echo "ERROR: Failed to schedule reboot at ${REBOOT_WINDOW}!" >&2
+  rm -f "${STATE_DIR}/pending-reboot.json"
   report_status \
     "reboot_required_attended" \
     "critical" \
@@ -355,12 +362,6 @@ if ! shutdown -r "${REBOOT_WINDOW}" "NixOS auto-update scheduled kernel reboot";
     "shutdown -r ${REBOOT_WINDOW} failed for ${CURRENT_KERNEL}."
   exit 1
 fi
-
-jq -n \
-  --arg target "$(readlink -f /run/current-system)" \
-  --arg previous "$(readlink -f /run/booted-system)" \
-  --arg scheduledAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{targetSystem: $target, previousSystem: $previous, scheduledAt: $scheduledAt}' >"${STATE_DIR}/pending-reboot.json"
 
 report_status \
   "reboot_scheduled" \

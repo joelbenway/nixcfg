@@ -1,9 +1,22 @@
 # Copyright (c) Joel Benway
 # SPDX-License-Identifier: MIT
-{lib, ...}: let
+{
+  lib,
+  pkgs,
+  ...
+}: let
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
 in {
+  # Ensure existing installations provision a dedicated initrd host key before boot-loader assembly
+  system.activationScripts.initrdHostKey = lib.stringAfter ["persist-files"] ''
+    if [ ! -f /persist/etc/ssh/initrd_host_ed25519_key ]; then
+      ${pkgs.coreutils}/bin/mkdir -p /persist/etc/ssh
+      ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -N "" -f /persist/etc/ssh/initrd_host_ed25519_key >/dev/null
+      ${pkgs.coreutils}/bin/chmod 0600 /persist/etc/ssh/initrd_host_ed25519_key
+    fi
+  '';
+
   boot.initrd = {
     kernelModules = ["igc" "8021q"];
     network = {
