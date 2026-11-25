@@ -6,6 +6,7 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   cfg = config.vaultwarden;
 in {
   options.vaultwarden = {
@@ -13,7 +14,7 @@ in {
 
     domain = lib.mkOption {
       type = lib.types.str;
-      default = "vault.benway.me";
+      default = servicesCatalog.vaultwarden.domain;
       description = "Domain name under which Vaultwarden is reachable";
     };
 

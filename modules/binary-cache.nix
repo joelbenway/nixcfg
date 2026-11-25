@@ -6,6 +6,7 @@
   ...
 }: let
   cfg = config.binary-cache;
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
 in {
@@ -38,7 +39,7 @@ in {
       substituters = lib.mkOption {
         type = with lib.types; listOf str;
         default = [
-          "http://zita.skylab.home:${toString ports.binaryCache.internal}"
+          "http://${fleetNetwork.hosts.zita.fqdn}:${toString ports.binaryCache.internal}"
           "http://zita.${config.tailscale.tailnet}:${toString ports.binaryCache.internal}"
         ];
         description = "List of local binary cache substituter URLs";

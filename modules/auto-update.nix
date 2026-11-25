@@ -8,6 +8,8 @@
   ...
 }: let
   cfg = config.auto-update;
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   deployKeySecretFile = lib.custom.relativeToRoot "secrets/github-secrets-deploy-key.age";
   hasDeployKeySecret = builtins.pathExists deployKeySecretFile;
 
@@ -121,7 +123,7 @@ in {
 
     zitaHost = lib.mkOption {
       type = lib.types.str;
-      default = "zita.skylab.home";
+      default = fleetNetwork.hosts.zita.fqdn;
       description = "Hostname of Zita for secondary Git remote and binary cache.";
     };
 
@@ -268,10 +270,10 @@ in {
     })
 
     (lib.mkIf cfg.gitMirror.enable {
-      networking.firewall.interfaces."tailscale0".allowedTCPPorts = [9418];
+      networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ports.gitMirror.internal];
       networking.firewall.extraInputRules = ''
-        iifname "tailscale0" tcp dport 9418 accept
-        ip saddr 192.168.0.0/16 tcp dport 9418 accept
+        iifname "tailscale0" tcp dport ${toString ports.gitMirror.internal} accept
+        ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString ports.gitMirror.internal} accept
       '';
 
       systemd.services.nixos-auto-update-git-mirror = {

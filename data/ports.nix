@@ -38,8 +38,14 @@ let
     binaryCache = {
       internal = 5000;
     };
+    gitMirror = {
+      internal = 9418;
+    };
     telemetry = {
       internal = 3000;
+    };
+    unbound = {
+      internal = 5353;
     };
     hnsd = {
       resolver = 5350;

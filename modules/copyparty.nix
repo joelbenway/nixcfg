@@ -7,6 +7,7 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
 
   userOpts = {
     name = lib.mkOption {
@@ -31,7 +32,7 @@ in {
 
     domain = lib.mkOption {
       type = lib.types.str;
-      default = "files.benway.me";
+      default = servicesCatalog.copyparty.domain;
       description = "Domain name for copyparty";
     };
 

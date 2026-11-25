@@ -7,7 +7,9 @@
   utils,
   ...
 }: let
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   cfgAgent = config.beszel.agent;
   cfgHub = config.beszel.hub;
@@ -103,7 +105,7 @@ in {
 
       domain = lib.mkOption {
         type = lib.types.str;
-        default = "metrics.benway.me";
+        default = servicesCatalog.beszel.domain;
         description = "Public/LAN domain name under which Beszel Hub is exposed via reverse proxy";
       };
 
@@ -201,13 +203,13 @@ in {
         interfaces."tailscale0".allowedTCPPorts = [cfgAgent.port];
         extraInputRules = lib.mkIf config.networking.nftables.enable ''
           iifname "tailscale0" tcp dport ${toString cfgAgent.port} accept
-          ip saddr 192.168.77.0/24 tcp dport ${toString cfgAgent.port} accept
+          ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString cfgAgent.port} accept
         '';
         extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -A nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept
+          iptables -A nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept
         '';
         extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -D nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept 2>/dev/null || true
+          iptables -D nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept 2>/dev/null || true
         '';
       };
     })

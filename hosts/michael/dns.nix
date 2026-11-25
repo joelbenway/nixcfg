@@ -7,6 +7,9 @@
   ...
 }: let
   network = import ./network.nix;
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   piholeGroups = import ./pihole-groups.nix {inherit lib;};
   vlanList = builtins.attrValues network.vlans;
 in {
@@ -30,7 +33,7 @@ in {
       openFirewallDHCP = false;
       settings = {
         dns = {
-          upstreams = ["127.0.0.1#5353"];
+          upstreams = ["127.0.0.1#${toString ports.unbound.internal}"];
           listeningMode = "ALL";
         };
         dhcp = {
@@ -87,18 +90,15 @@ in {
               "server=/100.in-addr.arpa/100.100.100.100"
 
               # Static DNS host records for trusted LAN infrastructure
-              "host-record=zita,zita.skylab.home,zita.home,192.168.77.20"
-              "host-record=michael,michael.skylab.home,michael.home,192.168.77.1"
-
-              # Service CNAMEs pointing to Zita on local LAN (reachable with or without Tailscale)
-              "cname=files.benway.me,zita.skylab.home"
-              "cname=budget.benway.me,zita.skylab.home"
-              "cname=jellyfin.benway.me,zita.skylab.home"
-              "cname=git.benway.me,zita.skylab.home"
-              "cname=vault.benway.me,zita.skylab.home"
-              "cname=metrics.benway.me,zita.skylab.home"
-              "cname=notify.benway.me,zita.skylab.home"
-            ];
+            ]
+            ++ (lib.mapAttrsToList (
+                name: host: "host-record=${name},${host.fqdn},${name}.home,${host.ip}"
+              )
+              fleetNetwork.hosts)
+            ++ (lib.mapAttrsToList (
+                _: svc: "cname=${svc.domain},${fleetNetwork.hosts.zita.fqdn}"
+              )
+              servicesCatalog);
         };
       };
       lists = piholeGroups.allLists;
@@ -118,7 +118,7 @@ in {
       settings = {
         server = {
           interface = ["127.0.0.1"];
-          port = 5353;
+          port = ports.unbound.internal;
           do-ip4 = true;
           do-ip6 = false;
           do-udp = true;

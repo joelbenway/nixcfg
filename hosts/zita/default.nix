@@ -9,7 +9,11 @@
   ...
 }: let
   hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
+  serviceList = builtins.attrValues servicesCatalog;
+  defaultRedirectSvc = lib.findFirst (s: s.defaultTailscaleRedirect or false) servicesCatalog.copyparty serviceList;
   beszelHubKeySecret = lib.custom.relativeToRoot "secrets/beszel-hub-key.age";
   beszelHubEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hub.env.age";
   beszelHermesEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hermes.env.age";
@@ -234,14 +238,14 @@ in {
   notify = {
     server = lib.mkIf hasNtfyServerEnv {
       enable = true;
-      domain = "notify.benway.me";
+      domain = servicesCatalog.ntfy.domain;
       environmentFile = config.age.secrets.ntfy-server-env.path;
       admin.passwordFile = config.age.secrets.joel-passphrase.path;
     };
     client = {
       urls = [
         "http://127.0.0.1:${toString ports.ntfy.internal}"
-        "https://notify.benway.me"
+        "https://${servicesCatalog.ntfy.domain}"
         "https://zita.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale}"
       ];
       onFailureUnits = [
@@ -264,7 +268,7 @@ in {
     };
     hub = {
       enable = true;
-      domain = "metrics.benway.me";
+      domain = servicesCatalog.beszel.domain;
       keyFile =
         if hasBeszelHubKey
         then config.age.secrets.beszel-hub-key.path
@@ -285,7 +289,7 @@ in {
         }
         {
           name = "michael";
-          host = "192.168.77.1";
+          host = fleetNetwork.hosts.michael.ip;
           port = ports.beszel.agent;
         }
         {
@@ -308,18 +312,13 @@ in {
   };
 
   networking = {
-    nameservers = ["192.168.77.1"];
-    firewall.allowedTCPPorts = [
-      80
-      443
-      ports.copyparty.tailscale
-      ports.actual.tailscale
-      ports.jellyfin.tailscale
-      ports.forgejo.tailscale
-      ports.vaultwarden.tailscale
-      ports.beszel.tailscale
-      ports.ntfy.tailscale
-    ];
+    nameservers = [fleetNetwork.hosts.michael.ip];
+    firewall.allowedTCPPorts =
+      [
+        80
+        443
+      ]
+      ++ (map (svc: svc.tailscalePort) serviceList);
   };
 
   services.avahi = {
@@ -351,74 +350,24 @@ in {
         }
       }
 
-      files.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
-      }
-
-      budget.benway.me {
-        import cf_tls
-        header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
-      }
-
-      jellyfin.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
-      }
-
-      git.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
-      }
-
-      vault.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
-      }
-
-      metrics.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
-      }
-
-      notify.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
-      }
+      ${lib.concatMapStringsSep "\n" (svc: ''
+          ${svc.domain} {
+            import cf_tls
+            ${svc.extraCaddyConfig or ""}reverse_proxy 127.0.0.1:${toString svc.internalPort}
+          }
+        '')
+        serviceList}
 
       ${hostname}.${config.tailscale.tailnet} {
-        redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
+        redir https://${hostname}.${config.tailscale.tailnet}:${toString defaultRedirectSvc.tailscalePort}
       }
 
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.actual.tailscale} {
-        header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.forgejo.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.vaultwarden.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.beszel.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
-      }
+      ${lib.concatMapStringsSep "\n" (svc: ''
+          ${hostname}.${config.tailscale.tailnet}:${toString svc.tailscalePort} {
+            ${svc.extraCaddyConfig or ""}reverse_proxy 127.0.0.1:${toString svc.internalPort}
+          }
+        '')
+        serviceList}
     '';
   };
 
@@ -464,9 +413,9 @@ in {
         networks."10-lan" = {
           matchConfig.Name = "en* eth*";
           networkConfig = {
-            Address = "192.168.77.20/24";
-            Gateway = "192.168.77.1";
-            DNS = ["192.168.77.1"];
+            Address = "${fleetNetwork.hosts.zita.ip}/24";
+            Gateway = fleetNetwork.hosts.michael.ip;
+            DNS = [fleetNetwork.hosts.michael.ip];
             DHCP = "yes";
           };
         };

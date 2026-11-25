@@ -9,6 +9,7 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   tailnet = config.tailscale.tailnet or "gentoo-humboldt.ts.net";
   cfgServer = config.notify.server;
   cfgClient = config.notify.client;
@@ -111,7 +112,7 @@ in {
 
       domain = lib.mkOption {
         type = lib.types.str;
-        default = "notify.benway.me";
+        default = servicesCatalog.ntfy.domain;
         description = "Domain name under which ntfy-sh is exposed via reverse proxy.";
       };
 
@@ -178,7 +179,7 @@ in {
       urls = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [
-          "https://notify.benway.me"
+          "https://${servicesCatalog.ntfy.domain}"
           "https://zita.${tailnet}:${toString ports.ntfy.tailscale}"
         ];
         description = "Ordered list of ntfy base URLs tried by fleet-notify and desktop subscribers.";
