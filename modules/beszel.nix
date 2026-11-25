@@ -4,7 +4,6 @@
   config,
   lib,
   pkgs,
-  utils,
   ...
 }: let
   fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
@@ -24,8 +23,6 @@
       })
       cfgHub.systems;
   };
-
-  dataDirMountUnit = "${utils.escapeSystemdPath cfgHub.dataDir}.mount";
 
   seedHubDataScript = pkgs.writeShellScript "beszel-hub-seed" ''
     set -euo pipefail
@@ -215,14 +212,11 @@ in {
     })
 
     (lib.mkIf cfgHub.enable {
-      users.users.beszel-hub = {
-        isSystemUser = true;
-        group = "beszel-hub";
-        home = cfgHub.dataDir;
+      impermanence.persistentServices.beszel-hub = {
+        directory = cfgHub.dataDir;
+        createUser = true;
         description = "Beszel monitoring hub service user";
       };
-
-      users.groups.beszel-hub = {};
 
       services.beszel.hub = {
         enable = true;
@@ -237,25 +231,7 @@ in {
         };
       };
 
-      systemd.services.beszel-hub = {
-        after = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
-        wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
-        serviceConfig = {
-          DynamicUser = lib.mkForce false;
-          PrivateUsers = lib.mkForce false;
-          User = "beszel-hub";
-          Group = "beszel-hub";
-          ExecStartPre = lib.mkBefore ["+${seedHubDataScript}"];
-        };
-      };
-
-      systemd.tmpfiles.rules = [
-        "d ${cfgHub.dataDir} 0750 beszel-hub beszel-hub -"
-      ];
-
-      impermanence.directories = lib.mkIf (config.impermanence.enable or false) [
-        cfgHub.dataDir
-      ];
+      systemd.services.beszel-hub.serviceConfig.ExecStartPre = lib.mkBefore ["+${seedHubDataScript}"];
 
       environment.systemPackages = [
         beszelQueryPkg

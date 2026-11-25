@@ -5,9 +5,71 @@
   lib,
   pkgs,
   inputs,
+  utils,
   ...
 }: let
   cfg = config.impermanence;
+
+  persistentServiceType = lib.types.submodule ({name, ...}: {
+    options = {
+      directory = lib.mkOption {
+        type = lib.types.str;
+        description = "Persistent data directory to bind-mount via impermanence.";
+      };
+      service = lib.mkOption {
+        type = lib.types.str;
+        default = name;
+        description = "Primary systemd service ordered after the persisted directory mount.";
+      };
+      extraServices = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "Additional systemd services ordered after the persisted directory mount.";
+      };
+      user = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Static system user owning the persisted directory (defaults to entry name when createUser = true).";
+      };
+      group = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Static system group owning the persisted directory (defaults to resolved user).";
+      };
+      mode = lib.mkOption {
+        type = lib.types.str;
+        default = "0750";
+        description = "Permission mode for the persisted directory tmpfiles rule.";
+      };
+      createUser = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Create a static system user/group and disable DynamicUser/PrivateUsers on the service.";
+      };
+      description = lib.mkOption {
+        type = lib.types.str;
+        default = "${name} service user";
+        description = "Description for the created static system user.";
+      };
+    };
+  });
+
+  resolveUser = name: svc:
+    if svc.user != null
+    then svc.user
+    else if svc.createUser
+    then name
+    else null;
+
+  resolveGroup = name: svc: let
+    u = resolveUser name svc;
+  in
+    if svc.group != null
+    then svc.group
+    else u;
+
+  createdUserEntries = lib.filterAttrs (_: svc: svc.createUser) cfg.persistentServices;
+  tmpfilesEntries = lib.filterAttrs (name: svc: (resolveUser name svc) != null) cfg.persistentServices;
 in {
   imports = [
     inputs.impermanence.nixosModules.impermanence
@@ -30,82 +92,142 @@ in {
       default = [];
       description = "Additional files to persist.";
     }; # files
+    persistentServices = lib.mkOption {
+      type = lib.types.attrsOf persistentServiceType;
+      default = {};
+      description = "Declarative persistent service state directories with optional static user provisioning and impermanence mount ordering.";
+    };
   }; # options.impermanence
 
-  config = lib.mkIf cfg.enable {
-    boot = {
-      initrd = {
-        systemd = {
-          packages = with pkgs; [coreutils util-linux btrfs-progs];
-          services.rollback = {
-            description = "Rollback BTRFS root subvolume to a pristine state";
-            wantedBy = ["initrd-root-device.target"];
-            after = ["cryptsetup.target"];
-            before = ["sysroot.mount"];
-            unitConfig.DefaultDependencies = "no";
-            serviceConfig.Type = "oneshot";
-            script = ''
-              set -euo pipefail
-              mkdir -p /mnt
-              mount -t btrfs -o subvol=/ /dev/mapper/${cfg.device} /mnt
+  config = lib.mkMerge [
+    {
+      users.users = lib.mapAttrs' (name: svc: let
+        u = resolveUser name svc;
+        g = resolveGroup name svc;
+      in
+        lib.nameValuePair u {
+          isSystemUser = true;
+          group = g;
+          home = svc.directory;
+          inherit (svc) description;
+        })
+      createdUserEntries;
 
-              # Delete the old root subvolume
-              if [[ -e /mnt/@ ]]; then
-                  btrfs subvolume delete --recursive /mnt/@
-              fi
+      users.groups = lib.mapAttrs' (name: svc:
+        lib.nameValuePair (resolveGroup name svc) {})
+      createdUserEntries;
 
-              if [[ -e /mnt/@-blank ]]; then
-                  # Create a writable snapshot from the "gold image"
-                  btrfs subvolume snapshot /mnt/@-blank /mnt/@
-              else
-                  # Bootstrap: Create fresh root, set up mountpoints, then save as "gold image"
-                  btrfs subvolume create /mnt/@
-                  mkdir -p /mnt/@/home
-                  mkdir -p /mnt/@/nix
-                  mkdir -p /mnt/@/persist
-                  mkdir -p /mnt/@/var/log
-                  mkdir -p /mnt/@/.snapshots
+      systemd.services = lib.mapAttrs' (name: svc: let
+        u = resolveUser name svc;
+        g = resolveGroup name svc;
+      in
+        lib.nameValuePair svc.service {
+          serviceConfig = {
+            DynamicUser = lib.mkForce false;
+            PrivateUsers = lib.mkForce false;
+            User = u;
+            Group = g;
+          };
+        })
+      createdUserEntries;
 
-                  # Create the read-only snapshot for future boots
-                  btrfs subvolume snapshot -r /mnt/@ /mnt/@-blank
-              fi
+      systemd.tmpfiles.rules = lib.mapAttrsToList (name: svc: let
+        u = resolveUser name svc;
+        g = resolveGroup name svc;
+      in "d ${svc.directory} ${svc.mode} ${u} ${g} -")
+      tmpfilesEntries;
+    }
 
-              umount /mnt
-            '';
-          }; # services.rollback
-        }; # systemd
-        supportedFilesystems = ["btrfs"];
-        kernelModules = ["btrfs"];
-      }; # initrd
-    }; # boot
+    (lib.mkIf cfg.enable {
+      boot = {
+        initrd = {
+          systemd = {
+            packages = with pkgs; [coreutils util-linux btrfs-progs];
+            services.rollback = {
+              description = "Rollback BTRFS root subvolume to a pristine state";
+              wantedBy = ["initrd-root-device.target"];
+              after = ["cryptsetup.target"];
+              before = ["sysroot.mount"];
+              unitConfig.DefaultDependencies = "no";
+              serviceConfig.Type = "oneshot";
+              script = ''
+                set -euo pipefail
+                mkdir -p /mnt
+                mount -t btrfs -o subvol=/ /dev/mapper/${cfg.device} /mnt
 
-    fileSystems = {
-      "/persist".neededForBoot = true;
-    }; # fileSystems
+                # Delete the old root subvolume
+                if [[ -e /mnt/@ ]]; then
+                    btrfs subvolume delete --recursive /mnt/@
+                fi
 
-    environment.persistence."/persist" = {
-      hideMounts = true;
-      directories =
-        [
-          "/var/lib/bluetooth"
-          "/var/lib/nixos"
-          "/var/lib/systemd"
-          {
-            directory = "/var/lib/sbctl";
-            mode = "0700";
-          }
-          "/var/lib/tailscale"
-          "/etc/NetworkManager/system-connections"
-          "/var/cache/huggingface"
-        ]
-        ++ cfg.directories; # directories
-      files =
-        [
-          "/etc/machine-id"
-          "/etc/ssh/ssh_host_ed25519_key"
-          "/etc/ssh/ssh_host_ed25519_key.pub"
-        ]
-        ++ cfg.files; # files
-    }; # environment.persistence."/persist"
-  }; # config
+                if [[ -e /mnt/@-blank ]]; then
+                    # Create a writable snapshot from the "gold image"
+                    btrfs subvolume snapshot /mnt/@-blank /mnt/@
+                else
+                    # Bootstrap: Create fresh root, set up mountpoints, then save as "gold image"
+                    btrfs subvolume create /mnt/@
+                    mkdir -p /mnt/@/home
+                    mkdir -p /mnt/@/nix
+                    mkdir -p /mnt/@/persist
+                    mkdir -p /mnt/@/var/log
+                    mkdir -p /mnt/@/.snapshots
+
+                    # Create the read-only snapshot for future boots
+                    btrfs subvolume snapshot -r /mnt/@ /mnt/@-blank
+                fi
+
+                umount /mnt
+              '';
+            }; # services.rollback
+          }; # systemd
+          supportedFilesystems = ["btrfs"];
+          kernelModules = ["btrfs"];
+        }; # initrd
+      }; # boot
+
+      fileSystems = {
+        "/persist".neededForBoot = true;
+      }; # fileSystems
+
+      environment.persistence."/persist" = {
+        hideMounts = true;
+        directories =
+          [
+            "/var/lib/bluetooth"
+            "/var/lib/nixos"
+            "/var/lib/systemd"
+            {
+              directory = "/var/lib/sbctl";
+              mode = "0700";
+            }
+            "/var/lib/tailscale"
+            "/etc/NetworkManager/system-connections"
+            "/var/cache/huggingface"
+          ]
+          ++ cfg.directories
+          ++ (lib.mapAttrsToList (_: svc: svc.directory) cfg.persistentServices); # directories
+        files =
+          [
+            "/etc/machine-id"
+            "/etc/ssh/ssh_host_ed25519_key"
+            "/etc/ssh/ssh_host_ed25519_key.pub"
+          ]
+          ++ cfg.files; # files
+      }; # environment.persistence."/persist"
+
+      systemd.services = lib.mkMerge (
+        lib.mapAttrsToList (
+          _: svc: let
+            mountUnit = "${utils.escapeSystemdPath svc.directory}.mount";
+            targets = [svc.service] ++ svc.extraServices;
+          in
+            lib.genAttrs targets (_: {
+              after = [mountUnit];
+              wants = [mountUnit];
+            })
+        )
+        cfg.persistentServices
+      );
+    })
+  ]; # config
 }
