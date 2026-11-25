@@ -207,7 +207,7 @@
         run_as_hermes cp --remove-destination "''${REPO_LEAF}" "''${RUNTIME_LEAF}"
         run_as_hermes chmod 0664 "''${RUNTIME_LEAF}" 2>/dev/null || true
       elif [ -d "''${REPO_PATH}/modules/hermes" ]; then
-        run_as_hermes cp --remove-destination "''${RUNTIME_LEAF}" "''${REPO_LEAF}" 2>/dev/null || true
+        run_as_hermes cp "''${RUNTIME_LEAF}" "''${REPO_LEAF}"
         run_as_hermes chmod 0664 "''${REPO_LEAF}" 2>/dev/null || true
       fi
 

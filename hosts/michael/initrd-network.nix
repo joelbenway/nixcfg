@@ -8,7 +8,8 @@
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
 in {
-  # Ensure existing installations provision a dedicated initrd host key before boot-loader assembly
+  # Provision a dedicated initrd host key on test/activation (fresh installs also create it in
+  # scripts/install_host, and stage-1/lanzaboote fails loudly if missing during direct switch/boot).
   system.activationScripts.initrdHostKey = lib.stringAfter ["persist-files"] ''
     if [ ! -f /persist/etc/ssh/initrd_host_ed25519_key ]; then
       ${pkgs.coreutils}/bin/mkdir -p /persist/etc/ssh
@@ -31,8 +32,6 @@ in {
         hostKeys = [
           "/persist/etc/ssh/initrd_host_ed25519_key"
         ];
-        # Fail boot-loader assembly rather than silently booting an unlockable initrd if the key is missing
-        ignoreEmptyHostKeys = false;
       };
     };
     systemd.network = {
