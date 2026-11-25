@@ -1,10 +1,24 @@
 # Copyright (c) Joel Benway
 # SPDX-License-Identifier: MIT
-{lib, ...}: let
+{
+  lib,
+  pkgs,
+  ...
+}: let
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
   network = import ./network.nix;
 in {
+  # Provision a dedicated initrd host key on test/activation (fresh installs also create it in
+  # scripts/install_host, and stage-1/lanzaboote fails loudly if missing during direct switch/boot).
+  system.activationScripts.initrdHostKey = lib.stringAfter ["persist-files"] ''
+    if [ ! -f /persist/etc/ssh/initrd_host_ed25519_key ]; then
+      ${pkgs.coreutils}/bin/mkdir -p /persist/etc/ssh
+      ${pkgs.openssh}/bin/ssh-keygen -t ed25519 -N "" -f /persist/etc/ssh/initrd_host_ed25519_key >/dev/null
+      ${pkgs.coreutils}/bin/chmod 0600 /persist/etc/ssh/initrd_host_ed25519_key
+    fi
+  '';
+
   boot.initrd = {
     kernelModules = ["igc" "8021q"];
     network = {
@@ -18,9 +32,7 @@ in {
         ];
         hostKeys = [
           "/persist/etc/ssh/initrd_host_ed25519_key"
-          "/persist/etc/ssh/ssh_host_ed25519_key"
         ];
-        ignoreEmptyHostKeys = true;
       };
     };
     systemd.network = {

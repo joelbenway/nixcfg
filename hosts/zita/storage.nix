@@ -176,7 +176,7 @@ in {
     description = "Nightly check for MergerFS cache threshold eviction";
     wantedBy = ["timers.target"];
     timerConfig = {
-      OnCalendar = "03:00";
+      OnCalendar = "02:00";
       Persistent = true;
     };
   };

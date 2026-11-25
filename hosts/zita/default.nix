@@ -194,6 +194,8 @@ in {
     };
   }; # jellyfin
 
+  podman.enable = true;
+
   forgejo = {
     enable = true;
     admin.passwordFile = config.age.secrets.joel-passphrase.path;
@@ -384,7 +386,6 @@ in {
             Address = "${fleetNetwork.hosts.zita.ip}/24";
             Gateway = fleetNetwork.hosts.michael.ip;
             DNS = [fleetNetwork.hosts.michael.ip];
-            DHCP = "yes";
           };
         };
       };

@@ -47,7 +47,7 @@ jobs:
           body: |
             Automated weekly flake inputs update.
 
-            This workflow automatically runs `nix flake check` and evaluates all 5 hosts (`michael`, `francis`, `zita`, `agnes`, `jerome`) before merging into `master`.
+            This workflow automatically runs `nix flake check` and evaluates all 6 hosts (`michael`, `francis`, `zita`, `agnes`, `jerome`, `therese`) before merging into `master`.
           base: master
           branch: chore/flake-update
           delete-branch: true
@@ -68,38 +68,9 @@ jobs:
           persist-credentials: false
 
       - name: Initialize secrets submodule or placeholders
-        env:
-          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-        run: |
-          if [ -n "$SSH_KEY" ]; then
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
-            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
-            git submodule update --init --recursive
-          else
-            git rm --cached secrets 2>/dev/null || true
-            rm -rf secrets && mkdir -p secrets
-            sed -i '/self.submodules = true;/d' flake.nix
-            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
-              touch "secrets/$f"
-            done
-            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for h in agnes francis jerome michael zita; do
-                touch "secrets/${h}${suffix}"
-              done
-            done
-            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for u in joel katy; do
-                touch "secrets/${u}${suffix}"
-              done
-            done
-            touch secrets/secrets.nix secrets/agenix-rules.nix
-            git config user.name "CI"
-            git config user.email "ci@local"
-            git add -f secrets flake.nix
-          fi
+        uses: ./.github/actions/setup-secrets
+        with:
+          ssh-key: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
 
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
@@ -120,6 +91,7 @@ jobs:
           - francis
           - jerome
           - michael
+          - therese
           - zita
     steps:
       - name: Checkout PR branch
@@ -129,44 +101,23 @@ jobs:
           persist-credentials: false
 
       - name: Initialize secrets submodule or placeholders
-        env:
-          SSH_KEY: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-        run: |
-          if [ -n "$SSH_KEY" ]; then
-            mkdir -p ~/.ssh
-            echo "$SSH_KEY" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> ~/.ssh/known_hosts
-            echo "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=" >> ~/.ssh/known_hosts
-            git submodule update --init --recursive
-          else
-            git rm --cached secrets 2>/dev/null || true
-            rm -rf secrets && mkdir -p secrets
-            sed -i '/self.submodules = true;/d' flake.nix
-            grep -rhoE 'secrets/[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed 's|^secrets/||' | while IFS= read -r f; do
-              touch "secrets/$f"
-            done
-            grep -rhoE 'secrets/\$\{hostname\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for h in agnes francis jerome michael zita; do
-                touch "secrets/${h}${suffix}"
-              done
-            done
-            grep -rhoE 'secrets/\$\{username\}[A-Za-z0-9_.-]+' hosts/ modules/ users/ data/ 2>/dev/null | sed -E 's|^secrets/\$\{[^}]+\}||' | sort -u | while IFS= read -r suffix; do
-              for u in joel katy; do
-                touch "secrets/${u}${suffix}"
-              done
-            done
-            touch secrets/secrets.nix secrets/agenix-rules.nix
-            git config user.name "CI"
-            git config user.email "ci@local"
-            git add -f secrets flake.nix
-          fi
+        uses: ./.github/actions/setup-secrets
+        with:
+          ssh-key: ${{ secrets.SECRETS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
 
       - name: Install Nix
         uses: DeterminateSystems/determinate-nix-action@4d65ea9cab522b6d9f29a170aed23ededc1b27af # v3
 
       - name: Evaluate host system derivation
-        run: nix eval .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel.drvPath
+        env:
+          HOST: ${{ matrix.host }}
+        run: |
+          set -euo pipefail
+          if [ "$HOST" = "therese" ]; then
+            nix eval ".#nixosConfigurations.${HOST}.config.system.build.isoImage.drvPath"
+          else
+            nix eval ".#nixosConfigurations.${HOST}.config.system.build.toplevel.drvPath"
+          fi
 
   merge-pr:
     name: Auto-Merge Verified Flake Update
@@ -174,6 +125,7 @@ jobs:
       - update-flake
       - verify-flake-check
       - verify-eval-hosts
+    if: needs.update-flake.outputs.pr-number != ''
     runs-on: ubuntu-latest
     steps:
       - name: Merge Pull Request

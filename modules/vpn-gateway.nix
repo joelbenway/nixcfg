@@ -15,6 +15,7 @@
     runtimeInputs = with pkgs; [
       coreutils
       curl
+      gnugrep
       gnused
       iproute2
       iputils
@@ -220,6 +221,10 @@ in {
       {
         assertion = config.networking.nftables.enable;
         message = "services.vpn-gateway requires networking.nftables.enable = true to enforce firewall marking, NAT masquerade, and kill-switch rules.";
+      }
+      {
+        assertion = !cfg.providers.pia.enable || cfg.providers.pia.credentialsFile != null;
+        message = "services.vpn-gateway.providers.pia.credentialsFile must be set when PIA is enabled.";
       }
     ];
 

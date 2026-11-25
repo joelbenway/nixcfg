@@ -270,11 +270,19 @@ in {
     })
 
     (lib.mkIf cfg.gitMirror.enable {
-      networking.firewall.interfaces."tailscale0".allowedTCPPorts = [ports.gitMirror.internal];
-      networking.firewall.extraInputRules = ''
-        iifname "tailscale0" tcp dport ${toString ports.gitMirror.internal} accept
-        ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString ports.gitMirror.internal} accept
-      '';
+      networking.firewall = {
+        interfaces."tailscale0".allowedTCPPorts = [ports.gitMirror.internal];
+        extraInputRules = lib.mkIf config.networking.nftables.enable ''
+          iifname "tailscale0" tcp dport ${toString ports.gitMirror.internal} accept
+          ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString ports.gitMirror.internal} accept
+        '';
+        extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -A nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString ports.gitMirror.internal} -j nixos-fw-accept
+        '';
+        extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
+          iptables -D nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString ports.gitMirror.internal} -j nixos-fw-accept 2>/dev/null || true
+        '';
+      };
 
       systemd.services.nixos-auto-update-git-mirror = {
         description = "Read-only Git daemon serving nixcfg and nixos-secrets on Tailscale";

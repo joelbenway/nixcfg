@@ -19,6 +19,15 @@
 in {
   options = {
     gpg = {
+      pinentryPackage = lib.mkOption {
+        type = lib.types.package;
+        default =
+          if config.plasma.enable
+          then pkgs.pinentry-qt
+          else pkgs.pinentry-curses;
+        defaultText = lib.literalExpression "if config.plasma.enable then pkgs.pinentry-qt else pkgs.pinentry-curses";
+        description = "Pinentry package used by gpg-agent for configured users";
+      };
       users = lib.mkOption {
         type = lib.types.attrsOf userConfigType;
         default = {};
@@ -50,7 +59,7 @@ in {
         services = {
           gpg-agent = {
             enable = true;
-            pinentry.package = pkgs.pinentry-qt;
+            pinentry.package = config.gpg.pinentryPackage;
           }; # gpg-agent
         }; # services
       })

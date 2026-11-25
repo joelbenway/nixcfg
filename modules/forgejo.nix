@@ -4,11 +4,14 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
   servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   cfg = config.forgejo;
+  dataDirMountUnit = "${utils.escapeSystemdPath cfg.dataDir}.mount";
+  useDockerRunner = cfg.runner.enable && lib.any (l: lib.hasInfix ":docker" l) cfg.runner.labels;
 in {
   options.forgejo = {
     enable = lib.mkEnableOption "Forgejo self-hosted software forge and Actions runner";
@@ -149,8 +152,8 @@ in {
 
     # 2. Forgejo systemd service ordering and namespace hardening
     systemd.services.forgejo-secrets = {
-      after = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
-      wants = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      after = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
+      wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
       serviceConfig = {
         StateDirectory = "forgejo forgejo/custom forgejo/custom/conf forgejo/data";
         StateDirectoryMode = "0750";
@@ -158,14 +161,14 @@ in {
         ExecStartPre = [
           "+${pkgs.coreutils}/bin/mkdir -p ${cfg.dataDir}/custom/conf ${cfg.dataDir}/data"
           "+${pkgs.coreutils}/bin/chown -R forgejo:forgejo ${cfg.dataDir}"
-          "+${pkgs.coreutils}/bin/chmod -R 0750 ${cfg.dataDir}"
+          "+${pkgs.coreutils}/bin/chmod -R u=rwX,g=rX,o= ${cfg.dataDir}"
         ];
       };
     };
 
     systemd.services.forgejo = {
-      after = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
-      wants = lib.optionals (config.impermanence.enable or false) ["var-lib-forgejo.mount"];
+      after = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
+      wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
     };
 
     systemd.services.forgejo-admin-init = lib.mkIf (cfg.admin.passwordFile != null) {
@@ -229,15 +232,26 @@ in {
       '';
     };
 
-    # 3. Forgejo Actions Runner Daemon
+    # 3. Forgejo Actions Runner Daemon (dedicated non-root user)
+    users.users.forgejo-runner = lib.mkIf cfg.runner.enable {
+      isSystemUser = true;
+      group = "forgejo-runner";
+      extraGroups = lib.optional useDockerRunner "podman";
+      home = "/var/lib/forgejo-runner";
+      description = "Forgejo Actions Runner service user";
+    };
+
+    users.groups.forgejo-runner = lib.mkIf cfg.runner.enable {};
+
     systemd.services.forgejo-runner = lib.mkIf cfg.runner.enable {
       description = "Forgejo Actions Runner";
       wantedBy = ["multi-user.target"];
       after =
-        ["network.target" "forgejo.service" "podman.socket"]
+        ["network.target" "forgejo.service"]
+        ++ lib.optional useDockerRunner "podman.socket"
         ++ lib.optionals (config.impermanence.enable or false) [
           "var-lib-forgejo-runner.mount"
-          "var-lib-forgejo.mount"
+          dataDirMountUnit
         ];
       wants =
         ["forgejo.service"]
@@ -263,55 +277,62 @@ in {
       };
       serviceConfig = {
         Type = "simple";
+        User = "forgejo-runner";
+        Group = "forgejo-runner";
         WorkingDirectory = "/var/lib/forgejo-runner";
         StateDirectory = "forgejo-runner";
+        StateDirectoryMode = "0750";
         Restart = "always";
         RestartSec = "10s";
-        ExecStartPre = pkgs.writeShellScript "forgejo-runner-setup" ''
-          set -euo pipefail
-          STATE_DIR="/var/lib/forgejo-runner"
-          CONFIG_FILE="$STATE_DIR/config.yaml"
+        ExecStartPre =
+          "+"
+          + (pkgs.writeShellScript "forgejo-runner-setup" ''
+            set -euo pipefail
+            STATE_DIR="/var/lib/forgejo-runner"
+            CONFIG_FILE="$STATE_DIR/config.yaml"
 
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "Generating default runner configuration..."
-            ${pkgs.forgejo-runner}/bin/forgejo-runner generate-config > "$CONFIG_FILE"
-          fi
-
-          if [ ! -f "$STATE_DIR/.runner" ]; then
-            echo "Registering Forgejo runner with instance..."
-            TOKEN=""
-            for i in $(seq 1 30); do
-              if TOKEN=$(${pkgs.util-linux}/bin/runuser -u forgejo -- ${cfg.package}/bin/forgejo actions generate-runner-token \
-                --config ${cfg.dataDir}/custom/conf/app.ini \
-                --work-path ${cfg.dataDir} 2>/dev/null | tail -1 | tr -d '\r\n '); then
-                if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-                  break
-                fi
-              fi
-              echo "Waiting for Forgejo database to be ready (attempt $i/30)..."
-              sleep 2
-            done
-
-            if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-              ${pkgs.forgejo-runner}/bin/forgejo-runner register \
-                --no-interactive \
-                --instance "http://127.0.0.1:${toString cfg.port}" \
-                --token "$TOKEN" \
-                --name "${config.networking.hostName}-runner" \
-                --labels "${lib.concatStringsSep "," cfg.runner.labels}" \
-                --config "$CONFIG_FILE"
-              echo "Runner registered successfully."
-            else
-              echo "WARNING: Could not obtain runner registration token."
+            if [ ! -f "$CONFIG_FILE" ]; then
+              echo "Generating default runner configuration..."
+              ${pkgs.forgejo-runner}/bin/forgejo-runner generate-config > "$CONFIG_FILE"
             fi
-          fi
-        '';
+
+            if [ ! -f "$STATE_DIR/.runner" ]; then
+              echo "Registering Forgejo runner with instance..."
+              TOKEN=""
+              for i in $(seq 1 30); do
+                if TOKEN=$(${pkgs.util-linux}/bin/runuser -u forgejo -- ${cfg.package}/bin/forgejo actions generate-runner-token \
+                  --config ${cfg.dataDir}/custom/conf/app.ini \
+                  --work-path ${cfg.dataDir} 2>/dev/null | tail -1 | tr -d '\r\n '); then
+                  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+                    break
+                  fi
+                fi
+                echo "Waiting for Forgejo database to be ready (attempt $i/30)..."
+                sleep 2
+              done
+
+              if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+                ${pkgs.forgejo-runner}/bin/forgejo-runner register \
+                  --no-interactive \
+                  --instance "http://127.0.0.1:${toString cfg.port}" \
+                  --token "$TOKEN" \
+                  --name "${config.networking.hostName}-runner" \
+                  --labels "${lib.concatStringsSep "," cfg.runner.labels}" \
+                  --config "$CONFIG_FILE"
+                echo "Runner registered successfully."
+              else
+                echo "WARNING: Could not obtain runner registration token."
+              fi
+            fi
+
+            ${pkgs.coreutils}/bin/chown -R forgejo-runner:forgejo-runner "$STATE_DIR"
+          '');
         ExecStart = "${pkgs.forgejo-runner}/bin/forgejo-runner daemon --config /var/lib/forgejo-runner/config.yaml";
       };
     };
 
     # Enable Podman with Docker socket compatibility when container labels are declared
-    virtualisation.podman = lib.mkIf (cfg.runner.enable && lib.any (l: lib.hasInfix ":docker" l) cfg.runner.labels) {
+    virtualisation.podman = lib.mkIf useDockerRunner {
       enable = true;
       dockerSocket.enable = true;
       dockerCompat = true;
@@ -329,14 +350,15 @@ in {
     ];
 
     # Ensure backup directory and state directory permissions exist
-    systemd.tmpfiles.rules = [
-      "d ${cfg.dataDir} 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/custom 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/custom/conf 0750 forgejo forgejo -"
-      "d ${cfg.dataDir}/data 0750 forgejo forgejo -"
-      "z ${cfg.dataDir} 0750 forgejo forgejo -"
-      "d ${cfg.backupDir} 0750 forgejo forgejo -"
-      "d /var/lib/forgejo-runner 0750 root root -"
-    ];
+    systemd.tmpfiles.rules =
+      [
+        "d ${cfg.dataDir} 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/custom 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/custom/conf 0750 forgejo forgejo -"
+        "d ${cfg.dataDir}/data 0750 forgejo forgejo -"
+        "z ${cfg.dataDir} 0750 forgejo forgejo -"
+        "d ${cfg.backupDir} 0750 forgejo forgejo -"
+      ]
+      ++ lib.optional cfg.runner.enable "d /var/lib/forgejo-runner 0750 forgejo-runner forgejo-runner -";
   };
 }
