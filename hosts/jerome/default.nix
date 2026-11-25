@@ -7,11 +7,7 @@
     (lib.custom.relativeToRoot "hardware/skylake.nix")
   ];
 
-  boot.kernelParams = [
-    "intel_iommu=on,igfx_off"
-    "mem_sleep_default=deep"
-    "tpm_tis.interrupts=0"
-  ];
+  workstation.iommuParam = "intel_iommu=on,igfx_off";
 
   disko.devices = (import ./disks.nix {inherit lib;}).disko.devices;
 }

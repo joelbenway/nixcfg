@@ -17,7 +17,6 @@ in {
         ];
         hostKeys = [
           "/persist/etc/ssh/initrd_host_ed25519_key"
-          "/persist/etc/ssh/ssh_host_ed25519_key"
         ];
         ignoreEmptyHostKeys = true;
       };
