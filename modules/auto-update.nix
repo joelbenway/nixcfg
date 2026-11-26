@@ -117,7 +117,7 @@ in {
 
     secretsRepoUrl = lib.mkOption {
       type = lib.types.str;
-      default = "git@github.com:joelbenway/nixos-secrets.git";
+      default = "ssh://git@github.com/joelbenway/nixos-secrets.git";
       description = "Upstream Git repository URL for the private nixos-secrets submodule.";
     };
 

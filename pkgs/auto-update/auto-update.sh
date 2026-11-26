@@ -10,7 +10,7 @@ ZITA_HOST="${AUTO_UPDATE_ZITA_HOST:-zita.skylab.home}"
 ZITA_REMOTE_URL="git://${ZITA_HOST}:9418/nixcfg"
 ZITA_SECRETS_URL="git://${ZITA_HOST}:9418/nixos-secrets"
 ORIGIN_URL="${AUTO_UPDATE_REPO_URL:-https://github.com/joelbenway/nixcfg.git}"
-SECRETS_ORIGIN_URL="${AUTO_UPDATE_SECRETS_REPO_URL:-git@github.com:joelbenway/nixos-secrets.git}"
+SECRETS_ORIGIN_URL="${AUTO_UPDATE_SECRETS_REPO_URL:-ssh://git@github.com/joelbenway/nixos-secrets.git}"
 DEPLOY_KEY_PATH="${AUTO_UPDATE_DEPLOY_KEY_PATH:-}"
 GIT_MIRROR_ENABLE="${AUTO_UPDATE_GIT_MIRROR:-false}"
 HERMES_ENABLE="${AUTO_UPDATE_HERMES_ENABLE:-false}"
@@ -139,6 +139,7 @@ git -C "${REPO_DIR}" clean -fd
 
 # Synchronize secrets submodule and configure both origin and zita remotes on it
 echo "==> [Auto-Update] Synchronizing secrets submodule..."
+git -C "${REPO_DIR}" submodule sync --recursive >/dev/null 2>&1 || true
 if ! SUB_OUT=$(git -C "${REPO_DIR}" submodule update --init --recursive 2>&1); then
   if [ "$HOST_NAME" != "zita" ]; then
     echo "Retrying secrets submodule fetch via zita mirror..."
