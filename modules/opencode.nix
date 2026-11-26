@@ -5,6 +5,10 @@
   lib,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  modelsCatalog = import (lib.custom.relativeToRoot "data/models.nix");
+  opencodeModels = lib.filterAttrs (_: m: m.opencode or false) modelsCatalog.models;
+
   userConfigType = lib.types.submodule {
     options = {
       enable = lib.mkEnableOption "Enable opencode for this user";
@@ -106,6 +110,23 @@ in {
                       apiKey = "{env:XAI_API_KEY}";
                     }; # options
                   }; # xai
+                  zita = {
+                    npm = "@ai-sdk/openai-compatible";
+                    name = "Zita (Local)";
+                    options = {
+                      baseURL = "https://${modelsCatalog.serverHost}.${config.tailscale.tailnet}:${toString ports.llm.tailscale}/v1";
+                      apiKey = "none";
+                    }; # options
+                    models =
+                      lib.mapAttrs (_: m: {
+                        inherit (m) name;
+                        limit = {
+                          inherit (m) context;
+                          output = m.maxOutput;
+                        };
+                      })
+                      opencodeModels;
+                  }; # zita
                 }; # provider
               }; # settings;
               cli = {

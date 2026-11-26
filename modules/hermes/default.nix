@@ -8,6 +8,13 @@
   ...
 }: let
   cfg = config.hermes;
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  modelsCatalog = import (lib.custom.relativeToRoot "data/models.nix");
+  hermesFallbackModels = lib.filterAttrs (_: m: m.hermesFallback or false) modelsCatalog.models;
+  hermesFallbackModelId =
+    if hermesFallbackModels != {}
+    then builtins.head (builtins.attrNames hermesFallbackModels)
+    else "gemma-4-e4b-it";
   agentEnv = import ./agent-env.nix {inherit pkgs;};
 
   # Script to merge leaf module extraSettings into Hermes's runtime config.yaml
@@ -499,8 +506,8 @@ in {
           }
           {
             provider = "custom";
-            base_url = "http://localhost:8080/v1";
-            model = "gemma-4-e4b-it";
+            base_url = "http://127.0.0.1:${toString ports.llm.internal}/v1";
+            model = hermesFallbackModelId;
             api_key = "none";
           }
         ];
