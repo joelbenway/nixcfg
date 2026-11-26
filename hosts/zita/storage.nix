@@ -113,16 +113,12 @@ in {
     "d /mnt/disk1/users/katy 0700 katy users -"
   ];
 
-  # Monthly scrub for root, cache, and bulk storage disks
-  services.btrfs.autoScrub = {
-    enable = true;
-    interval = "monthly";
-    fileSystems = [
-      "/"
-      "/mnt/cache"
-      "/mnt/disk1"
-    ];
-  };
+  # Monthly scrub for root, cache, and bulk storage disks (enable/interval inherited from hosts/configuration.nix)
+  services.btrfs.autoScrub.fileSystems = [
+    "/"
+    "/mnt/cache"
+    "/mnt/disk1"
+  ];
 
   # Intelligent Cache Mover: Migrates cold files from /mnt/cache/data to /mnt/disk1
   # only when cache usage exceeds threshold (e.g., 75%).

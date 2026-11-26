@@ -8,6 +8,8 @@
   ...
 }: let
   cfg = config.auto-update;
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
   deployKeySecretFile = lib.custom.relativeToRoot "secrets/github-secrets-deploy-key.age";
   hasDeployKeySecret = builtins.pathExists deployKeySecretFile;
 
@@ -121,7 +123,7 @@ in {
 
     zitaHost = lib.mkOption {
       type = lib.types.str;
-      default = "zita.skylab.home";
+      default = fleetNetwork.hosts.zita.fqdn;
       description = "Hostname of Zita for secondary Git remote and binary cache.";
     };
 
@@ -269,16 +271,16 @@ in {
 
     (lib.mkIf cfg.gitMirror.enable {
       networking.firewall = {
-        interfaces."tailscale0".allowedTCPPorts = [9418];
+        interfaces."tailscale0".allowedTCPPorts = [ports.gitMirror.internal];
         extraInputRules = lib.mkIf config.networking.nftables.enable ''
-          iifname "tailscale0" tcp dport 9418 accept
-          ip saddr 192.168.77.0/24 tcp dport 9418 accept
+          iifname "tailscale0" tcp dport ${toString ports.gitMirror.internal} accept
+          ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString ports.gitMirror.internal} accept
         '';
         extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -A nixos-fw -s 192.168.77.0/24 -p tcp --dport 9418 -j nixos-fw-accept
+          iptables -A nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString ports.gitMirror.internal} -j nixos-fw-accept
         '';
         extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -D nixos-fw -s 192.168.77.0/24 -p tcp --dport 9418 -j nixos-fw-accept 2>/dev/null || true
+          iptables -D nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString ports.gitMirror.internal} -j nixos-fw-accept 2>/dev/null || true
         '';
       };
 

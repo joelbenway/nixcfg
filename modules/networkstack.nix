@@ -4,7 +4,34 @@
   config,
   lib,
   ...
-}: {
+}: let
+  mkWifiProfile = {
+    id,
+    ssid,
+    psk,
+    keyMgmt ? "sae",
+  }: {
+    connection = {
+      inherit id;
+      permissions = "";
+      type = "wifi";
+    };
+    ipv4 = {
+      dns-search = "";
+      method = "auto";
+    };
+    wifi = {
+      mac-address-blacklist = "";
+      mode = "infrastructure";
+      inherit ssid;
+    };
+    wifi-security = {
+      auth-alg = "open";
+      key-mgmt = keyMgmt;
+      inherit psk;
+    };
+  };
+in {
   options.networkstack = {
     hostName = lib.mkOption {
       type = with lib.types; nullOr str;
@@ -20,14 +47,14 @@
       type = with lib.types; listOf (either path str);
       default = [];
       description = "List of Environment Files with wifi profile info.";
-    }; #envFiles
+    }; # envFiles
   }; # options.networkstack
 
   config = lib.mkMerge [
     {
       # if hostName is set, enable networkstack
       networkstack.enable = lib.mkDefault (config.networkstack.hostName != null);
-      # if any specific wifi is enable, enable wifi
+      # if any specific wifi is enabled, enable wifi
       networkstack.wifi = lib.mkMerge [
         (lib.mkDefault (
           config.networkstack.wifiHome
@@ -50,69 +77,22 @@
           ensureProfiles = lib.mkIf config.networkstack.wifi {
             environmentFiles = config.networkstack.envFiles;
             profiles = {
-              home-wifi = lib.mkIf config.networkstack.wifiHome {
-                connection = {
-                  id = "home-wifi";
-                  permissions = "";
-                  type = "wifi";
-                }; # connection
-                ipv4 = {
-                  dns-search = "";
-                  method = "auto";
-                }; # ipv4
-                wifi = {
-                  mac-address-blacklist = "";
-                  mode = "infrastructure";
-                  ssid = "$HOME_WIFI_SSID";
-                }; # wifi
-                wifi-security = {
-                  auth-alg = "open";
-                  key-mgmt = "sae";
-                  psk = "$HOME_WIFI_PSK";
-                }; # wifi-security
-              }; # home-wifi
-              lab-wifi = lib.mkIf config.networkstack.wifiLab {
-                connection = {
-                  id = "lab-wifi";
-                  permissions = "";
-                  type = "wifi";
-                }; # connection
-                ipv4 = {
-                  dns-search = "";
-                  method = "auto";
-                }; # ipv4
-                wifi = {
-                  mac-address-blacklist = "";
-                  mode = "infrastructure";
-                  ssid = "$LAB_WIFI_SSID";
-                }; # wifi
-                wifi-security = {
-                  auth-alg = "open";
-                  key-mgmt = "sae";
-                  psk = "$LAB_WIFI_PSK";
-                }; # wifi-security
-              }; # lab-wifi
-              iot-wifi = lib.mkIf config.networkstack.wifiIot {
-                connection = {
-                  id = "iot-wifi";
-                  permissions = "";
-                  type = "wifi";
-                }; # connection
-                ipv4 = {
-                  dns-search = "";
-                  method = "auto";
-                }; # ipv4
-                wifi = {
-                  mac-address-blacklist = "";
-                  mode = "infrastructure";
-                  ssid = "$IOT_WIFI_SSID";
-                }; # wifi
-                wifi-security = {
-                  auth-alg = "open";
-                  key-mgmt = "wpa-psk";
-                  psk = "$IOT_WIFI_PSK";
-                }; # wifi-security
-              }; # iot-wifi
+              home-wifi = lib.mkIf config.networkstack.wifiHome (mkWifiProfile {
+                id = "home-wifi";
+                ssid = "$HOME_WIFI_SSID";
+                psk = "$HOME_WIFI_PSK";
+              });
+              lab-wifi = lib.mkIf config.networkstack.wifiLab (mkWifiProfile {
+                id = "lab-wifi";
+                ssid = "$LAB_WIFI_SSID";
+                psk = "$LAB_WIFI_PSK";
+              });
+              iot-wifi = lib.mkIf config.networkstack.wifiIot (mkWifiProfile {
+                id = "iot-wifi";
+                ssid = "$IOT_WIFI_SSID";
+                psk = "$IOT_WIFI_PSK";
+                keyMgmt = "wpa-psk";
+              });
             }; # profiles
           }; # ensureProfiles
         }; # networkmanager
@@ -124,8 +104,6 @@
         # still possible to use this option, but it's recommended to use it in conjunction
         # with explicit per-interface declarations with `networking.interfaces.<interface>.useDHCP`.
         useDHCP = lib.mkDefault true;
-        # interfaces.enp0s31f6.useDHCP = lib.mkDefault true;
-        # interfaces.wlp1s0.useDHCP = lib.mkDefault true;
       }; # networking
     })
   ]; # config

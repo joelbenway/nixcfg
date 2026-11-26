@@ -8,6 +8,7 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   cfg = config.forgejo;
   dataDirMountUnit = "${utils.escapeSystemdPath cfg.dataDir}.mount";
   useDockerRunner = cfg.runner.enable && lib.any (l: lib.hasInfix ":docker" l) cfg.runner.labels;
@@ -19,7 +20,7 @@ in {
 
     domain = lib.mkOption {
       type = lib.types.str;
-      default = "git.benway.me";
+      default = servicesCatalog.forgejo.domain;
       description = "Domain name for Forgejo web interface";
     };
 

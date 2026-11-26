@@ -76,14 +76,6 @@ API keys for model providers (Gemini, Claude, OpenAI) are sensitive assets that 
 
 ---
 
-## 4. Local LLM Runner ([`modules/llm.nix`](../../modules/llm.nix))
-
-For completely offline or privacy-sensitive inference:
-* Utilizes `llama.cpp` and `llama-swap` to host open-weight models locally.
-* Dynamically manages model swapping in VRAM/system RAM based on active query requirements.
-
----
-
 ## Related Documents
 * [Fleet Overview & Ethos](./fleet-overview.md)
 * [Host Profile: francis](../hosts/francis.md)

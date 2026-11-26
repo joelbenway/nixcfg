@@ -4,10 +4,11 @@
   config,
   lib,
   pkgs,
-  utils,
   ...
 }: let
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   cfgAgent = config.beszel.agent;
   cfgHub = config.beszel.hub;
@@ -22,8 +23,6 @@
       })
       cfgHub.systems;
   };
-
-  dataDirMountUnit = "${utils.escapeSystemdPath cfgHub.dataDir}.mount";
 
   seedHubDataScript = pkgs.writeShellScript "beszel-hub-seed" ''
     set -euo pipefail
@@ -103,7 +102,7 @@ in {
 
       domain = lib.mkOption {
         type = lib.types.str;
-        default = "metrics.benway.me";
+        default = servicesCatalog.beszel.domain;
         description = "Public/LAN domain name under which Beszel Hub is exposed via reverse proxy";
       };
 
@@ -201,26 +200,23 @@ in {
         interfaces."tailscale0".allowedTCPPorts = [cfgAgent.port];
         extraInputRules = lib.mkIf config.networking.nftables.enable ''
           iifname "tailscale0" tcp dport ${toString cfgAgent.port} accept
-          ip saddr 192.168.77.0/24 tcp dport ${toString cfgAgent.port} accept
+          ip saddr ${fleetNetwork.lanSubnet} tcp dport ${toString cfgAgent.port} accept
         '';
         extraCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -A nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept
+          iptables -A nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept
         '';
         extraStopCommands = lib.mkIf (!config.networking.nftables.enable) ''
-          iptables -D nixos-fw -s 192.168.77.0/24 -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept 2>/dev/null || true
+          iptables -D nixos-fw -s ${fleetNetwork.lanSubnet} -p tcp --dport ${toString cfgAgent.port} -j nixos-fw-accept 2>/dev/null || true
         '';
       };
     })
 
     (lib.mkIf cfgHub.enable {
-      users.users.beszel-hub = {
-        isSystemUser = true;
-        group = "beszel-hub";
-        home = cfgHub.dataDir;
+      impermanence.persistentServices.beszel-hub = {
+        directory = cfgHub.dataDir;
+        createUser = true;
         description = "Beszel monitoring hub service user";
       };
-
-      users.groups.beszel-hub = {};
 
       services.beszel.hub = {
         enable = true;
@@ -235,25 +231,7 @@ in {
         };
       };
 
-      systemd.services.beszel-hub = {
-        after = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
-        wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
-        serviceConfig = {
-          DynamicUser = lib.mkForce false;
-          PrivateUsers = lib.mkForce false;
-          User = "beszel-hub";
-          Group = "beszel-hub";
-          ExecStartPre = lib.mkBefore ["+${seedHubDataScript}"];
-        };
-      };
-
-      systemd.tmpfiles.rules = [
-        "d ${cfgHub.dataDir} 0750 beszel-hub beszel-hub -"
-      ];
-
-      impermanence.directories = lib.mkIf (config.impermanence.enable or false) [
-        cfgHub.dataDir
-      ];
+      systemd.services.beszel-hub.serviceConfig.ExecStartPre = lib.mkBefore ["+${seedHubDataScript}"];
 
       environment.systemPackages = [
         beszelQueryPkg

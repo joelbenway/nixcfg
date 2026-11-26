@@ -6,6 +6,7 @@
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   cfg = config.vaultwarden;
 in {
   options.vaultwarden = {
@@ -13,7 +14,7 @@ in {
 
     domain = lib.mkOption {
       type = lib.types.str;
-      default = "vault.benway.me";
+      default = servicesCatalog.vaultwarden.domain;
       description = "Domain name under which Vaultwarden is reachable";
     };
 
@@ -58,16 +59,10 @@ in {
       };
     };
 
-    # Systemd mount dependencies for impermanence
-    systemd.services.vaultwarden = {
-      after = lib.optionals (config.impermanence.enable or false) ["var-lib-vaultwarden.mount"];
-      wants = lib.optionals (config.impermanence.enable or false) ["var-lib-vaultwarden.mount"];
+    # Impermanence: persist Vaultwarden data and order service after bind mount
+    impermanence.persistentServices.vaultwarden = {
+      directory = "/var/lib/vaultwarden";
     };
-
-    # Impermanence: persist Vaultwarden data across reboots
-    impermanence.directories = lib.mkIf (config.impermanence.enable or false) [
-      "/var/lib/vaultwarden"
-    ];
 
     # Ensure backup directory permissions exist
     systemd.tmpfiles.rules = [

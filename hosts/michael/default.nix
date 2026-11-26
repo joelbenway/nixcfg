@@ -7,7 +7,6 @@
   modulesPath,
   ...
 }: let
-  hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
   network = import ./network.nix;
 in {
   imports = [
@@ -19,68 +18,38 @@ in {
     ./routing.nix
   ];
 
-  impermanence = {
-    enable = true;
-    device = "cryptroot";
-  };
-
-  age = {
-    identityPaths = ["/persist${hostKeyPath}"];
-    secrets = {
-      tailscale-oauth-env = {
-        file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-        name = "tailscale.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      luks-passphrase = {
-        file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
-        name = "${hostname}-luks-passphrase.txt";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      nix-builder-ssh = {
-        file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-        path = "/root/.ssh/nix-builder";
-        mode = "600";
-        owner = "root";
-        group = "root";
-      };
-      wifi-env = {
-        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-        name = "wifi.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      wifi-guest-env = {
-        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-        name = "wifi-guest.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
-      pia-env = {
-        file = lib.custom.relativeToRoot "secrets/pia.env.age";
-        name = "pia.env";
-        mode = "400";
-        owner = "root";
-        group = "root";
-      };
+  age.secrets = {
+    luks-passphrase = {
+      file = lib.custom.relativeToRoot "secrets/${hostname}-luks-passphrase.age";
+      name = "${hostname}-luks-passphrase.txt";
+      mode = "400";
+      owner = "root";
+      group = "root";
+    };
+    wifi-env = {
+      file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+      name = "wifi.env";
+      mode = "400";
+      owner = "root";
+      group = "root";
+    };
+    wifi-guest-env = {
+      file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+      name = "wifi-guest.env";
+      mode = "400";
+      owner = "root";
+      group = "root";
+    };
+    pia-env = {
+      file = lib.custom.relativeToRoot "secrets/pia.env.age";
+      name = "pia.env";
+      mode = "400";
+      owner = "root";
+      group = "root";
     };
   };
 
-  openssh = {
-    enable = true;
-    hostKeyPath = hostKeyPath;
-  };
-
-  distributed-builds = {
-    enable = true;
-    keyFile = config.age.secrets.nix-builder-ssh.path;
-  };
+  distributed-builds.enable = true;
 
   joel = {
     enable = true;
@@ -92,10 +61,8 @@ in {
   };
 
   tailscale = {
-    enable = true;
     advertiseExitNode = true;
     advertiseRoutes = ["192.168.77.0/24"];
-    envFile = config.age.secrets.tailscale-oauth-env.path;
   };
 
   firewall = {
@@ -146,15 +113,11 @@ in {
       credentialsFile = config.age.secrets.pia-env.path;
       region = "us_chicago";
     };
-    providers.proton = {
-      enable = false;
-    };
   };
 
   secureboot.enable = true;
 
   boot = {
-    enableContainers = true;
     extraModulePackages = [];
     initrd.availableKernelModules = [
       "xhci_pci"
@@ -177,15 +140,7 @@ in {
     ];
   };
 
-  services.btrfs.autoScrub = {
-    enable = true;
-    interval = "monthly";
-    fileSystems = ["/"];
-  };
-
   disko.devices = (import ./disks.nix {inherit lib;}).disko.devices;
-
-  fileSystems."/var/log".neededForBoot = true;
 
   tpm = {
     enable = true;

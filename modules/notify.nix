@@ -5,16 +5,15 @@
   hostname,
   lib,
   pkgs,
-  utils,
   ...
 }: let
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
   tailnet = config.tailscale.tailnet or "gentoo-humboldt.ts.net";
   cfgServer = config.notify.server;
   cfgClient = config.notify.client;
 
   fleetNotifyPkg = import (lib.custom.relativeToRoot "pkgs/fleet-notify") {inherit pkgs;};
-  dataDirMountUnit = "${utils.escapeSystemdPath cfgServer.dataDir}.mount";
   useAdminPasswordFile = cfgServer.admin.passwordFile != null;
   runtimeEnvDir = "/run/ntfy-sh";
   runtimeEnvPath = "${runtimeEnvDir}/env";
@@ -111,7 +110,7 @@ in {
 
       domain = lib.mkOption {
         type = lib.types.str;
-        default = "notify.benway.me";
+        default = servicesCatalog.ntfy.domain;
         description = "Domain name under which ntfy-sh is exposed via reverse proxy.";
       };
 
@@ -178,7 +177,7 @@ in {
       urls = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [
-          "https://notify.benway.me"
+          "https://${servicesCatalog.ntfy.domain}"
           "https://zita.${tailnet}:${toString ports.ntfy.tailscale}"
         ];
         description = "Ordered list of ntfy base URLs tried by fleet-notify and desktop subscribers.";
@@ -225,14 +224,11 @@ in {
 
   config = lib.mkMerge [
     (lib.mkIf cfgServer.enable {
-      users.users.ntfy-sh = {
-        isSystemUser = true;
-        group = "ntfy-sh";
-        home = cfgServer.dataDir;
+      impermanence.persistentServices.ntfy-sh = {
+        directory = cfgServer.dataDir;
+        createUser = true;
         description = "ntfy-sh fleet notification server user";
       };
-
-      users.groups.ntfy-sh = {};
 
       services.ntfy-sh = {
         enable = true;
@@ -279,27 +275,13 @@ in {
         };
       };
 
-      systemd.services.ntfy-sh = {
-        after =
-          lib.optionals (config.impermanence.enable or false) [dataDirMountUnit]
-          ++ lib.optional useAdminPasswordFile "ntfy-sh-env.service";
-        wants = lib.optionals (config.impermanence.enable or false) [dataDirMountUnit];
-        requires = lib.optional useAdminPasswordFile "ntfy-sh-env.service";
-        serviceConfig = {
-          DynamicUser = lib.mkForce false;
-          PrivateUsers = lib.mkForce false;
-          User = "ntfy-sh";
-          Group = "ntfy-sh";
-        };
+      systemd.services.ntfy-sh = lib.mkIf useAdminPasswordFile {
+        after = ["ntfy-sh-env.service"];
+        requires = ["ntfy-sh-env.service"];
       };
 
       systemd.tmpfiles.rules = [
-        "d ${cfgServer.dataDir} 0750 ntfy-sh ntfy-sh -"
         "d ${cfgServer.dataDir}/attachments 0750 ntfy-sh ntfy-sh -"
-      ];
-
-      impermanence.directories = lib.mkIf (config.impermanence.enable or false) [
-        cfgServer.dataDir
       ];
     })
 

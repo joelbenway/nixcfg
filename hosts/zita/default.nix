@@ -8,8 +8,18 @@
   pkgs,
   ...
 }: let
-  hostKeyPath = "/etc/ssh/ssh_host_ed25519_key";
+  fleetNetwork = import (lib.custom.relativeToRoot "data/network.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  servicesCatalog = import (lib.custom.relativeToRoot "data/services.nix");
+  serviceList = builtins.attrValues servicesCatalog;
+  defaultRedirectSvc = lib.findFirst (s: s.defaultTailscaleRedirect or false) servicesCatalog.copyparty serviceList;
+  renderCaddyBody = svc: let
+    extraLines = lib.filter (line: line != "") (lib.splitString "\n" (svc.extraCaddyConfig or ""));
+  in
+    lib.concatStringsSep "\n" (
+      (map (line: "  ${line}") extraLines)
+      ++ ["  reverse_proxy 127.0.0.1:${toString svc.internalPort}"]
+    );
   beszelHubKeySecret = lib.custom.relativeToRoot "secrets/beszel-hub-key.age";
   beszelHubEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hub.env.age";
   beszelHermesEnvSecret = lib.custom.relativeToRoot "secrets/beszel-hermes.env.age";
@@ -26,117 +36,93 @@ in {
     ./storage.nix
   ]; # imports
 
-  age = {
-    identityPaths = ["/persist${hostKeyPath}"];
-    secrets =
-      {
-        wifi-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        wifi-guest-environment-variables = {
-          file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
-          mode = "600";
-          owner = "root";
-          group = "users";
-        };
-        tailscale-oauth-env = {
-          file = lib.custom.relativeToRoot "secrets/tailscale-oauth.env.age";
-          name = "tailscale.env";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        storage-luks-passphrase = {
-          file = lib.custom.relativeToRoot "secrets/storage-luks-passphrase.age";
-        };
-        hermes-env = {
-          file = lib.custom.relativeToRoot "secrets/hermes.env.age";
-          name = "hermes.env";
-          mode = "440";
-          owner = "root";
-          group = "root";
-        }; # hermes-env
-        cloudflare-api-env = {
-          file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
-          name = "cloudflare.env";
-          mode = "440";
-          owner = "caddy";
-          group = "caddy";
-        };
-        nix-builder-ssh = {
-          file = lib.custom.relativeToRoot "secrets/nix-builder-ssh.age";
-          path = "/root/.ssh/nix-builder";
-          mode = "600";
-          owner = "root";
-          group = "root";
-        };
-        zita-cache-priv-key = {
-          file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-        vaultwarden-env = {
-          file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
-          name = "vaultwarden.env";
-          mode = "400";
-          owner = "vaultwarden";
-          group = "vaultwarden";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHubKey {
-        beszel-hub-key = {
-          file = beszelHubKeySecret;
-          name = "beszel-hub-key";
-          mode = "400";
-          owner = "root";
-          group = "root";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHubEnv {
-        beszel-hub-env = {
-          file = beszelHubEnvSecret;
-          name = "beszel-hub.env";
-          mode = "400";
-          owner = "beszel-hub";
-          group = "beszel-hub";
-        };
-      }
-      // lib.optionalAttrs hasBeszelHermesEnv {
-        beszel-hermes-env = {
-          file = beszelHermesEnvSecret;
-          name = "beszel-hermes.env";
-          mode = "400";
-          owner = "hermes";
-          group = "hermes";
-        };
-      }
-      // lib.optionalAttrs hasNtfyServerEnv {
-        ntfy-server-env = {
-          file = ntfyServerEnvSecret;
-          name = "ntfy-server.env";
-          mode = "400";
-          owner = "ntfy-sh";
-          group = "ntfy-sh";
-        };
-      }; # secrets
-  }; # age
+  age.secrets =
+    {
+      wifi-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      };
+      wifi-guest-environment-variables = {
+        file = lib.custom.relativeToRoot "secrets/wifi-guest.env.age";
+        mode = "600";
+        owner = "root";
+        group = "users";
+      };
+      hermes-env = {
+        file = lib.custom.relativeToRoot "secrets/hermes.env.age";
+        name = "hermes.env";
+        mode = "440";
+        owner = "root";
+        group = "root";
+      }; # hermes-env
+      cloudflare-api-env = {
+        file = lib.custom.relativeToRoot "secrets/cloudflare-api.env.age";
+        name = "cloudflare.env";
+        mode = "440";
+        owner = "caddy";
+        group = "caddy";
+      };
+      zita-cache-priv-key = {
+        file = lib.custom.relativeToRoot "secrets/zita-cache-priv-key.age";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+      vaultwarden-env = {
+        file = lib.custom.relativeToRoot "secrets/vaultwarden.env.age";
+        name = "vaultwarden.env";
+        mode = "400";
+        owner = "vaultwarden";
+        group = "vaultwarden";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHubKey {
+      beszel-hub-key = {
+        file = beszelHubKeySecret;
+        name = "beszel-hub-key";
+        mode = "400";
+        owner = "root";
+        group = "root";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHubEnv {
+      beszel-hub-env = {
+        file = beszelHubEnvSecret;
+        name = "beszel-hub.env";
+        mode = "400";
+        owner = "beszel-hub";
+        group = "beszel-hub";
+      };
+    }
+    // lib.optionalAttrs hasBeszelHermesEnv {
+      beszel-hermes-env = {
+        file = beszelHermesEnvSecret;
+        name = "beszel-hermes.env";
+        mode = "400";
+        owner = "hermes";
+        group = "hermes";
+      };
+    }
+    // lib.optionalAttrs hasNtfyServerEnv {
+      ntfy-server-env = {
+        file = ntfyServerEnvSecret;
+        name = "ntfy-server.env";
+        mode = "400";
+        owner = "ntfy-sh";
+        group = "ntfy-sh";
+      };
+    }; # age.secrets
 
-  impermanence = {
-    enable = true;
-    device = "cryptroot";
-    directories = [
-      "/var/lib/samba"
-      "/var/lib/containers"
-      "/var/lib/hermes"
-      "/var/lib/signal-cli"
-      "/var/lib/private/actual"
-      "/var/lib/caddy"
-    ];
-  }; # impermanence
+  impermanence.directories = [
+    "/var/lib/samba"
+    "/var/lib/containers"
+    "/var/lib/hermes"
+    "/var/lib/signal-cli"
+    "/var/lib/private/actual"
+    "/var/lib/caddy"
+  ];
 
   systemd.tmpfiles.rules = [
     "d /var/lib/private 0700 root root -"
@@ -151,15 +137,7 @@ in {
     fi
   '';
 
-  openssh = {
-    enable = true;
-    inherit hostKeyPath;
-  };
-
-  distributed-builds = {
-    enable = true;
-    keyFile = config.age.secrets.nix-builder-ssh.path;
-  };
+  distributed-builds.enable = true;
 
   binary-cache.server = {
     enable = true;
@@ -185,11 +163,6 @@ in {
       config.age.secrets.wifi-guest-environment-variables.path
     ];
   }; # networkstack
-
-  tailscale = {
-    enable = true;
-    envFile = config.age.secrets.tailscale-oauth-env.path;
-  }; # tailscale
 
   services.tailscale.extraSetFlags = ["--operator=caddy"];
   systemd.services.tailscaled.environment.TS_PERMIT_CERT_UID = "caddy";
@@ -236,14 +209,14 @@ in {
   notify = {
     server = lib.mkIf hasNtfyServerEnv {
       enable = true;
-      domain = "notify.benway.me";
+      domain = servicesCatalog.ntfy.domain;
       environmentFile = config.age.secrets.ntfy-server-env.path;
       admin.passwordFile = config.age.secrets.joel-passphrase.path;
     };
     client = {
       urls = [
         "http://127.0.0.1:${toString ports.ntfy.internal}"
-        "https://notify.benway.me"
+        "https://${servicesCatalog.ntfy.domain}"
         "https://zita.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale}"
       ];
       onFailureUnits = [
@@ -266,7 +239,7 @@ in {
     };
     hub = {
       enable = true;
-      domain = "metrics.benway.me";
+      domain = servicesCatalog.beszel.domain;
       keyFile =
         if hasBeszelHubKey
         then config.age.secrets.beszel-hub-key.path
@@ -287,7 +260,7 @@ in {
         }
         {
           name = "michael";
-          host = "192.168.77.1";
+          host = fleetNetwork.hosts.michael.ip;
           port = ports.beszel.agent;
         }
         {
@@ -310,18 +283,13 @@ in {
   };
 
   networking = {
-    nameservers = ["192.168.77.1"];
-    firewall.allowedTCPPorts = [
-      80
-      443
-      ports.copyparty.tailscale
-      ports.actual.tailscale
-      ports.jellyfin.tailscale
-      ports.forgejo.tailscale
-      ports.vaultwarden.tailscale
-      ports.beszel.tailscale
-      ports.ntfy.tailscale
-    ];
+    nameservers = [fleetNetwork.hosts.michael.ip];
+    firewall.allowedTCPPorts =
+      [
+        80
+        443
+      ]
+      ++ (map (svc: svc.tailscalePort) serviceList);
   };
 
   services.avahi = {
@@ -353,74 +321,24 @@ in {
         }
       }
 
-      files.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
-      }
-
-      budget.benway.me {
-        import cf_tls
-        header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
-      }
-
-      jellyfin.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
-      }
-
-      git.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
-      }
-
-      vault.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
-      }
-
-      metrics.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
-      }
-
-      notify.benway.me {
-        import cf_tls
-        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
-      }
+      ${lib.concatMapStringsSep "\n" (svc: ''
+          ${svc.domain} {
+            import cf_tls
+          ${renderCaddyBody svc}
+          }
+        '')
+        serviceList}
 
       ${hostname}.${config.tailscale.tailnet} {
-        redir https://${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale}
+        redir https://${hostname}.${config.tailscale.tailnet}:${toString defaultRedirectSvc.tailscalePort}
       }
 
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.copyparty.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.copyparty.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.actual.tailscale} {
-        header Cross-Origin-Resource-Policy cross-origin
-        reverse_proxy 127.0.0.1:${toString ports.actual.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.jellyfin.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.jellyfin.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.forgejo.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.forgejo.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.vaultwarden.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.vaultwarden.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.beszel.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.beszel.internal}
-      }
-
-      ${hostname}.${config.tailscale.tailnet}:${toString ports.ntfy.tailscale} {
-        reverse_proxy 127.0.0.1:${toString ports.ntfy.internal}
-      }
+      ${lib.concatMapStringsSep "\n" (svc: ''
+          ${hostname}.${config.tailscale.tailnet}:${toString svc.tailscalePort} {
+          ${renderCaddyBody svc}
+          }
+        '')
+        serviceList}
     '';
   };
 
@@ -430,7 +348,6 @@ in {
   };
 
   boot = {
-    enableContainers = true;
     extraModulePackages = [];
     initrd = {
       availableKernelModules = [
@@ -466,9 +383,9 @@ in {
         networks."10-lan" = {
           matchConfig.Name = "en* eth*";
           networkConfig = {
-            Address = "192.168.77.20/24";
-            Gateway = "192.168.77.1";
-            DNS = ["192.168.77.1"];
+            Address = "${fleetNetwork.hosts.zita.ip}/24";
+            Gateway = fleetNetwork.hosts.michael.ip;
+            DNS = [fleetNetwork.hosts.michael.ip];
           };
         };
       };
@@ -484,8 +401,6 @@ in {
   }; # boot
 
   disko.devices = (import ./disks.nix {inherit lib;}).disko.devices;
-
-  fileSystems."/var/log".neededForBoot = true;
 
   auto-update = {
     enable = true;

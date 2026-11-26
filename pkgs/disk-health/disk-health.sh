@@ -5,7 +5,7 @@ set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Note: Running without root privileges. Some SMART data requires root."
-  echo "If drive queries fail or appear as 'REQUIRES ROOT', rerun as: sudo disk-health"
+  echo "If drive queries fail or appear as 'NEED ROOT', rerun as: sudo disk-health"
   echo ""
 fi
 
@@ -62,18 +62,23 @@ while IFS= read -r line; do
   media_err=$(echo "$attrs" | awk '/Media and Data Integrity Errors:/ {print $NF; exit}')
   crit_warn=$(echo "$attrs" | awk '/Critical Warning:/ {print $NF; exit}')
 
-  sectors="0"
+  sector_issues=()
   if [ -n "$realloc" ] && [ "$realloc" -gt 0 ] 2>/dev/null; then
-    sectors="R:${realloc}"
+    sector_issues+=("R:${realloc}")
   fi
   if [ -n "$pending" ] && [ "$pending" -gt 0 ] 2>/dev/null; then
-    sectors="${sectors} P:${pending}"
+    sector_issues+=("P:${pending}")
   fi
-  if [ -n "$media_err" ] && [ "$media_err" != "0" ] && [ "$media_err" != "" ]; then
-    sectors="Err:${media_err}"
+  if [ -n "$media_err" ] && [ "$media_err" != "0" ]; then
+    sector_issues+=("Err:${media_err}")
   fi
-  if [ -n "$crit_warn" ] && [ "$crit_warn" != "0x00" ] && [ "$crit_warn" != "0" ] && [ "$crit_warn" != "" ]; then
-    sectors="${sectors} Warn:${crit_warn}"
+  if [ -n "$crit_warn" ] && [ "$crit_warn" != "0x00" ] && [ "$crit_warn" != "0" ]; then
+    sector_issues+=("Warn:${crit_warn}")
+  fi
+  if [ "${#sector_issues[@]}" -gt 0 ]; then
+    sectors="${sector_issues[*]}"
+  else
+    sectors="0"
   fi
 
   printf "%-14s %-20s %-16s %-14s %-8s %-10s\n" "$dev" "$model" "$serial" "$status" "$temp" "$sectors"

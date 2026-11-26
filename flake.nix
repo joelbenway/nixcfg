@@ -7,7 +7,6 @@
   inputs = {
     self.submodules = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    # stable.url = "github:nixos/nixpkgs/nixos-24.05";
 
     nixos-hardware = {
       url = "github:NixOS/nixos-hardware/master";
@@ -79,7 +78,6 @@
     mkHost = {
       name,
       platform ? "x86_64-linux",
-      extraModules ? [],
       hmModules ? [],
       overlays ? [],
     }:
@@ -89,22 +87,20 @@
           hostname = name;
           inherit platform;
         };
-        modules =
-          [
-            ./hosts/configuration.nix
-            ./hosts/${name}
-            ./modules
-            ./users
-            inputs.disko.nixosModules.disko
-            inputs.home-manager.nixosModules.default
-            {nixpkgs.overlays = overlays;}
-            {
-              home-manager.useGlobalPkgs = true;
-              home-manager.useUserPackages = true;
-              home-manager.sharedModules = [inputs.hex.homeManagerModules.hex] ++ hmModules;
-            }
-          ]
-          ++ extraModules;
+        modules = [
+          ./hosts/configuration.nix
+          ./hosts/${name}
+          ./modules
+          ./users
+          inputs.disko.nixosModules.disko
+          inputs.home-manager.nixosModules.default
+          {nixpkgs.overlays = overlays;}
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.sharedModules = [inputs.hex.homeManagerModules.hex] ++ hmModules;
+          }
+        ];
       };
   in {
     devShells = forEachSupportedSystem ({pkgs, ...}: {
@@ -141,7 +137,6 @@
 
       michael = mkHost {
         name = "michael";
-        hmModules = [inputs.agenix.homeManagerModules.default];
       }; # michael
 
       therese = nixpkgs.lib.nixosSystem {
@@ -155,7 +150,6 @@
 
       zita = mkHost {
         name = "zita";
-        hmModules = [inputs.agenix.homeManagerModules.default];
         overlays = [
           inputs.copyparty.overlays.default
         ];

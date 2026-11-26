@@ -7,6 +7,7 @@
 }: let
   keys = import (lib.custom.relativeToRoot "data/keys.nix");
   ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  network = import ./network.nix;
 in {
   # Provision a dedicated initrd host key on test/activation (fresh installs also create it in
   # scripts/install_host, and stage-1/lanzaboote fails loudly if missing during direct switch/boot).
@@ -39,28 +40,28 @@ in {
       wait-online.enable = false;
       netdevs."20-skylab" = {
         netdevConfig = {
-          Name = "enp4s0.77";
+          Name = network.vlans.skylab.interface;
           Kind = "vlan";
         };
-        vlanConfig.Id = 77;
+        vlanConfig.Id = network.vlans.skylab.id;
       };
       networks."10-lan-trunk" = {
-        matchConfig.Name = "enp4s0";
+        matchConfig.Name = network.lanInterface;
         networkConfig = {
-          VLAN = ["enp4s0.77"];
-          Address = "192.168.1.1/24";
+          VLAN = [network.vlans.skylab.interface];
+          Address = "${network.mgmt.routerIp}/${toString network.mgmt.prefix}";
         };
       };
       networks."20-skylab" = {
-        matchConfig.Name = "enp4s0.77";
+        matchConfig.Name = network.vlans.skylab.interface;
         networkConfig = {
-          Address = "192.168.77.1/24";
+          Address = "${network.vlans.skylab.routerIp}/${toString network.vlans.skylab.prefix}";
         };
       };
       networks."30-oob" = {
-        matchConfig.Name = "enp5s0";
+        matchConfig.Name = network.oob.interface;
         networkConfig = {
-          Address = "192.168.99.1/24";
+          Address = "${network.oob.routerIp}/${toString network.oob.prefix}";
         };
       };
     };

@@ -213,20 +213,6 @@ in {
           description = "WireGuard interface name for PIA";
         };
       };
-
-      proton = {
-        enable = lib.mkEnableOption "ProtonVPN WireGuard provider (backup for IoT)";
-        configFile = lib.mkOption {
-          type = lib.types.nullOr (lib.types.either lib.types.path lib.types.str);
-          default = null;
-          description = "Path to downloaded ProtonVPN WireGuard .conf file";
-        };
-        interface = lib.mkOption {
-          type = lib.types.str;
-          default = "wg-proton";
-          description = "WireGuard interface name for ProtonVPN";
-        };
-      };
     };
   };
 
@@ -327,22 +313,22 @@ in {
         ''}
 
           # Clamp TCP MSS for VPN traffic in both directions to prevent MTU black holes
-          oifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } tcp flags syn tcp option maxseg size set rt mtu;
-          iifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } tcp flags syn tcp option maxseg size set 1380;
+          oifname "${cfg.providers.pia.interface}" tcp flags syn tcp option maxseg size set rt mtu;
+          iifname "${cfg.providers.pia.interface}" tcp flags syn tcp option maxseg size set 1380;
         }
 
         chain postrouting {
           type nat hook postrouting priority srcnat; policy accept;
 
           # Masquerade traffic exiting VPN tunnels
-          oifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } masquerade;
+          oifname "${cfg.providers.pia.interface}" masquerade;
         }
       '';
     };
 
     networking.firewall.extraForwardRules = ''
       # Allow routed interfaces and VPN-marked traffic to forward out over active VPN tunnels
-      oifname { "${cfg.providers.pia.interface}", "${cfg.providers.proton.interface}" } accept
+      oifname "${cfg.providers.pia.interface}" accept
     '';
   };
 }
