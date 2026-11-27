@@ -303,12 +303,18 @@ in {
 
   networking = {
     nameservers = [fleetNetwork.hosts.michael.ip];
-    firewall.allowedTCPPorts =
-      [
-        80
-        443
-      ]
-      ++ (map (svc: svc.tailscalePort) serviceList);
+    firewall = {
+      allowedTCPPorts =
+        [
+          80
+          443
+        ]
+        ++ (map (svc: svc.tailscalePort) serviceList);
+      # Restrict unauthenticated llama-server proxy strictly to Tailscale peers
+      interfaces."tailscale0".allowedTCPPorts = [
+        ports.llm.tailscale
+      ];
+    };
   };
 
   services.avahi = {
@@ -358,6 +364,10 @@ in {
           }
         '')
         serviceList}
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.llm.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.llm.internal}
+      }
     '';
   };
 

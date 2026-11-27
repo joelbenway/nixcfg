@@ -53,7 +53,7 @@
     ${lib.concatStringsSep "\n" modelPresetSections}
   '';
 
-  # Declarative metadata consumed by llm-cache-gc to identify declared vs orphan blobs
+  # Declarative metadata consumed by llm-cache-gc to identify declared vs orphan repos/tags
   declaredModelsJson = pkgs.writeText "llama-declared-models.json" (
     builtins.toJSON (
       lib.mapAttrsToList (id: m: let
@@ -62,10 +62,10 @@
         tag =
           if builtins.length parts > 1
           then builtins.elemAt parts 1
-          else "latest";
-        repoPrefix = lib.replaceStrings ["/"] ["_"] repo;
+          else "";
       in {
-        inherit id repoPrefix tag;
+        inherit id repo tag;
+        folderName = "models--${lib.replaceStrings ["/"] ["--"] repo}";
         hfRepo = m.hfRepo;
         pin = m.pin or false;
       })
@@ -81,6 +81,7 @@
       import json
       import os
       from pathlib import Path
+      import shutil
       import sys
       import time
 
@@ -88,6 +89,7 @@
       DEFAULT_MANIFEST = "${declaredModelsJson}"
       DEFAULT_MAX_AGE_DAYS = ${toString cfg.cacheGc.maxAgeDays}
       DEFAULT_MAX_SIZE_GB = ${toString cfg.cacheGc.maxSizeGB}
+      PARTIAL_SUFFIX = ".downloadInProgress"
 
 
       def fmt_bytes(num_bytes: int) -> str:
@@ -102,7 +104,8 @@
       def open_files_under(root: Path) -> set[Path]:
           """Return resolved paths under root currently open by any process."""
           open_paths: set[Path] = set()
-          root_str = str(root.resolve())
+          root_resolved = root.resolve()
+          root_prefix = str(root_resolved) + os.sep
           proc = Path("/proc")
           if not proc.is_dir():
               return open_paths
@@ -116,7 +119,7 @@
                           target = os.readlink(fd)
                       except OSError:
                           continue
-                      if target.startswith(root_str):
+                      if target == str(root_resolved) or target.startswith(root_prefix):
                           open_paths.add(Path(target))
               except OSError:
                   continue
@@ -128,95 +131,297 @@
               return json.load(fh)
 
 
-      def match_declared_for_gguf(
-          gguf_name: str,
-          declared: list[dict],
-          manifest_file_map: dict[str, dict],
+      def folder_name_to_repo(folder_name: str) -> str | None:
+          if not folder_name.startswith("models--"):
+              return None
+          rest = folder_name[len("models--"):]
+          if "--" not in rest:
+              return None
+          return rest.replace("--", "/")
+
+
+      def match_declared_for_snapshot(
+          rel_path: str, repo_decls: list[dict]
       ) -> dict | None:
-          # Exact manifest lookup first (handles multi-tag repos accurately)
-          if gguf_name in manifest_file_map:
-              return manifest_file_map[gguf_name]
-          lower_name = gguf_name.lower()
-          for entry in declared:
-              prefix = f"{entry['repoPrefix']}_".lower()
-              if lower_name.startswith(prefix):
-                  return entry
+          if not repo_decls:
+              return None
+          lower_path = rel_path.lower()
+          name = Path(rel_path).name.lower()
+
+          # Non-GGUF metadata and mmproj sidecars belong to the declared repo as a whole;
+          # prefer a pinned declaration if any exist so pinned models keep their sidecars.
+          is_sidecar = (not name.endswith(".gguf")) or ("mmproj" in name)
+          if is_sidecar:
+              pinned = [d for d in repo_decls if d.get("pin")]
+              return pinned[0] if pinned else repo_decls[0]
+
+          # Match quant tag against GGUF filename (prefer longer/more specific tags first)
+          tagged = sorted(
+              repo_decls, key=lambda d: len(d.get("tag") or ""), reverse=True
+          )
+          for decl in tagged:
+              tag = (decl.get("tag") or "").lower()
+              if not tag or tag == "latest" or tag in lower_path:
+                  return decl
           return None
 
 
-      def build_manifest_index(
-          cache_dir: Path, declared: list[dict]
-      ) -> tuple[dict[str, dict], dict[str, list[Path]]]:
-          """Map cached GGUF filenames to declared model entries and track manifests."""
-          by_manifest_name: dict[str, dict] = {}
-          for entry in declared:
-              key = f"manifest={entry['repoPrefix']}={entry['tag']}.json".lower()
-              by_manifest_name[key] = entry
-
-          gguf_to_declared: dict[str, dict] = {}
-          gguf_to_manifests: dict[str, list[Path]] = {}
-
-          for mf in cache_dir.glob("manifest=*.json"):
-              decl = by_manifest_name.get(mf.name.lower())
-              try:
-                  data = json.loads(mf.read_text(encoding="utf-8"))
-              except (OSError, json.JSONDecodeError):
-                  continue
-              if decl is None:
-                  continue
-              prefix = f"{decl['repoPrefix']}_"
-              for field in ("ggufFile", "mmprojFile"):
-                  obj = data.get(field)
-                  if isinstance(obj, dict) and isinstance(obj.get("rfilename"), str):
-                      rname = obj["rfilename"].replace("/", "_")
-                      fname = f"{prefix}{rname}"
-                      gguf_to_declared[fname] = decl
-                      gguf_to_manifests.setdefault(fname, []).append(mf)
-
-          return gguf_to_declared, gguf_to_manifests
-
-
-      def remove_path(
-          path: Path, dry_run: bool, reason: str, removed: set[Path]
-      ) -> int:
-          if path in removed:
-              return 0
+      def is_within(child: Path, parent: Path) -> bool:
           try:
-              size = path.stat().st_size
-          except OSError:
-              return 0
+              child.relative_to(parent)
+              return True
+          except ValueError:
+              return False
+
+
+      def unlink_path(
+          path: Path, dry_run: bool, reason: str, removed: set[Path]
+      ) -> tuple[bool, int]:
+          """Attempt to unlink path. Returns (removed_ok, bytes_freed)."""
+          if path in removed:
+              return True, 0
+          try:
+              st = path.lstat()
+          except FileNotFoundError:
+              removed.add(path)
+              return True, 0
+          except OSError as exc:
+              print(f"WARNING: cannot stat {path}: {exc}", file=sys.stderr)
+              return False, 0
+
+          size = 0 if path.is_symlink() else st.st_size
           prefix = "[DRY-RUN] would remove" if dry_run else "Removing"
-          print(f"{prefix} ({reason}): {path.name} ({fmt_bytes(size)})")
-          removed.add(path)
-          if not dry_run:
-              try:
-                  path.unlink()
-              except OSError as exc:
-                  print(f"WARNING: failed to remove {path}: {exc}", file=sys.stderr)
-                  return 0
-          return size
+          print(f"{prefix} ({reason}): {path} ({fmt_bytes(size)})")
+          if dry_run:
+              removed.add(path)
+              return True, size
+          try:
+              path.unlink()
+              removed.add(path)
+              return True, size
+          except FileNotFoundError:
+              removed.add(path)
+              return True, 0
+          except OSError as exc:
+              print(f"WARNING: failed to remove {path}: {exc}", file=sys.stderr)
+              return False, 0
 
 
-      def delete_gguf_bundle(
-          gguf: Path,
-          manifests: list[Path],
-          dry_run: bool,
-          reason: str,
-          removed: set[Path],
-      ) -> int:
-          freed = remove_path(gguf, dry_run, reason, removed)
-          etag = gguf.with_name(gguf.name + ".etag")
-          if etag.exists():
-              freed += remove_path(etag, dry_run, f"{reason}/etag", removed)
-          for mf in manifests:
-              if mf.exists():
-                  freed += remove_path(mf, dry_run, f"{reason}/manifest", removed)
-          return freed
+      def scan_hf_cache(
+          cache_dir: Path, declared: list[dict], open_paths: set[Path]
+      ) -> tuple[list[dict], list[dict]]:
+          """Inventory llama.cpp v1.0.0 hf_cache (models--<owner>--<repo>/blobs & snapshots).
+
+          Returns (blob_items, orphan_blobs) where each unique backing blob is counted once.
+          """
+          decls_by_repo: dict[str, list[dict]] = {}
+          for d in declared:
+              decls_by_repo.setdefault(d["repo"].lower(), []).append(d)
+
+          # Map resolved backing blob path -> inventory record
+          blobs_by_path: dict[Path, dict] = {}
+          orphan_blobs: list[dict] = []
+
+          for repo_dir in sorted(cache_dir.glob("models--*")):
+              if not repo_dir.is_dir():
+                  continue
+              repo_id = folder_name_to_repo(repo_dir.name)
+              if repo_id is None:
+                  continue
+              repo_resolved = repo_dir.resolve()
+              repo_decls = decls_by_repo.get(repo_id.lower(), [])
+              snapshots_root = repo_dir / "snapshots"
+              blobs_root = repo_dir / "blobs"
+
+              referenced_blobs: set[Path] = set()
+
+              if snapshots_root.is_dir():
+                  for commit_dir in sorted(snapshots_root.iterdir()):
+                      if not commit_dir.is_dir():
+                          continue
+                      for entry in sorted(commit_dir.rglob("*")):
+                          if entry.is_dir() and not entry.is_symlink():
+                              continue
+                          if entry.name.endswith(PARTIAL_SUFFIX):
+                              continue
+                          rel_path = entry.relative_to(commit_dir).as_posix()
+                          decl = match_declared_for_snapshot(rel_path, repo_decls)
+
+                          if entry.is_symlink():
+                              try:
+                                  raw_target = os.readlink(entry)
+                                  backing = (entry.parent / raw_target).resolve()
+                              except OSError:
+                                  backing = None
+                              if backing is None or not is_within(backing, repo_resolved):
+                                  # Broken or out-of-repo symlink; treat as dangling ref
+                                  backing = entry
+                          else:
+                              backing = entry.resolve()
+
+                          referenced_blobs.add(backing)
+
+                          try:
+                              b_st = backing.stat()
+                              b_size = b_st.st_size
+                              b_last = max(b_st.st_atime, b_st.st_mtime)
+                          except OSError:
+                              b_size = 0
+                              b_last = 0.0
+
+                          try:
+                              s_st = entry.lstat()
+                              s_last = max(s_st.st_atime, s_st.st_mtime)
+                          except OSError:
+                              s_last = 0.0
+
+                          rec = blobs_by_path.get(backing)
+                          if rec is None:
+                              rec = {
+                                  "blob_path": backing,
+                                  "repo_dir": repo_dir,
+                                  "repo_id": repo_id,
+                                  "size": b_size,
+                                  "last_used": max(b_last, s_last),
+                                  "refs": [],
+                              }
+                              blobs_by_path[backing] = rec
+                          else:
+                              rec["last_used"] = max(rec["last_used"], b_last, s_last)
+
+                          rec["refs"].append(
+                              {
+                                  "snap_path": entry,
+                                  "rel_path": rel_path,
+                                  "declared": decl,
+                                  "pin": bool(decl and decl.get("pin")),
+                                  "is_symlink": entry.is_symlink(),
+                              }
+                          )
+
+              # Discover unreferenced blobs directly under blobs/ (skip active downloads)
+              if blobs_root.is_dir():
+                  for blob in sorted(blobs_root.iterdir()):
+                      if not blob.is_file() or blob.is_symlink():
+                          continue
+                      if blob.name.endswith(PARTIAL_SUFFIX):
+                          continue
+                      resolved_blob = blob.resolve()
+                      if resolved_blob in referenced_blobs:
+                          continue
+                      try:
+                          st = resolved_blob.stat()
+                      except OSError:
+                          continue
+                      orphan_blobs.append(
+                          {
+                              "blob_path": resolved_blob,
+                              "repo_dir": repo_dir,
+                              "repo_id": repo_id,
+                              "size": st.st_size,
+                              "last_used": max(st.st_atime, st.st_mtime),
+                              "in_use": resolved_blob in open_paths,
+                          }
+                      )
+
+          now = time.time()
+          blob_items: list[dict] = []
+          for rec in blobs_by_path.values():
+              rec["pin"] = any(r["pin"] for r in rec["refs"])
+              rec["declared_ids"] = sorted(
+                  {r["declared"]["id"] for r in rec["refs"] if r["declared"] is not None}
+              )
+              rec["in_use"] = (rec["blob_path"] in open_paths) or any(
+                  r["snap_path"].resolve() in open_paths
+                  for r in rec["refs"]
+                  if not r["is_symlink"]
+              )
+              rec["age_days"] = max(0.0, (now - rec["last_used"]) / 86400.0)
+              blob_items.append(rec)
+
+          return blob_items, orphan_blobs
+
+
+      def has_active_download(repo_dir: Path) -> bool:
+          blobs_root = repo_dir / "blobs"
+          if not blobs_root.is_dir():
+              return False
+          return any(blobs_root.glob(f"*{PARTIAL_SUFFIX}"))
+
+
+      def prune_empty_repo_dirs(cache_dir: Path, declared_folders: set[str], dry_run: bool) -> None:
+          for repo_dir in sorted(cache_dir.glob("models--*")):
+              if not repo_dir.is_dir() or has_active_download(repo_dir):
+                  continue
+              snapshots_root = repo_dir / "snapshots"
+              blobs_root = repo_dir / "blobs"
+
+              # Remove empty snapshot directories bottom-up
+              if snapshots_root.is_dir():
+                  for sub in sorted(
+                      snapshots_root.rglob("*"), key=lambda p: len(p.parts), reverse=True
+                  ):
+                      if sub.is_dir() and not any(sub.iterdir()):
+                          if not dry_run:
+                              try:
+                                  sub.rmdir()
+                              except OSError:
+                                  pass
+
+              has_blobs = blobs_root.is_dir() and any(blobs_root.iterdir())
+              has_snaps = snapshots_root.is_dir() and any(snapshots_root.rglob("*"))
+              if not has_blobs and not has_snaps:
+                  is_declared = repo_dir.name.lower() in declared_folders
+                  if not is_declared:
+                      prefix = "[DRY-RUN] would remove" if dry_run else "Removing"
+                      print(f"{prefix} (empty-orphan-repo): {repo_dir}")
+                      if not dry_run:
+                          shutil.rmtree(repo_dir, ignore_errors=True)
+                          lock_dir = cache_dir / ".locks" / repo_dir.name
+                          if lock_dir.is_dir():
+                              shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+      def is_blob_open(rec: dict, open_paths: set[Path]) -> bool:
+          if rec["blob_path"] in open_paths:
+              return True
+          for ref in rec["refs"]:
+              if ref["snap_path"] in open_paths:
+                  return True
+          return False
+
+
+      def evict_blob_record(
+          rec: dict, dry_run: bool, reason: str, removed: set[Path]
+      ) -> tuple[bool, int]:
+          """Remove all snapshot links for rec, then its backing blob if all links succeeded.
+
+          Returns (blob_removed_ok, bytes_freed).
+          """
+          freed = 0
+          all_refs_removed = True
+          for ref in rec["refs"]:
+              snap = ref["snap_path"]
+              if snap == rec["blob_path"]:
+                  # Degraded mode (regular file directly in snapshots/): handled below
+                  continue
+              ok, b = unlink_path(snap, dry_run, f"{reason}/snapshot", removed)
+              freed += b
+              if not ok:
+                  all_refs_removed = False
+
+          if not all_refs_removed:
+              # Keep backing blob intact while a snapshot still references it
+              return False, freed
+
+          blob_ok, blob_freed = unlink_path(rec["blob_path"], dry_run, reason, removed)
+          freed += blob_freed
+          return blob_ok, freed
 
 
       def main() -> int:
           parser = argparse.ArgumentParser(
-              description="Prune stale, removed, or over-budget GGUF files from LLAMA_CACHE."
+              description="Prune stale, removed, or over-budget models from llama.cpp hf_cache."
           )
           parser.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
           parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
@@ -232,52 +437,30 @@
               return 0
 
           declared = load_declared(Path(args.manifest))
+          declared_folders = {d["folderName"].lower() for d in declared}
           open_paths = open_files_under(cache_dir)
-          gguf_to_declared, gguf_to_manifests = build_manifest_index(cache_dir, declared)
+          blob_items, orphan_blobs = scan_hf_cache(cache_dir, declared, open_paths)
 
           now = time.time()
           max_age_sec = args.max_age_days * 86400
           max_size_bytes = int(args.max_size_gb * (1024**3))
 
-          declared_manifest_names = {
-              f"manifest={d['repoPrefix']}={d['tag']}.json".lower() for d in declared
-          }
-
-          items: list[dict] = []
-          for path in sorted(cache_dir.glob("*.gguf")):
-              try:
-                  st = path.stat()
-              except OSError:
-                  continue
-              decl = match_declared_for_gguf(path.name, declared, gguf_to_declared)
-              last_used = max(st.st_atime, st.st_mtime)
-              age_days = max(0.0, (now - last_used) / 86400.0)
-              items.append(
-                  {
-                      "path": path,
-                      "size": st.st_size,
-                      "last_used": last_used,
-                      "age_days": age_days,
-                      "declared": decl,
-                      "pin": bool(decl and decl.get("pin")),
-                      "in_use": path.resolve() in open_paths,
-                      "manifests": gguf_to_manifests.get(path.name, []),
-                  }
-              )
-
-          total_bytes = sum(it["size"] for it in items)
+          total_bytes = sum(it["size"] for it in blob_items) + sum(
+              ob["size"] for ob in orphan_blobs
+          )
 
           if args.status:
               print(f"Cache dir: {cache_dir}")
               print(
-                  f"Total GGUF usage: {fmt_bytes(total_bytes)} / "
+                  f"Total blob usage: {fmt_bytes(total_bytes)} / "
                   f"{args.max_size_gb:.1f} GiB (TTL: {args.max_age_days}d)"
               )
-              if not items:
-                  print("No cached GGUF models.")
+              if not blob_items and not orphan_blobs:
+                  print("No cached model blobs.")
                   return 0
-              for it in sorted(items, key=lambda x: x["last_used"], reverse=True):
-                  model_id = it["declared"]["id"] if it["declared"] else "ORPHAN"
+              for it in sorted(blob_items, key=lambda x: x["last_used"], reverse=True):
+                  model_label = ",".join(it["declared_ids"]) if it["declared_ids"] else "ORPHAN"
+                  ref_names = ",".join(r["rel_path"] for r in it["refs"])
                   flags = []
                   if it["pin"]:
                       flags.append("pinned")
@@ -285,68 +468,101 @@
                       flags.append("in-use")
                   flag_str = f" [{', '.join(flags)}]" if flags else ""
                   print(
-                      f"  - {model_id:22s} {fmt_bytes(it['size']):>10s}  "
-                      f"age={it['age_days']:5.1f}d  {it['path'].name}{flag_str}"
+                      f"  - {model_label:22s} {fmt_bytes(it['size']):>10s}  "
+                      f"age={it['age_days']:5.1f}d  {it['repo_id']}/{ref_names}{flag_str}"
+                  )
+              for ob in orphan_blobs:
+                  flag_str = " [in-use]" if ob["in_use"] else ""
+                  print(
+                      f"  - {'UNREF-BLOB':22s} {fmt_bytes(ob['size']):>10s}  "
+                      f"{ob['repo_id']}/blobs/{ob['blob_path'].name}{flag_str}"
                   )
               return 0
 
           freed_total = 0
           removed: set[Path] = set()
           kept: list[dict] = []
+          retained_orphan_bytes = 0
 
-          # Phase 1 & 2: Remove orphans (removed from data/models.nix) and stale unpinned models
-          for it in items:
+          # Phase 1a: Remove unreferenced blobs under models--*/blobs/
+          for ob in orphan_blobs:
+              if ob["in_use"]:
+                  retained_orphan_bytes += ob["size"]
+                  continue
+              ok, freed = unlink_path(
+                  ob["blob_path"], args.dry_run, "unreferenced-blob", removed
+              )
+              freed_total += freed
+              if not ok:
+                  retained_orphan_bytes += ob["size"]
+
+          # Phase 1b & 2: Remove orphan snapshots/blobs and stale unpinned blobs
+          for it in blob_items:
               if it["in_use"]:
                   kept.append(it)
                   continue
-              if it["declared"] is None:
-                  freed_total += delete_gguf_bundle(
-                      it["path"], it["manifests"], args.dry_run, "orphan", removed
-                  )
+
+              # If a blob is referenced by BOTH declared and orphan snapshots, unlink only
+              # the orphan snapshot symlinks and keep the backing blob intact.
+              declared_refs = [r for r in it["refs"] if r["declared"] is not None]
+              orphan_refs = [r for r in it["refs"] if r["declared"] is None]
+
+              if declared_refs and orphan_refs:
+                  remaining_refs = list(declared_refs)
+                  for ref in orphan_refs:
+                      if ref["snap_path"] != it["blob_path"]:
+                          ok, freed = unlink_path(
+                              ref["snap_path"], args.dry_run, "orphan-snapshot", removed
+                          )
+                          freed_total += freed
+                          if not ok:
+                              remaining_refs.append(ref)
+                  it["refs"] = remaining_refs
+
+              if not declared_refs:
+                  blob_ok, freed = evict_blob_record(it, args.dry_run, "orphan", removed)
+                  freed_total += freed
+                  if not blob_ok:
+                      kept.append(it)
                   continue
+
               if not it["pin"] and (now - it["last_used"]) > max_age_sec:
-                  freed_total += delete_gguf_bundle(
-                      it["path"],
-                      it["manifests"],
-                      args.dry_run,
-                      f"stale>{args.max_age_days}d",
-                      removed,
+                  blob_ok, freed = evict_blob_record(
+                      it, args.dry_run, f"stale>{args.max_age_days}d", removed
                   )
+                  freed_total += freed
+                  if not blob_ok:
+                      kept.append(it)
                   continue
+
               kept.append(it)
 
-          # Clean up any dangling manifest or .etag files
-          remaining_ggufs = {it["path"].name for it in kept}
-          for mf in sorted(cache_dir.glob("manifest=*.json")):
-              if mf.name.lower() not in declared_manifest_names:
-                  freed_total += remove_path(mf, args.dry_run, "orphan-manifest", removed)
-          for etag in sorted(cache_dir.glob("*.gguf.etag")):
-              gguf_name = etag.name[: -len(".etag")]
-              if gguf_name not in remaining_ggufs:
-                  freed_total += remove_path(etag, args.dry_run, "orphan-etag", removed)
-
-          # Phase 3: Enforce size cap via LRU eviction of oldest unpinned, idle models
-          remaining_bytes = sum(it["size"] for it in kept)
+          # Phase 3: Enforce size cap via LRU eviction of oldest unpinned, idle blobs
+          remaining_bytes = retained_orphan_bytes + sum(it["size"] for it in kept)
           evictable = sorted(
               [it for it in kept if not it["pin"] and not it["in_use"]],
               key=lambda x: x["last_used"],
           )
+          # Refresh open-file snapshot immediately before LRU eviction
+          open_now = open_files_under(cache_dir)
           for it in evictable:
               if remaining_bytes <= max_size_bytes:
                   break
-              freed = delete_gguf_bundle(
-                  it["path"],
-                  it["manifests"],
-                  args.dry_run,
-                  f"size-cap>{args.max_size_gb:g}GiB",
-                  removed,
+              if is_blob_open(it, open_now):
+                  continue
+              blob_ok, freed = evict_blob_record(
+                  it, args.dry_run, f"size-cap>{args.max_size_gb:g}GiB", removed
               )
               freed_total += freed
-              remaining_bytes -= it["size"]
+              if blob_ok:
+                  remaining_bytes -= it["size"]
+
+          # Phase 4: Clean up empty snapshot dirs and empty undeclared repo trees
+          prune_empty_repo_dirs(cache_dir, declared_folders, args.dry_run)
 
           if remaining_bytes > max_size_bytes:
               print(
-                  f"WARNING: remaining pinned/in-use models ({fmt_bytes(remaining_bytes)}) "
+                  f"WARNING: remaining pinned/in-use/locked blobs ({fmt_bytes(remaining_bytes)}) "
                   f"exceed budget ({args.max_size_gb:g} GiB).",
                   file=sys.stderr,
               )
@@ -354,7 +570,7 @@
           action = "Would free" if args.dry_run else "Freed"
           print(
               f"{action} {fmt_bytes(freed_total)}; "
-              f"remaining GGUF cache: {fmt_bytes(max(0, remaining_bytes))} / {args.max_size_gb:g} GiB."
+              f"remaining cache: {fmt_bytes(max(0, remaining_bytes))} / {args.max_size_gb:g} GiB."
           )
           return 0
 
@@ -479,11 +695,21 @@ in {
       };
     };
 
-    systemd.tmpfiles.rules = [
-      "d ${cfg.cacheDir} 0750 llama-cpp llama-cpp -"
-    ];
+    # Create cacheDir strictly after its backing mount (e.g., nofail /mnt/cache SSD)
+    # is ready, avoiding systemd-tmpfiles-setup creating it on rootfs underneath the mount.
+    systemd.services.llama-cpp-cache-init = {
+      description = "Ensure persistent llama.cpp cache directory exists on mounted storage";
+      unitConfig.RequiresMountsFor = [cfg.cacheDir];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.coreutils}/bin/install -d -m 0750 -o llama-cpp -g llama-cpp ${lib.escapeShellArg cfg.cacheDir}";
+      };
+    };
 
     systemd.services.llama-cpp = {
+      after = ["llama-cpp-cache-init.service"];
+      requires = ["llama-cpp-cache-init.service"];
       unitConfig.RequiresMountsFor = [cfg.cacheDir];
       serviceConfig =
         {
@@ -519,6 +745,8 @@ in {
 
     systemd.services.llm-cache-gc = lib.mkIf cfg.cacheGc.enable {
       description = "Prune stale, removed, and over-budget models from LLAMA_CACHE";
+      after = ["llama-cpp-cache-init.service"];
+      requires = ["llama-cpp-cache-init.service"];
       unitConfig.RequiresMountsFor = [cfg.cacheDir];
       serviceConfig = {
         Type = "oneshot";

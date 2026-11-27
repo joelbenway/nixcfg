@@ -43,9 +43,4 @@ in {
     internalPort = ports.ntfy.internal;
     tailscalePort = ports.ntfy.tailscale;
   };
-  llm = {
-    domain = "ai.${network.domain}";
-    internalPort = ports.llm.internal;
-    tailscalePort = ports.llm.tailscale;
-  };
 }
