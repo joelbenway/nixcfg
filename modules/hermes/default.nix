@@ -8,6 +8,13 @@
   ...
 }: let
   cfg = config.hermes;
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  modelsCatalog = import (lib.custom.relativeToRoot "data/models.nix");
+  hermesFallbackModels = lib.filterAttrs (_: m: m.hermesFallback or false) modelsCatalog.models;
+  hermesFallbackModelId =
+    if hermesFallbackModels != {}
+    then builtins.head (builtins.attrNames hermesFallbackModels)
+    else null;
   agentEnv = import ./agent-env.nix {inherit pkgs;};
 
   # Script to merge leaf module extraSettings into Hermes's runtime config.yaml
@@ -480,30 +487,31 @@ in {
           };
         };
 
-        fallback_providers = [
-          {
-            provider = "nvidia";
-            model = "z-ai/glm-5.3-flash";
-          }
-          {
-            provider = "nvidia";
-            model = "nvidia/nemotron-3.5-lightning-30b-a3b";
-          }
-          {
-            provider = "google";
-            model = "gemma-4-31b-it";
-          }
-          {
-            provider = "deepseek";
-            model = "deepseek-flash";
-          }
-          {
+        fallback_providers =
+          [
+            {
+              provider = "nvidia";
+              model = "z-ai/glm-5.3-flash";
+            }
+            {
+              provider = "nvidia";
+              model = "nvidia/nemotron-3.5-lightning-30b-a3b";
+            }
+            {
+              provider = "google";
+              model = "gemma-4-31b-it";
+            }
+            {
+              provider = "deepseek";
+              model = "deepseek-flash";
+            }
+          ]
+          ++ lib.optional (hermesFallbackModelId != null) {
             provider = "custom";
-            base_url = "http://localhost:8080/v1";
-            model = "gemma-4-e4b-it";
+            base_url = "http://127.0.0.1:${toString ports.llm.internal}/v1";
+            model = hermesFallbackModelId;
             api_key = "none";
-          }
-        ];
+          };
         toolsets = ["all"];
         max_turns = 100;
         compression = {

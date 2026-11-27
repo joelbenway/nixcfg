@@ -33,6 +33,10 @@ let
       internal = 2586;
       tailscale = 2587;
     };
+    llm = {
+      internal = 8080;
+      tailscale = 8081;
+    };
 
     # Fleet & Infrastructure Services
     binaryCache = {

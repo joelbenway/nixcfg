@@ -57,6 +57,8 @@
       url = "github:obra/superpowers";
       flake = false;
     };
+    # Intentionally omit nixpkgs.follows so packages hit cache.numtide.com binary cache
+    llm-agents.url = "github:numtide/llm-agents.nix";
   };
 
   outputs = {

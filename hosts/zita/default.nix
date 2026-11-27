@@ -174,6 +174,25 @@ in {
     ];
   }; # hermes
 
+  llm = {
+    enable = true;
+    package = pkgs.llama-cpp-vulkan;
+    # Dual Xeon E5-2667 v2: 16 physical cores across 2 NUMA sockets (avoid HT thrashing)
+    threads = 16;
+    numa = "distribute";
+    modelsMax = 1;
+    sleepIdleSeconds = 600;
+    # Pinned to the Btrfs RAID-1 SSD cache pool: fast reads, stays warm in 128 GB page cache,
+    # and avoids waking the 24 TB HDD on Hermes/OpenCode activity or cache GC scans.
+    cacheDir = "/mnt/cache/appdata/llama-cpp";
+    gpuAccess = true;
+    cacheGc = {
+      enable = true;
+      maxAgeDays = 30;
+      maxSizeGB = 45;
+    };
+  }; # llm
+
   # Samba Configuration (shares auto-derived from data/shares.nix)
   samba.enable = true;
 
@@ -284,12 +303,18 @@ in {
 
   networking = {
     nameservers = [fleetNetwork.hosts.michael.ip];
-    firewall.allowedTCPPorts =
-      [
-        80
-        443
-      ]
-      ++ (map (svc: svc.tailscalePort) serviceList);
+    firewall = {
+      allowedTCPPorts =
+        [
+          80
+          443
+        ]
+        ++ (map (svc: svc.tailscalePort) serviceList);
+      # Restrict unauthenticated llama-server proxy strictly to Tailscale peers
+      interfaces."tailscale0".allowedTCPPorts = [
+        ports.llm.tailscale
+      ];
+    };
   };
 
   services.avahi = {
@@ -339,6 +364,10 @@ in {
           }
         '')
         serviceList}
+
+      ${hostname}.${config.tailscale.tailnet}:${toString ports.llm.tailscale} {
+        reverse_proxy 127.0.0.1:${toString ports.llm.internal}
+      }
     '';
   };
 
@@ -418,6 +447,7 @@ in {
         "samba-smbd"
         "container@copyparty"
         "hermes-agent"
+        "llama-cpp"
         "smartd"
         "forgejo"
         "vaultwarden"

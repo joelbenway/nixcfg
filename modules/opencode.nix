@@ -2,9 +2,29 @@
 # SPDX-License-Identifier: MIT
 {
   config,
+  inputs,
   lib,
+  pkgs,
   ...
 }: let
+  ports = import (lib.custom.relativeToRoot "data/ports.nix");
+  modelsCatalog = import (lib.custom.relativeToRoot "data/models.nix");
+  opencodeModels = lib.filterAttrs (_: m: m.opencode or false) modelsCatalog.models;
+
+  # numtide/llm-agents.nix ships OpenCode v2 as `opencode2` (bin/opencode2) to coexist with v1.
+  # Wrap it with a local symlinkJoin so `opencode` is on PATH and Home Manager sees the 2.x version
+  # while still fetching the underlying opencode2 binary straight from cache.numtide.com.
+  opencode2 = inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.opencode2;
+  opencodePkg = pkgs.symlinkJoin {
+    name = "opencode-${opencode2.version}";
+    paths = [opencode2];
+    preferLocalBuild = true;
+    postBuild = ''
+      ln -s "$out/bin/opencode2" "$out/bin/opencode"
+    '';
+    meta = opencode2.meta // {mainProgram = "opencode";};
+  };
+
   userConfigType = lib.types.submodule {
     options = {
       enable = lib.mkEnableOption "Enable opencode for this user";
@@ -26,6 +46,7 @@ in {
           programs = {
             opencode = {
               inherit (cfg) enable;
+              package = opencodePkg;
               enableMcpIntegration = true;
               settings = {
                 lsp = true;
@@ -106,6 +127,23 @@ in {
                       apiKey = "{env:XAI_API_KEY}";
                     }; # options
                   }; # xai
+                  zita = {
+                    npm = "@ai-sdk/openai-compatible";
+                    name = "Zita (Local)";
+                    options = {
+                      baseURL = "https://${modelsCatalog.serverHost}.${config.tailscale.tailnet}:${toString ports.llm.tailscale}/v1";
+                      apiKey = "none";
+                    }; # options
+                    models =
+                      lib.mapAttrs (_: m: {
+                        inherit (m) name;
+                        limit = {
+                          inherit (m) context;
+                          output = m.maxOutput;
+                        };
+                      })
+                      opencodeModels;
+                  }; # zita
                 }; # provider
               }; # settings;
               cli = {
