@@ -182,7 +182,7 @@ in
       };
 
       antigravity = {
-        ide.enable = lib.mkIf (config.${username}.desktop && config.${username}.dev) true;
+        hub.enable = lib.mkIf (config.${username}.desktop && config.${username}.dev) true;
         agy.enable = lib.mkIf config.${username}.dev true;
         users = lib.mkIf config.${username}.dev {
           ${username} = {

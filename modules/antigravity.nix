@@ -28,6 +28,13 @@
             description = "Enable Antigravity IDE for this user";
           };
         };
+        hub = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = config.antigravity.hub.enable;
+            description = "Enable Antigravity Hub desktop app for this user";
+          };
+        };
         agy = {
           enable = lib.mkOption {
             type = lib.types.bool;
@@ -59,6 +66,13 @@ in {
         type = lib.types.bool;
         default = config.antigravity.enable;
         description = "Enables Antigravity IDE";
+      };
+    };
+    hub = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enables Antigravity Hub desktop app (from numtide/llm-agents.nix)";
       };
     };
     agy = {
@@ -103,7 +117,7 @@ in {
             })
           ];
 
-          home = lib.mkIf (userConfig.ide.enable || userConfig.agy.enable) {
+          home = lib.mkIf (userConfig.ide.enable || userConfig.hub.enable || userConfig.agy.enable) {
             file =
               (lib.optionalAttrs userConfig.ai {
                 ".gemini/config/mcp_config.json".text = let
@@ -153,13 +167,17 @@ in {
                 };
               });
 
-            packages = vscodeLib.mkHomePackages {inherit pkgs userConfig;};
+            packages =
+              (vscodeLib.mkHomePackages {inherit pkgs userConfig;})
+              ++ lib.optionals userConfig.hub.enable [
+                inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.antigravity-hub
+              ];
           }; # home
 
           programs = {
             antigravity-cli = lib.mkIf userConfig.agy.enable {
               enable = true;
-              package = pkgs.antigravity-cli;
+              package = inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.antigravity-cli;
               enableMcpIntegration = userConfig.ai;
               mcpServers = lib.mkIf userConfig.ai userConfig.servers;
               skills = lib.mkIf enableSuperpowers "${superpowersSrc}/skills";
@@ -181,6 +199,13 @@ in {
                       substituteInPlace resources/app/extensions/antigravity/dist/extension.js \
                         --replace-warn "nodeOptions:{ca:R}" "nodeOptions:{ca:R,rejectUnauthorized:!1}"
                     fi
+                  '';
+                # Suppress core dumps from Electron node.mojom.NodeService teardown
+                # segfaults/traps on close so DrKonqi does not emit crash popups.
+                preFixup =
+                  (old.preFixup or "")
+                  + ''
+                    gappsWrapperArgs+=(--run "ulimit -S -c 0")
                   '';
               });
               mutableExtensionsDir = false;
