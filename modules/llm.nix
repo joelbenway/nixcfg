@@ -78,10 +78,12 @@
       flakeIgnore = ["E501"];
     } ''
       import argparse
+      from contextlib import contextmanager
+      import errno
+      import fcntl
       import json
       import os
       from pathlib import Path
-      import shutil
       import sys
       import time
 
@@ -101,11 +103,20 @@
           return f"{num_bytes} B"
 
 
+      def is_valid_oid(name: str) -> bool:
+          return len(name) in (40, 64) and all(c in "0123456789abcdefABCDEF" for c in name)
+
+
+      def path_in_root(target: str, root_str: str, root_prefix: str) -> bool:
+          return target == root_str or target.startswith(root_prefix)
+
+
       def open_files_under(root: Path) -> set[Path]:
-          """Return resolved paths under root currently open by any process."""
+          """Return resolved paths under root open via fds or mmap'd by any process."""
           open_paths: set[Path] = set()
           root_resolved = root.resolve()
-          root_prefix = str(root_resolved) + os.sep
+          root_str = str(root_resolved)
+          root_prefix = root_str + os.sep
           proc = Path("/proc")
           if not proc.is_dir():
               return open_paths
@@ -119,10 +130,27 @@
                           target = os.readlink(fd)
                       except OSError:
                           continue
-                      if target == str(root_resolved) or target.startswith(root_prefix):
+                      if path_in_root(target, root_str, root_prefix):
                           open_paths.add(Path(target))
               except OSError:
-                  continue
+                  pass
+
+              # llama.cpp may mmap model weights and close the fd after load;
+              # scan /proc/<pid>/maps so mapped blobs are still treated as in use.
+              maps_file = entry / "maps"
+              try:
+                  with maps_file.open("r", encoding="utf-8", errors="replace") as fh:
+                      for line in fh:
+                          parts = line.split(None, 5)
+                          if len(parts) < 6:
+                              continue
+                          mapped = parts[5].strip()
+                          if mapped.endswith(" (deleted)"):
+                              mapped = mapped[: -len(" (deleted)")]
+                          if path_in_root(mapped, root_str, root_prefix):
+                              open_paths.add(Path(mapped))
+              except OSError:
+                  pass
           return open_paths
 
 
@@ -174,6 +202,82 @@
               return False
 
 
+      @contextmanager
+      def acquire_blob_lock(
+          cache_dir: Path, repo_dir: Path, blob_path: Path, dry_run: bool
+      ):
+          """Acquire llama.cpp's shared flock (.locks/<repo>/<oid>.lock) non-blocking.
+
+          Yields True if the lock is acquired (or not applicable / dry-run), False if busy/failed.
+          Lock files are never deleted (matching llama.cpp common/file-lock.cpp).
+          """
+          if dry_run:
+              yield True
+              return
+
+          blobs_root = (repo_dir / "blobs").resolve()
+          if blob_path.parent != blobs_root or not is_valid_oid(blob_path.name):
+              yield True
+              return
+
+          lock_dir = cache_dir / ".locks" / repo_dir.name
+          lock_path = lock_dir / f"{blob_path.name}.lock"
+          fd = -1
+          locked = False
+          try:
+              lock_dir.mkdir(parents=True, exist_ok=True)
+              flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+              if hasattr(os, "O_NOFOLLOW"):
+                  flags |= os.O_NOFOLLOW
+              fd = os.open(lock_path, flags, 0o664)
+              try:
+                  os.fchmod(fd, 0o664)
+              except OSError:
+                  pass
+              fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+              locked = True
+          except OSError as exc:
+              if exc.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+                  print(f"WARNING: cannot lock {lock_path}: {exc}", file=sys.stderr)
+              if fd >= 0:
+                  os.close(fd)
+              yield False
+              return
+
+          try:
+              yield True
+          finally:
+              if locked:
+                  try:
+                      fcntl.flock(fd, fcntl.LOCK_UN)
+                  except OSError:
+                      pass
+              if fd >= 0:
+                  os.close(fd)
+
+
+      def has_live_snapshot_links(
+          repo_dir: Path, blob_path: Path, removed: set[Path]
+      ) -> bool:
+          """Re-scan repo_dir/snapshots for any remaining symlink resolving to blob_path."""
+          snapshots_root = repo_dir / "snapshots"
+          if not snapshots_root.is_dir():
+              return False
+          repo_resolved = repo_dir.resolve()
+          target_resolved = blob_path.resolve()
+          for entry in snapshots_root.rglob("*"):
+              if entry in removed or not entry.is_symlink():
+                  continue
+              try:
+                  raw = os.readlink(entry)
+                  resolved = (entry.parent / raw).resolve()
+              except OSError:
+                  continue
+              if is_within(resolved, repo_resolved) and resolved == target_resolved:
+                  return True
+          return False
+
+
       def unlink_path(
           path: Path, dry_run: bool, reason: str, removed: set[Path]
       ) -> tuple[bool, int]:
@@ -209,18 +313,18 @@
 
       def scan_hf_cache(
           cache_dir: Path, declared: list[dict], open_paths: set[Path]
-      ) -> tuple[list[dict], list[dict]]:
+      ) -> tuple[list[dict], list[dict], list[dict]]:
           """Inventory llama.cpp v1.0.0 hf_cache (models--<owner>--<repo>/blobs & snapshots).
 
-          Returns (blob_items, orphan_blobs) where each unique backing blob is counted once.
+          Returns (blob_items, orphan_blobs, partial_files) with each backing blob counted once.
           """
           decls_by_repo: dict[str, list[dict]] = {}
           for d in declared:
               decls_by_repo.setdefault(d["repo"].lower(), []).append(d)
 
-          # Map resolved backing blob path -> inventory record
           blobs_by_path: dict[Path, dict] = {}
           orphan_blobs: list[dict] = []
+          partial_files: list[dict] = []
 
           for repo_dir in sorted(cache_dir.glob("models--*")):
               if not repo_dir.is_dir():
@@ -243,9 +347,28 @@
                           if entry.is_dir() and not entry.is_symlink():
                               continue
                           if entry.name.endswith(PARTIAL_SUFFIX):
+                              try:
+                                  p_st = entry.stat()
+                                  partial_files.append(
+                                      {
+                                          "path": entry.resolve(),
+                                          "repo_id": repo_id,
+                                          "size": p_st.st_size,
+                                      }
+                                  )
+                              except OSError:
+                                  pass
                               continue
                           rel_path = entry.relative_to(commit_dir).as_posix()
                           decl = match_declared_for_snapshot(rel_path, repo_decls)
+
+                          # Read symlink metadata before readlink(); use only symlink mtime
+                          # (not symlink atime, which readlink() refreshes under relatime).
+                          try:
+                              s_st = entry.lstat()
+                              s_mtime = s_st.st_mtime
+                          except OSError:
+                              s_mtime = 0.0
 
                           if entry.is_symlink():
                               try:
@@ -254,7 +377,6 @@
                               except OSError:
                                   backing = None
                               if backing is None or not is_within(backing, repo_resolved):
-                                  # Broken or out-of-repo symlink; treat as dangling ref
                                   backing = entry
                           else:
                               backing = entry.resolve()
@@ -269,12 +391,6 @@
                               b_size = 0
                               b_last = 0.0
 
-                          try:
-                              s_st = entry.lstat()
-                              s_last = max(s_st.st_atime, s_st.st_mtime)
-                          except OSError:
-                              s_last = 0.0
-
                           rec = blobs_by_path.get(backing)
                           if rec is None:
                               rec = {
@@ -282,12 +398,12 @@
                                   "repo_dir": repo_dir,
                                   "repo_id": repo_id,
                                   "size": b_size,
-                                  "last_used": max(b_last, s_last),
+                                  "last_used": max(b_last, s_mtime),
                                   "refs": [],
                               }
                               blobs_by_path[backing] = rec
                           else:
-                              rec["last_used"] = max(rec["last_used"], b_last, s_last)
+                              rec["last_used"] = max(rec["last_used"], b_last, s_mtime)
 
                           rec["refs"].append(
                               {
@@ -299,19 +415,26 @@
                               }
                           )
 
-              # Discover unreferenced blobs directly under blobs/ (skip active downloads)
+              # Discover unreferenced blobs and retained partial downloads under blobs/
               if blobs_root.is_dir():
                   for blob in sorted(blobs_root.iterdir()):
                       if not blob.is_file() or blob.is_symlink():
                           continue
-                      if blob.name.endswith(PARTIAL_SUFFIX):
-                          continue
                       resolved_blob = blob.resolve()
-                      if resolved_blob in referenced_blobs:
-                          continue
                       try:
                           st = resolved_blob.stat()
                       except OSError:
+                          continue
+                      if blob.name.endswith(PARTIAL_SUFFIX):
+                          partial_files.append(
+                              {
+                                  "path": resolved_blob,
+                                  "repo_id": repo_id,
+                                  "size": st.st_size,
+                              }
+                          )
+                          continue
+                      if resolved_blob in referenced_blobs:
                           continue
                       orphan_blobs.append(
                           {
@@ -339,47 +462,35 @@
               rec["age_days"] = max(0.0, (now - rec["last_used"]) / 86400.0)
               blob_items.append(rec)
 
-          return blob_items, orphan_blobs
+          return blob_items, orphan_blobs, partial_files
 
 
-      def has_active_download(repo_dir: Path) -> bool:
-          blobs_root = repo_dir / "blobs"
-          if not blobs_root.is_dir():
-              return False
-          return any(blobs_root.glob(f"*{PARTIAL_SUFFIX}"))
+      def rmdir_if_empty(path: Path, dry_run: bool) -> None:
+          if not path.is_dir() or path.is_symlink():
+              return
+          try:
+              if any(path.iterdir()):
+                  return
+          except OSError:
+              return
+          if not dry_run:
+              try:
+                  path.rmdir()
+              except OSError:
+                  # Non-empty due to concurrent write or permission issue: leave in place
+                  pass
 
 
-      def prune_empty_repo_dirs(cache_dir: Path, declared_folders: set[str], dry_run: bool) -> None:
+      def prune_empty_repo_dirs(cache_dir: Path, dry_run: bool) -> None:
+          """Remove empty directories bottom-up via atomic rmdir(); never touch .locks/."""
           for repo_dir in sorted(cache_dir.glob("models--*")):
-              if not repo_dir.is_dir() or has_active_download(repo_dir):
+              if not repo_dir.is_dir() or repo_dir.is_symlink():
                   continue
-              snapshots_root = repo_dir / "snapshots"
-              blobs_root = repo_dir / "blobs"
-
-              # Remove empty snapshot directories bottom-up
-              if snapshots_root.is_dir():
-                  for sub in sorted(
-                      snapshots_root.rglob("*"), key=lambda p: len(p.parts), reverse=True
-                  ):
-                      if sub.is_dir() and not any(sub.iterdir()):
-                          if not dry_run:
-                              try:
-                                  sub.rmdir()
-                              except OSError:
-                                  pass
-
-              has_blobs = blobs_root.is_dir() and any(blobs_root.iterdir())
-              has_snaps = snapshots_root.is_dir() and any(snapshots_root.rglob("*"))
-              if not has_blobs and not has_snaps:
-                  is_declared = repo_dir.name.lower() in declared_folders
-                  if not is_declared:
-                      prefix = "[DRY-RUN] would remove" if dry_run else "Removing"
-                      print(f"{prefix} (empty-orphan-repo): {repo_dir}")
-                      if not dry_run:
-                          shutil.rmtree(repo_dir, ignore_errors=True)
-                          lock_dir = cache_dir / ".locks" / repo_dir.name
-                          if lock_dir.is_dir():
-                              shutil.rmtree(lock_dir, ignore_errors=True)
+              for sub in sorted(
+                  repo_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True
+              ):
+                  rmdir_if_empty(sub, dry_run)
+              rmdir_if_empty(repo_dir, dry_run)
 
 
       def is_blob_open(rec: dict, open_paths: set[Path]) -> bool:
@@ -392,11 +503,14 @@
 
 
       def evict_blob_record(
-          rec: dict, dry_run: bool, reason: str, removed: set[Path]
+          cache_dir: Path,
+          rec: dict,
+          dry_run: bool,
+          reason: str,
+          removed: set[Path],
       ) -> tuple[bool, int]:
-          """Remove all snapshot links for rec, then its backing blob if all links succeeded.
-
-          Returns (blob_removed_ok, bytes_freed).
+          """Remove recorded snapshot links, then remove backing blob under shared flock
+          only if no snapshot links remain. Returns (blob_removed_ok, bytes_freed).
           """
           freed = 0
           all_refs_removed = True
@@ -411,12 +525,18 @@
                   all_refs_removed = False
 
           if not all_refs_removed:
-              # Keep backing blob intact while a snapshot still references it
               return False, freed
 
-          blob_ok, blob_freed = unlink_path(rec["blob_path"], dry_run, reason, removed)
-          freed += blob_freed
-          return blob_ok, freed
+          with acquire_blob_lock(
+              cache_dir, rec["repo_dir"], rec["blob_path"], dry_run
+          ) as locked:
+              if not locked:
+                  return False, freed
+              if has_live_snapshot_links(rec["repo_dir"], rec["blob_path"], removed):
+                  return False, freed
+              blob_ok, blob_freed = unlink_path(rec["blob_path"], dry_run, reason, removed)
+              freed += blob_freed
+              return blob_ok, freed
 
 
       def main() -> int:
@@ -437,25 +557,30 @@
               return 0
 
           declared = load_declared(Path(args.manifest))
-          declared_folders = {d["folderName"].lower() for d in declared}
           open_paths = open_files_under(cache_dir)
-          blob_items, orphan_blobs = scan_hf_cache(cache_dir, declared, open_paths)
+          blob_items, orphan_blobs, partial_files = scan_hf_cache(
+              cache_dir, declared, open_paths
+          )
 
           now = time.time()
           max_age_sec = args.max_age_days * 86400
           max_size_bytes = int(args.max_size_gb * (1024**3))
 
-          total_bytes = sum(it["size"] for it in blob_items) + sum(
-              ob["size"] for ob in orphan_blobs
-          )
+          partial_bytes = sum(pf["size"] for pf in partial_files)
+          total_bytes = sum(it["size"] for it in blob_items) + sum(ob["size"] for ob in orphan_blobs) + partial_bytes
 
           if args.status:
               print(f"Cache dir: {cache_dir}")
-              print(
-                  f"Total blob usage: {fmt_bytes(total_bytes)} / "
-                  f"{args.max_size_gb:.1f} GiB (TTL: {args.max_age_days}d)"
+              partial_note = (
+                  f" (incl. {fmt_bytes(partial_bytes)} resumable partials)"
+                  if partial_bytes > 0
+                  else ""
               )
-              if not blob_items and not orphan_blobs:
+              print(
+                  f"Total cache usage: {fmt_bytes(total_bytes)} / "
+                  f"{args.max_size_gb:.1f} GiB{partial_note} (TTL: {args.max_age_days}d)"
+              )
+              if not blob_items and not orphan_blobs and not partial_files:
                   print("No cached model blobs.")
                   return 0
               for it in sorted(blob_items, key=lambda x: x["last_used"], reverse=True):
@@ -477,6 +602,11 @@
                       f"  - {'UNREF-BLOB':22s} {fmt_bytes(ob['size']):>10s}  "
                       f"{ob['repo_id']}/blobs/{ob['blob_path'].name}{flag_str}"
                   )
+              for pf in partial_files:
+                  print(
+                      f"  - {'PARTIAL':22s} {fmt_bytes(pf['size']):>10s}  "
+                      f"{pf['repo_id']}/{pf['path'].name} [resumable]"
+                  )
               return 0
 
           freed_total = 0
@@ -485,16 +615,25 @@
           retained_orphan_bytes = 0
 
           # Phase 1a: Remove unreferenced blobs under models--*/blobs/
+          # Re-check snapshot reachability under the shared blob lock before unlinking.
           for ob in orphan_blobs:
               if ob["in_use"]:
                   retained_orphan_bytes += ob["size"]
                   continue
-              ok, freed = unlink_path(
-                  ob["blob_path"], args.dry_run, "unreferenced-blob", removed
-              )
-              freed_total += freed
-              if not ok:
-                  retained_orphan_bytes += ob["size"]
+              with acquire_blob_lock(
+                  cache_dir, ob["repo_dir"], ob["blob_path"], args.dry_run
+              ) as locked:
+                  if not locked or has_live_snapshot_links(
+                      ob["repo_dir"], ob["blob_path"], removed
+                  ):
+                      retained_orphan_bytes += ob["size"]
+                      continue
+                  ok, freed = unlink_path(
+                      ob["blob_path"], args.dry_run, "unreferenced-blob", removed
+                  )
+                  freed_total += freed
+                  if not ok:
+                      retained_orphan_bytes += ob["size"]
 
           # Phase 1b & 2: Remove orphan snapshots/blobs and stale unpinned blobs
           for it in blob_items:
@@ -520,7 +659,9 @@
                   it["refs"] = remaining_refs
 
               if not declared_refs:
-                  blob_ok, freed = evict_blob_record(it, args.dry_run, "orphan", removed)
+                  blob_ok, freed = evict_blob_record(
+                      cache_dir, it, args.dry_run, "orphan", removed
+                  )
                   freed_total += freed
                   if not blob_ok:
                       kept.append(it)
@@ -528,7 +669,7 @@
 
               if not it["pin"] and (now - it["last_used"]) > max_age_sec:
                   blob_ok, freed = evict_blob_record(
-                      it, args.dry_run, f"stale>{args.max_age_days}d", removed
+                      cache_dir, it, args.dry_run, f"stale>{args.max_age_days}d", removed
                   )
                   freed_total += freed
                   if not blob_ok:
@@ -537,13 +678,16 @@
 
               kept.append(it)
 
-          # Phase 3: Enforce size cap via LRU eviction of oldest unpinned, idle blobs
-          remaining_bytes = retained_orphan_bytes + sum(it["size"] for it in kept)
+          # Phase 3: Enforce size cap via LRU eviction of oldest unpinned, idle blobs.
+          # Partial downloads count toward cache usage but are kept out of eviction candidates.
+          remaining_bytes = (
+              partial_bytes + retained_orphan_bytes + sum(it["size"] for it in kept)
+          )
           evictable = sorted(
               [it for it in kept if not it["pin"] and not it["in_use"]],
               key=lambda x: x["last_used"],
           )
-          # Refresh open-file snapshot immediately before LRU eviction
+          # Refresh open/mmap'd file snapshot immediately before LRU eviction
           open_now = open_files_under(cache_dir)
           for it in evictable:
               if remaining_bytes <= max_size_bytes:
@@ -551,19 +695,19 @@
               if is_blob_open(it, open_now):
                   continue
               blob_ok, freed = evict_blob_record(
-                  it, args.dry_run, f"size-cap>{args.max_size_gb:g}GiB", removed
+                  cache_dir, it, args.dry_run, f"size-cap>{args.max_size_gb:g}GiB", removed
               )
               freed_total += freed
               if blob_ok:
                   remaining_bytes -= it["size"]
 
-          # Phase 4: Clean up empty snapshot dirs and empty undeclared repo trees
-          prune_empty_repo_dirs(cache_dir, declared_folders, args.dry_run)
+          # Phase 4: Remove empty directories bottom-up via rmdir(); never touch .locks/
+          prune_empty_repo_dirs(cache_dir, args.dry_run)
 
           if remaining_bytes > max_size_bytes:
               print(
-                  f"WARNING: remaining pinned/in-use/locked blobs ({fmt_bytes(remaining_bytes)}) "
-                  f"exceed budget ({args.max_size_gb:g} GiB).",
+                  f"WARNING: remaining pinned/in-use/partial/locked cache ({fmt_bytes(remaining_bytes)}) "
+                  f"exceeds budget ({args.max_size_gb:g} GiB).",
                   file=sys.stderr,
               )
 
